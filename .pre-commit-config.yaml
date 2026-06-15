@@ -19,7 +19,7 @@ repos:
       - id: swiftformat
         name: SwiftFormat
         language: system
-        entry: swiftformat .
+        entry: swift-format .
         pass_filenames: false
         types: [swift]
 
