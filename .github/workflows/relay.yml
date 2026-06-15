@@ -90,3 +90,15 @@ jobs:
           sbom: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Prune orphaned untagged versions (e.g. the digest the previous `latest`
+      # pointed at). Multi-arch aware: it keeps the per-platform child manifests
+      # that the current tags still reference, deleting only true orphans.
+      - name: Delete untagged versions
+        if: github.event_name != 'pull_request'
+        uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          owner: ${{ github.repository_owner }}
+          packages: pigeon/relay
+          token: ${{ secrets.GITHUB_TOKEN }}
+          delete-untagged: true
