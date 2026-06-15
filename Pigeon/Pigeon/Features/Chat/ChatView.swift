@@ -17,18 +17,29 @@ struct ChatView: View {
     @State private var newName = ""
 
     private var isSecure: Bool { session.establishedContactIDs.contains(contact.id) }
+    private var messages: [ChatMessage] { session.messages(with: contact) }
 
     var body: some View {
         VStack(spacing: 0) {
             statusBanner
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 6) {
-                    ForEach(session.messages(with: contact)) { message in
-                        bubble(message)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 6) {
+                        ForEach(messages) { message in
+                            bubble(message).id(message.id)
+                        }
+                    }
+                    .padding()
+                }
+                .onChange(of: messages.count) {
+                    if let last = messages.last {
+                        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                     }
                 }
-                .padding()
+                .onAppear {
+                    if let last = messages.last { proxy.scrollTo(last.id, anchor: .bottom) }
+                }
             }
 
             HStack {
