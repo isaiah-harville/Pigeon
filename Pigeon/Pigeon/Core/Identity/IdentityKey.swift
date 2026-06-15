@@ -48,4 +48,14 @@ struct IdentityPublicKey: Equatable, Sendable {
         let tail = hex.suffix(4).joined()
         return "\(head)…\(tail)"
     }
+
+    /// The full fingerprint as hex grouped in 4-character blocks (for copy/compare).
+    var fingerprint: String {
+        let hex = fingerprintBytes.map { String(format: "%02X", $0) }.joined()
+        return stride(from: 0, to: hex.count, by: 4).map { offset in
+            let start = hex.index(hex.startIndex, offsetBy: offset)
+            let end = hex.index(start, offsetBy: 4, limitedBy: hex.endIndex) ?? hex.endIndex
+            return String(hex[start..<end])
+        }.joined(separator: " ")
+    }
 }
