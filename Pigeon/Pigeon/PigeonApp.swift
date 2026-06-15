@@ -14,6 +14,7 @@ struct PigeonApp: App {
     /// cannot encrypt, sign, or be addressed.
     @State private var identity: IdentityManager
     @State private var session: SessionManager
+    @State private var vault = Vault()
 
     init() {
         do {
@@ -30,6 +31,7 @@ struct PigeonApp: App {
             ContentView()
                 .environment(identity)
                 .environment(session)
+                .environment(vault)
         }
     }
 }

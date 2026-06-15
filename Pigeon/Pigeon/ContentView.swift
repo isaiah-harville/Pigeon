@@ -14,6 +14,14 @@ struct ContentView: View {
     @State private var showAddContact = false
 
     var body: some View {
+        if session.isReady {
+            hub
+        } else {
+            UnlockView()
+        }
+    }
+
+    private var hub: some View {
         NavigationStack {
             List {
                 Section("My Identity") {

@@ -40,12 +40,46 @@ final class SessionManager {
 
     private var myID: Data { identity.publicKey.rawRepresentation }
 
+    /// Whether on-device history is unlocked, ephemeral, or still locked.
+    enum StorageState { case locked, persistent, ephemeral }
+    private(set) var storageState: StorageState = .locked
+    private var store: EncryptedStore?
+
     init(identity: IdentityManager, mesh: MeshService? = nil) {
         self.identity = identity
         self.mesh = mesh ?? MeshService()
-        self.contacts = Self.loadContacts()
+        // Contacts/history load after the vault is unlocked (or stay empty in
+        // ephemeral mode); BLE runs regardless.
         self.mesh.onMessage = { [weak self] data in self?.handleInbound(data) }
         startRetryLoop()
+    }
+
+    /// True once the user has chosen persistent (unlocked) or ephemeral mode.
+    var isReady: Bool { storageState != .locked }
+
+    /// Attaches the encrypted store after unlock: load persisted state and begin
+    /// establishing sessions for known contacts.
+    func attachStore(_ store: EncryptedStore) {
+        self.store = store
+        let state = store.load()
+        contacts = state.contacts.compactMap { persisted in
+            guard let bundle = try? IdentityBundle(decoding: persisted.bundle), bundle.isValid() else { return nil }
+            return Contact(bundle: bundle, displayName: persisted.name)
+        }
+        var loaded: [Data: [ChatMessage]] = [:]
+        for (key, messages) in state.conversations {
+            if let id = Data(base64Encoded: key) { loaded[id] = messages }
+        }
+        conversations = loaded
+        storageState = .persistent
+        for contact in contacts { establishIfNeeded(contactID: contact.id) }
+    }
+
+    /// Runs without persistence: nothing is written to disk this session.
+    func useEphemeralMode() {
+        store?.wipe()
+        store = nil
+        storageState = .ephemeral
     }
 
     // MARK: - UI passthroughs
@@ -83,7 +117,7 @@ final class SessionManager {
         } else {
             contacts.append(Contact(bundle: bundle, displayName: name))
         }
-        Self.saveContacts(contacts)
+        persist()
         note("Added contact \"\(name)\"")
         // Re-scanning forces a fresh handshake (manual recovery if one stalled).
         resetSession(for: bundle.identityKey)
@@ -110,6 +144,7 @@ final class SessionManager {
             let ciphertext = try session.encrypt(Data(text.utf8))
             sendEnvelope(.message, payload: ciphertext, to: contact)
             conversations[contact.id, default: []].append(ChatMessage(mine: true, text: text))
+            persist()
         } catch {
             note("Encrypt failed: \(error)")
         }
@@ -166,6 +201,7 @@ final class SessionManager {
             let plaintext = try session.decrypt(payload)
             let text = String(decoding: plaintext, as: UTF8.self)
             conversations[contact.id, default: []].append(ChatMessage(mine: false, text: text))
+            persist()
         } catch {
             note("Decrypt failed from \"\(contact.displayName)\"")
         }
@@ -257,21 +293,17 @@ final class SessionManager {
         if log.count > 200 { log.removeFirst(log.count - 200) }
     }
 
-    private static let contactsKey = "pigeon.contacts"
-
-    private static func saveContacts(_ contacts: [Contact]) {
-        // Public keys only; not sensitive. Moves to the encrypted store in Phase 5.
-        let array = contacts.map { ["name": $0.displayName, "bundle": $0.bundle.encoded().base64EncodedString()] }
-        UserDefaults.standard.set(array, forKey: contactsKey)
-    }
-
-    private static func loadContacts() -> [Contact] {
-        guard let array = UserDefaults.standard.array(forKey: contactsKey) as? [[String: String]] else { return [] }
-        return array.compactMap { entry in
-            guard let name = entry["name"], let b64 = entry["bundle"],
-                  let data = Data(base64Encoded: b64),
-                  let bundle = try? IdentityBundle(decoding: data), bundle.isValid() else { return nil }
-            return Contact(bundle: bundle, displayName: name)
+    /// Persists current contacts and conversations to the encrypted store
+    /// (no-op in ephemeral mode or before unlock).
+    private func persist() {
+        guard let store, storageState == .persistent else { return }
+        let persistedContacts = contacts.map {
+            PersistedContact(name: $0.displayName, bundle: $0.bundle.encoded())
         }
+        var persistedConversations: [String: [ChatMessage]] = [:]
+        for (id, messages) in conversations {
+            persistedConversations[id.base64EncodedString()] = messages
+        }
+        store.save(PersistedState(contacts: persistedContacts, conversations: persistedConversations))
     }
 }
