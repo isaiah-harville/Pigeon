@@ -40,9 +40,9 @@ struct ChatsListView: View {
         }
         ToolbarItem(placement: .principal) {
           Text("Pigeon")
-            .font(.system(.title2, design: .serif).smallCaps().weight(.semibold))
-            .tracking(3)
-            .foregroundStyle(.tint)
+            .font(.system(size: 28, weight: .heavy, design: .rounded).smallCaps())
+            .tracking(2)
+            .foregroundStyle(.white)
         }
         ToolbarItem(placement: .topBarTrailing) {
           Button {
