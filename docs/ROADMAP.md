@@ -1,9 +1,12 @@
 # Pigeon — Roadmap
 
-Pigeon is a fully offline, open-source, privacy/security-first messenger.
-Messages travel end-to-end encrypted over a local **Bluetooth Low Energy mesh** —
-no servers, no accounts, no internet. See [SECURITY_MODEL.md](SECURITY_MODEL.md)
-for the security design and audit-readiness tracking.
+Pigeon is an open-source, privacy/security-first messenger that is **offline and
+serverless whenever peers are in local range** — messages travel end-to-end
+encrypted over a **Bluetooth Low Energy mesh**, no servers, no accounts. For
+peers out of local range on different networks, an **optional zero-knowledge
+relay** carries the same ciphertext over the internet (it never sees plaintext).
+See [SECURITY_MODEL.md](SECURITY_MODEL.md) for the security design (incl. §6 on
+why remote delivery needs a relay) and audit-readiness tracking.
 
 This is one timeline: what's shipped, what's in progress, and where we're headed.
 Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
@@ -14,7 +17,11 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
   "Designed for iPad" (iOS apps on Mac) — no separate macOS/Catalyst target.
   visionOS dropped. Compile-check on the iOS Simulator.
 - **Topology:** BLE mesh relay — encrypted store-and-forward; relays forward
-  ciphertext they cannot read.
+  ciphertext they cannot read. Pluggable `Transport` abstraction lets the mesh
+  run over other links concurrently.
+- **Remote delivery:** opt-in, self-hostable **zero-knowledge relay** (blind
+  ciphertext mailbox; federation-friendly) for peers out of local range. Serverless
+  remains the floor — relays are never trusted for confidentiality/auth/integrity.
 - **Crypto:** Signal-grade — Noise handshake + Double Ratchet — implemented
   clean-room over CryptoKit in the standalone `PigeonCrypto` package (chosen over
   libsignal: AGPL/App-Store conflict, server-coupled design, auditability).
@@ -54,6 +61,9 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
   scan; edit + copy-fingerprint), contact verification via safety number, contacts
   list (avatars, previews, lock state), chat with auto-scroll, rename.
 - **Notifications** — in-app foreground banner + local notification (no server).
+- **`Transport` abstraction** — BLE is now one implementation of a `Transport`
+  protocol; `MeshService` runs over any transport (and several concurrently).
+  The enabler for non-BLE transports below.
 
 ### 🟡 In progress
 

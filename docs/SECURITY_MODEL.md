@@ -6,10 +6,20 @@
 > audit report, and Pigeon should not yet be relied on against a real
 > adversary. See [Audit Readiness](#audit-readiness--pre-audit-notes).
 
-Pigeon is a fully offline, open-source messenger. Messages travel end-to-end
+Pigeon is an open-source messenger that is **offline and serverless whenever
+peers can reach each other locally**. In-range, messages travel end-to-end
 encrypted over a local **Bluetooth Low Energy mesh** — no servers, no accounts,
 no internet, no Apple Push. Identity is a key pair on your device; there is
 nothing to register and no central party to trust.
+
+For peers who are **out of local range and on different networks** (e.g.
+cellular), Pigeon can *optionally* deliver the same end-to-end ciphertext over
+the internet through a **zero-knowledge relay** — a self-hostable mailbox that
+stores and forwards ciphertext addressed by public key and **never sees
+plaintext**. This is the one component that is not serverless; it is the price of
+remote delivery (see §6) and is **opt-in**. The relay learns connection metadata
+(endpoints, timing, who-exchanges-with-whom) but no content. The Bluetooth mesh
+remains the privacy floor: stay in range and no server is ever involved.
 
 ---
 
@@ -25,7 +35,10 @@ nothing to register and no central party to trust.
 - **Forward secrecy** (a compromised key does not expose past messages) and
   **post-compromise security** (the channel heals after a compromise) at the
   conversation layer.
-- **No cloud, server, or account dependency** for core messaging.
+- **No cloud, server, or account dependency for local (in-range) messaging.**
+  Remote delivery may use a relay, but only as a **blind ciphertext mailbox** —
+  it is never trusted for confidentiality, authentication, or integrity, all of
+  which are enforced end-to-end below the transport.
 - **Auditability**: security-critical code is small, dependency-free, and
   readable.
 
@@ -53,8 +66,10 @@ nothing to register and no central party to trust.
 │ Mesh (Phase 4)  packet format · TTL · dedup ·   │
 │                 store-and-forward relay          │
 ├──────────────────────────────────────────────┤
-│ Transport (Phase 3)  CoreBluetooth central+      │
-│                 peripheral · GATT · MTU chunking │
+│ Transport (`Transport` protocol)  pluggable pipes│
+│   • BLE: CoreBluetooth central+peripheral · GATT │
+│   • Relay (opt-in): blind ciphertext mailbox     │
+│   moves opaque ciphertext only · runs concurrently│
 ├──────────────────────────────────────────────┤
 │ PigeonCrypto (package)  identity-agnostic crypto │
 │   SecureSession → Noise_XX handshake +           │
@@ -154,16 +169,54 @@ code composes them into protocols; it **never implements primitive algorithms**.
 
 ## 6. Transport & Mesh
 
-- **Transport (Phase 3, in progress):** CoreBluetooth, each device acting as both
-  central and peripheral; a custom GATT service; message chunking/reassembly to
-  fit BLE MTUs; framing.
-- **Mesh (Phase 4):** packet format with TTL, duplicate-suppression (seen-cache),
-  and **store-and-forward** relaying so messages hop toward out-of-range peers.
+The transport layer is a pluggable `Transport` abstraction: a "dumb pipe" that
+moves **opaque ciphertext** between peers and knows nothing about encryption,
+identity, or routing. Encryption (§5) and the mesh sit above it, so every
+transport carries the same end-to-end-protected bytes and any number can run at
+once.
+
+- **BLE transport:** CoreBluetooth, each device acting as both central and
+  peripheral; a custom GATT service; message chunking/reassembly to fit BLE MTUs;
+  framing. Fully offline and serverless — the privacy floor.
+- **Mesh:** packet format with TTL, duplicate-suppression (seen-cache), and
+  **store-and-forward** relaying so messages hop toward out-of-range peers.
   Relays handle ciphertext only.
 - **Session establishment is interactive for now:** two contacts must be in mesh
   contact to run the Noise handshake; thereafter ratchet messages relay
   asynchronously. **Async first contact** (X3DH-style serverless prekeys) is a
   planned later enhancement, with its own replay/exhaustion considerations.
+
+### 6.1 Relay transport (remote delivery) — opt-in
+
+Two devices that are out of Bluetooth/local-Wi-Fi range and on different networks
+(e.g. both on cellular) **cannot connect directly**: behind NAT/CGNAT a phone can
+dial out but cannot be dialed in, so there is no peer-to-peer path. Reaching them
+requires a mutually-reachable rendezvous — a **server**. This is a property of
+the internet, not a Pigeon limitation, and it is the single place Pigeon departs
+from "no servers."
+
+Pigeon keeps the trust cost minimal:
+
+- The relay is a **zero-knowledge mailbox**: clients connect *outbound* (e.g.
+  WebSocket), upload ciphertext **addressed by recipient public key**, and the
+  relay stores-and-forwards it. It is just another `Transport` carrying the same
+  ratchet ciphertext — **it cannot read messages**, and confidentiality,
+  authentication, integrity, forward secrecy, and the safety-number trust check
+  are all unchanged and enforced end-to-end below it.
+- It is **opt-in** and **self-hostable** (run your own; a homelab/Kubernetes or
+  small VPS deployment is sufficient). The design is **federation-friendly** —
+  multiple independent relays, chosen per user, like email or Nostr relays — so
+  there is no single central party.
+- **What the relay can see is metadata**, not content: client IP/endpoints,
+  timing, message sizes, and that *some* sender is delivering to recipient key X.
+  Mitigations (sealed-sender addressing, padding, and routing over **Tor** to hide
+  IPs) are planned, not yet implemented.
+
+> A relay is **untrusted infrastructure**. Compromising or operating one yields
+> metadata and the ability to drop/delay/replay ciphertext (a denial-of-service
+> and traffic-analysis position), but **never plaintext, impersonation, or a
+> trusted session** — those are gated by the identity↔Noise-static binding and
+> the AEAD/ratchet authentication, which the relay cannot forge.
 
 ---
 
@@ -172,6 +225,11 @@ code composes them into protocols; it **never implements primitive algorithms**.
 **Assume an attacker can:**
 - Observe, record, replay, delay, drop, and reorder Bluetooth traffic.
 - Operate or compromise relay devices in the mesh.
+- **Operate or compromise an internet relay server** (if the user enables relay
+  delivery): observe connection metadata — client IP/endpoints, timing, sizes,
+  and that a sender is delivering to recipient key X — and drop, delay, or replay
+  ciphertext. The relay **cannot** read content, impersonate a peer, or forge a
+  trusted session.
 - Attempt pairing/identity impersonation and MITM.
 - Tamper with any unauthenticated protocol field.
 - Read app logs, crash reports, and unprotected on-disk state.
@@ -189,6 +247,10 @@ code composes them into protocols; it **never implements primitive algorithms**.
 
 - **Metadata is exposed.** BLE advertisements, packet timing, sizes, and mesh
   routing reveal communication patterns. No padding/cover traffic yet.
+- **Relay metadata (if enabled).** An internet relay sees endpoints, timing,
+  sizes, and sender→recipient-key mappings — never content. Sealed-sender,
+  padding, and Tor routing to blunt this are planned, not implemented. Stay in
+  Bluetooth range to avoid relays entirely.
 - **Endpoint trust.** A compromised/unlocked device defeats all guarantees.
 - **No async first contact** (see §6).
 - **No audit** (see below).
@@ -234,6 +296,21 @@ authoritative to-do list for reaching audit readiness.
 ### Metadata / traffic analysis (design-level)
 10. **Padding & cover traffic** to blunt size/timing analysis.
 11. **Advertisement/identifier rotation** to limit device tracking over BLE.
+12. **Relay metadata minimization.** Sealed-sender addressing (so the relay
+    cannot see the sender), uniform padding, and optional Tor routing to hide
+    client IPs.
+
+### Relay transport (new surface; only when remote delivery is enabled)
+13. **Relay stays zero-knowledge.** Verify the relay only ever handles opaque
+    ciphertext addressed by recipient key, with no field it can use to read,
+    link, or tamper with content beyond drop/delay/replay.
+14. **Replay/freshness across the relay.** Store-and-forward over a relay must
+    not widen the handshake/message replay surface (ties to item 3).
+15. **Relay abuse & retention.** Authentication-free mailboxes invite spam/DoS
+    and unbounded storage; define rate-limiting, per-recipient quotas, and
+    ciphertext age expiry. No plaintext, keys, or linkable logs server-side.
+16. **Transport authenticity.** A malicious relay must not be able to forge
+    "delivered" state or inject packets that bypass mesh dedup/auth.
 
 ### What an auditor should focus on
 - Correctness of the Noise XX state machine and the Double Ratchet (especially
