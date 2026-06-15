@@ -23,6 +23,8 @@ struct PersistedState: Codable {
     var conversations: [String: [ChatMessage]] = [:]
     /// Base64 identity ids of contacts whose chat is ephemeral.
     var ephemeralContactIDs: [String] = []
+    /// The local user's own display name, shared in their QR card.
+    var myName: String = ""
 }
 
 /// Reads and writes `PersistedState` as an encrypted blob in Application Support.

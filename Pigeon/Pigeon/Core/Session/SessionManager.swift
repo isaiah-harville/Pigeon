@@ -32,6 +32,8 @@ final class SessionManager {
     private(set) var conversations: [Data: [ChatMessage]] = [:]
     /// Contacts whose chat is ephemeral — new messages are kept in memory only.
     private(set) var ephemeralContactIDs: Set<Data> = []
+    /// The local user's own display name, shared in their QR card.
+    private(set) var myName: String = ""
     private(set) var log: [String] = []
 
     private var sessions: [Data: SecureSession] = [:]
@@ -76,6 +78,7 @@ final class SessionManager {
         persistedConversations = loaded
         conversations = loaded // start the in-memory view from what's on disk
         ephemeralContactIDs = Set(state.ephemeralContactIDs.compactMap { Data(base64Encoded: $0) })
+        myName = state.myName
         isUnlocked = true
         for contact in contacts { ensureEstablishing(contactID: contact.id) }
     }
@@ -126,6 +129,22 @@ final class SessionManager {
 
     /// Our own shareable identity bundle (for display as a QR code).
     var myBundle: IdentityBundle { identity.identityBundle }
+
+    /// Our shareable card (identity bundle + our chosen display name) for the QR.
+    var myCard: ContactCard { ContactCard(name: myName, bundle: identity.identityBundle) }
+
+    /// Sets the local user's own display name (shared in their QR card).
+    func setMyName(_ name: String) {
+        myName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        persist()
+    }
+
+    /// Renames a contact locally (does not affect their card).
+    func renameContact(_ contact: Contact, to name: String) {
+        guard let index = contacts.firstIndex(where: { $0.id == contact.id }) else { return }
+        contacts[index].displayName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        persist()
+    }
 
     /// The safety number to compare in person with `contact`.
     func safetyNumber(with contact: Contact) -> String {
@@ -476,6 +495,7 @@ final class SessionManager {
         }
         store.save(PersistedState(contacts: persistedContacts,
                                   conversations: conversationsByKey,
-                                  ephemeralContactIDs: ephemeralContactIDs.map { $0.base64EncodedString() }))
+                                  ephemeralContactIDs: ephemeralContactIDs.map { $0.base64EncodedString() },
+                                  myName: myName))
     }
 }

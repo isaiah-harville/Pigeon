@@ -13,6 +13,8 @@ struct ChatView: View {
 
     @State private var draft = ""
     @State private var showSafetyNumber = false
+    @State private var showRename = false
+    @State private var newName = ""
 
     private var isSecure: Bool { session.establishedContactIDs.contains(contact.id) }
 
@@ -48,6 +50,12 @@ struct ChatView: View {
                         Label("Ephemeral chat", systemImage: "clock.arrow.circlepath")
                     }
                     Button {
+                        newName = contact.displayName
+                        showRename = true
+                    } label: {
+                        Label("Rename", systemImage: "pencil")
+                    }
+                    Button {
                         showSafetyNumber = true
                     } label: {
                         Label("Safety number", systemImage: "checkmark.shield")
@@ -59,6 +67,11 @@ struct ChatView: View {
         }
         .sheet(isPresented: $showSafetyNumber) {
             SafetyNumberSheet(number: session.safetyNumber(with: contact), name: contact.displayName)
+        }
+        .alert("Rename Contact", isPresented: $showRename) {
+            TextField("Name", text: $newName)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") { session.renameContact(contact, to: newName) }
         }
     }
 

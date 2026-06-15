@@ -14,10 +14,12 @@ struct ContentView: View {
     @State private var showAddContact = false
 
     var body: some View {
-        if session.isUnlocked {
-            hub
-        } else {
+        if !session.isUnlocked {
             UnlockView()
+        } else if session.myName.isEmpty {
+            OnboardingNameView()
+        } else {
+            hub
         }
     }
 

@@ -15,9 +15,12 @@ struct IdentityQRView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                QRCode.image(from: session.myBundle.encoded().base64EncodedString())
+                QRCode.image(from: session.myCard.encoded())
                     .frame(maxWidth: 280, maxHeight: 280)
                     .padding()
+
+                Text(session.myName)
+                    .font(.title3.weight(.semibold))
 
                 Text("Fingerprint")
                     .font(.headline)
