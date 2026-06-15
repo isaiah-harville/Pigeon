@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		C0FFEE0000000000000000A3 /* PigeonCrypto in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE0000000000000000A2 /* PigeonCrypto */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		BFCCC6E52FE0108F000F4D70 /* Pigeon.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pigeon.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +27,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C0FFEE0000000000000000A3 /* PigeonCrypto in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +70,7 @@
 			);
 			name = Pigeon;
 			packageProductDependencies = (
+				C0FFEE0000000000000000A2 /* PigeonCrypto */,
 			);
 			productName = Pigeon;
 			productReference = BFCCC6E52FE0108F000F4D70 /* Pigeon.app */;
@@ -94,6 +100,9 @@
 			);
 			mainGroup = BFCCC6DC2FE0108E000F4D70;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				C0FFEE0000000000000000A1 /* XCLocalSwiftPackageReference "../PigeonCrypto" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BFCCC6E62FE0108F000F4D70 /* Products */;
 			projectDirPath = "";
@@ -351,6 +360,20 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		C0FFEE0000000000000000A1 /* XCLocalSwiftPackageReference "../PigeonCrypto" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../PigeonCrypto;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		C0FFEE0000000000000000A2 /* PigeonCrypto */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PigeonCrypto;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = BFCCC6DD2FE0108E000F4D70 /* Project object */;
 }
