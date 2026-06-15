@@ -19,7 +19,7 @@ repos:
       - id: swiftformat
         name: SwiftFormat
         language: system
-        entry: swift-format .
+        entry: swift-format format --recursive --in-place .
         pass_filenames: false
         types: [swift]
 
