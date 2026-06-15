@@ -2,67 +2,67 @@
 //  ContentView.swift
 //  Pigeon
 //
-//  Temporary Phase 3 test screen: shows this device's identity and exercises
-//  the raw Bluetooth peer transport (no encryption yet). Replaced by the real
-//  chat/contacts UI in Phase 6.
+//  App hub: identity QR, Bluetooth status, verified contacts, and encrypted
+//  chats. (Onboarding and a polished contacts model come in Phase 6.)
 //
 
 import SwiftUI
 
 struct ContentView: View {
     @Environment(IdentityManager.self) private var identity
-    @State private var mesh = MeshService()
-    @State private var draft = ""
-    @State private var received: [String] = []
+    @Environment(SessionManager.self) private var session
+    @State private var showAddContact = false
 
     var body: some View {
         NavigationStack {
             List {
-                Section("This Device") {
-                    LabeledContent("Fingerprint", value: identity.publicKey.shortFingerprint)
-                        .font(.body.monospaced())
-                }
-
-                Section("Bluetooth") {
-                    LabeledContent("Status", value: mesh.status.rawValue)
-                    LabeledContent("Connected peers", value: "\(mesh.connectedPeerCount)")
-                }
-
-                Section("Send to nearby peers") {
-                    HStack {
-                        TextField("Message", text: $draft)
-                        Button("Send") { send() }
-                            .disabled(draft.isEmpty)
+                Section("My Identity") {
+                    NavigationLink {
+                        IdentityQRView()
+                    } label: {
+                        LabeledContent("Fingerprint", value: identity.publicKey.shortFingerprint)
+                            .font(.body.monospaced())
                     }
                 }
 
-                if !received.isEmpty {
-                    Section("Received") {
-                        ForEach(Array(received.enumerated()), id: \.offset) { _, line in
-                            Text(line)
+                Section("Bluetooth") {
+                    LabeledContent("Status", value: session.status.rawValue)
+                    LabeledContent("Connected peers", value: "\(session.connectedPeerCount)")
+                }
+
+                Section("Contacts") {
+                    if session.contacts.isEmpty {
+                        Text("No contacts yet. Add one by scanning their QR code.")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(session.contacts) { contact in
+                        NavigationLink {
+                            ChatView(contact: contact)
+                        } label: {
+                            HStack {
+                                Image(systemName: session.establishedContactIDs.contains(contact.id) ? "lock.fill" : "lock.open")
+                                    .foregroundStyle(session.establishedContactIDs.contains(contact.id) ? .green : .secondary)
+                                Text(contact.displayName)
+                            }
                         }
+                    }
+                    Button {
+                        showAddContact = true
+                    } label: {
+                        Label("Add Contact", systemImage: "qrcode.viewfinder")
                     }
                 }
 
                 Section("Activity") {
-                    ForEach(Array(mesh.log.suffix(15).enumerated()), id: \.offset) { _, line in
-                        Text(line).font(.caption.monospaced()).foregroundStyle(.secondary)
+                    ForEach(Array(session.log.suffix(12).enumerated()), id: \.offset) { _, line in
+                        Text(line).font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
             .navigationTitle("Pigeon")
-            .onAppear {
-                mesh.onMessage = { data in
-                    let text = String(data: data, encoding: .utf8) ?? "\(data.count) bytes"
-                    received.append("peer: \(text)")
-                }
+            .sheet(isPresented: $showAddContact) {
+                AddContactView()
             }
         }
-    }
-
-    private func send() {
-        mesh.send(Data(draft.utf8))
-        received.append("me: \(draft)")
-        draft = ""
     }
 }

@@ -28,10 +28,9 @@ final class SessionManager {
     private(set) var contacts: [Contact] = []
     /// Identity ids of contacts with a fully established, verified session.
     private(set) var establishedContactIDs: Set<Data> = []
+    /// Decrypted conversation history per contact (in-memory, this session).
+    private(set) var conversations: [Data: [ChatMessage]] = [:]
     private(set) var log: [String] = []
-
-    /// Delivered once per decrypted application message.
-    var onMessage: ((_ from: Contact, _ text: String) -> Void)?
 
     private var sessions: [Data: SecureSession] = [:]
     private var retryTimer: Timer?
@@ -99,9 +98,15 @@ final class SessionManager {
         do {
             let ciphertext = try session.encrypt(Data(text.utf8))
             sendEnvelope(.message, payload: ciphertext, to: contact)
+            conversations[contact.id, default: []].append(ChatMessage(mine: true, text: text))
         } catch {
             note("Encrypt failed: \(error)")
         }
+    }
+
+    /// Conversation history with `contact`.
+    func messages(with contact: Contact) -> [ChatMessage] {
+        conversations[contact.id] ?? []
     }
 
     // MARK: - Inbound
@@ -139,7 +144,8 @@ final class SessionManager {
         guard let session = sessions[contact.id], establishedContactIDs.contains(contact.id) else { return }
         do {
             let plaintext = try session.decrypt(payload)
-            onMessage?(contact, String(decoding: plaintext, as: UTF8.self))
+            let text = String(decoding: plaintext, as: UTF8.self)
+            conversations[contact.id, default: []].append(ChatMessage(mine: false, text: text))
         } catch {
             note("Decrypt failed from \"\(contact.displayName)\"")
         }

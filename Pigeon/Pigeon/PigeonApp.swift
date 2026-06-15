@@ -13,10 +13,13 @@ struct PigeonApp: App {
     /// environment. Failure here is fatal — without an identity the app
     /// cannot encrypt, sign, or be addressed.
     @State private var identity: IdentityManager
+    @State private var session: SessionManager
 
     init() {
         do {
-            _identity = State(initialValue: try IdentityManager())
+            let identity = try IdentityManager()
+            _identity = State(initialValue: identity)
+            _session = State(initialValue: SessionManager(identity: identity))
         } catch {
             fatalError("Failed to initialize device identity: \(error)")
         }
@@ -26,6 +29,7 @@ struct PigeonApp: App {
         WindowGroup {
             ContentView()
                 .environment(identity)
+                .environment(session)
         }
     }
 }

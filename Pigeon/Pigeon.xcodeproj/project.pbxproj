@@ -268,6 +268,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Pigeon uses Bluetooth to discover nearby devices and exchange end-to-end encrypted messages with no internet or servers.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Pigeon uses the camera to scan a contact's QR code so you can verify their identity in person.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -313,6 +314,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Pigeon uses Bluetooth to discover nearby devices and exchange end-to-end encrypted messages with no internet or servers.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Pigeon uses the camera to scan a contact's QR code so you can verify their identity in person.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
