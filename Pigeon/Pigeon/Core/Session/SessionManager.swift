@@ -117,7 +117,8 @@ final class SessionManager {
             return false
         }
         if let index = contacts.firstIndex(where: { $0.id == bundle.identityKey }) {
-            contacts[index].displayName = name
+            // Refresh the full bundle (e.g. a rotated static key), not just the name.
+            contacts[index] = Contact(bundle: bundle, displayName: name)
         } else {
             contacts.append(Contact(bundle: bundle, displayName: name))
         }
