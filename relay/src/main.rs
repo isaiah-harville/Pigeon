@@ -56,7 +56,10 @@ const MAX_CIPHERTEXT_LEN: usize = 256 * 1024;
 enum ClientMsg {
     /// Deposit ciphertext for `recipient` (hex Ed25519 public key). The sender
     /// is anonymous to the relay; no authentication is required to publish.
-    Publish { recipient: String, ciphertext: String },
+    Publish {
+        recipient: String,
+        ciphertext: String,
+    },
     /// Begin reading the mailbox for `mailbox` (hex Ed25519 public key). The
     /// relay replies with a `challenge` the client must sign to prove ownership.
     Subscribe { mailbox: String },
@@ -74,7 +77,11 @@ enum ServerMsg {
     /// A random nonce the client must sign to authenticate (base64).
     Challenge { nonce: String },
     /// A stored ciphertext envelope delivered to an authenticated subscriber.
-    Envelope { id: String, ciphertext: String, ts: u64 },
+    Envelope {
+        id: String,
+        ciphertext: String,
+        ts: u64,
+    },
     /// Confirms a `publish` was stored.
     Published { id: String },
     /// Generic success.
@@ -152,7 +159,9 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     // through `tx` so we never write to the socket from two places.
     let writer = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            let Ok(text) = serde_json::to_string(&msg) else { continue };
+            let Ok(text) = serde_json::to_string(&msg) else {
+                continue;
+            };
             if ws_tx.send(Message::Text(text)).await.is_err() {
                 break;
             }
@@ -171,27 +180,38 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         };
 
         let Ok(cmsg) = serde_json::from_str::<ClientMsg>(&text) else {
-            let _ = tx.send(ServerMsg::Error { message: "malformed message".into() });
+            let _ = tx.send(ServerMsg::Error {
+                message: "malformed message".into(),
+            });
             continue;
         };
 
         match cmsg {
-            ClientMsg::Publish { recipient, ciphertext } => {
+            ClientMsg::Publish {
+                recipient,
+                ciphertext,
+            } => {
                 publish(&state, &tx, recipient, ciphertext);
             }
             ClientMsg::Subscribe { mailbox } => {
                 if !is_valid_address(&mailbox) {
-                    let _ = tx.send(ServerMsg::Error { message: "invalid mailbox".into() });
+                    let _ = tx.send(ServerMsg::Error {
+                        message: "invalid mailbox".into(),
+                    });
                     continue;
                 }
                 let mut nonce = vec![0u8; 32];
                 rand::thread_rng().fill_bytes(&mut nonce);
-                let _ = tx.send(ServerMsg::Challenge { nonce: B64.encode(&nonce) });
+                let _ = tx.send(ServerMsg::Challenge {
+                    nonce: B64.encode(&nonce),
+                });
                 pending_challenge = Some((mailbox, nonce));
             }
             ClientMsg::Auth { signature } => {
                 let Some((mailbox, nonce)) = pending_challenge.take() else {
-                    let _ = tx.send(ServerMsg::Error { message: "subscribe first".into() });
+                    let _ = tx.send(ServerMsg::Error {
+                        message: "subscribe first".into(),
+                    });
                     continue;
                 };
                 if verify_ownership(&mailbox, &nonce, &signature) {
@@ -200,17 +220,23 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     // dedup at the mesh layer).
                     register_subscriber(&state, &mailbox, conn_id, tx.clone());
                     authed_mailbox = Some(mailbox.clone());
-                    let _ = tx.send(ServerMsg::Ok { detail: "authenticated".into() });
+                    let _ = tx.send(ServerMsg::Ok {
+                        detail: "authenticated".into(),
+                    });
                     flush_queue(&state, &mailbox, &tx);
                 } else {
-                    let _ = tx.send(ServerMsg::Error { message: "authentication failed".into() });
+                    let _ = tx.send(ServerMsg::Error {
+                        message: "authentication failed".into(),
+                    });
                 }
             }
             ClientMsg::Ack { id } => {
                 if let Some(mailbox) = &authed_mailbox {
                     ack(&state, mailbox, &id);
                 } else {
-                    let _ = tx.send(ServerMsg::Error { message: "not authenticated".into() });
+                    let _ = tx.send(ServerMsg::Error {
+                        message: "not authenticated".into(),
+                    });
                 }
             }
         }
@@ -233,16 +259,24 @@ fn publish(
     ciphertext: String,
 ) {
     if !is_valid_address(&recipient) {
-        let _ = tx.send(ServerMsg::Error { message: "invalid recipient".into() });
+        let _ = tx.send(ServerMsg::Error {
+            message: "invalid recipient".into(),
+        });
         return;
     }
     if ciphertext.is_empty() || ciphertext.len() > MAX_CIPHERTEXT_LEN {
-        let _ = tx.send(ServerMsg::Error { message: "invalid ciphertext".into() });
+        let _ = tx.send(ServerMsg::Error {
+            message: "invalid ciphertext".into(),
+        });
         return;
     }
 
     let id = format!("{:016x}", state.counter.fetch_add(1, Ordering::Relaxed));
-    let envelope = StoredEnvelope { id: id.clone(), ciphertext, ts: now() };
+    let envelope = StoredEnvelope {
+        id: id.clone(),
+        ciphertext,
+        ts: now(),
+    };
 
     let mut mailboxes = state.mailboxes.lock().unwrap();
     let mailbox = mailboxes.entry(recipient).or_default();
@@ -256,7 +290,9 @@ fn publish(
         ciphertext: envelope.ciphertext.clone(),
         ts: envelope.ts,
     };
-    mailbox.subscribers.retain(|s| s.tx.send(live.clone()).is_ok());
+    mailbox
+        .subscribers
+        .retain(|s| s.tx.send(live.clone()).is_ok());
     drop(mailboxes);
 
     let _ = tx.send(ServerMsg::Published { id });
@@ -305,12 +341,22 @@ fn remove_subscriber(state: &AppState, mailbox: &str, conn_id: u64) {
 /// by checking an Ed25519 signature over the challenge `nonce`. The relay only
 /// ever learns public keys (which are the addresses anyway).
 fn verify_ownership(mailbox_hex: &str, nonce: &[u8], signature_b64: &str) -> bool {
-    let Ok(pk_bytes) = hex::decode(mailbox_hex) else { return false };
-    let Ok(pk_arr) = <[u8; PUBKEY_LEN]>::try_from(pk_bytes.as_slice()) else { return false };
-    let Ok(verifying_key) = VerifyingKey::from_bytes(&pk_arr) else { return false };
+    let Ok(pk_bytes) = hex::decode(mailbox_hex) else {
+        return false;
+    };
+    let Ok(pk_arr) = <[u8; PUBKEY_LEN]>::try_from(pk_bytes.as_slice()) else {
+        return false;
+    };
+    let Ok(verifying_key) = VerifyingKey::from_bytes(&pk_arr) else {
+        return false;
+    };
 
-    let Ok(sig_bytes) = B64.decode(signature_b64) else { return false };
-    let Ok(sig_arr) = <[u8; SIG_LEN]>::try_from(sig_bytes.as_slice()) else { return false };
+    let Ok(sig_bytes) = B64.decode(signature_b64) else {
+        return false;
+    };
+    let Ok(sig_arr) = <[u8; SIG_LEN]>::try_from(sig_bytes.as_slice()) else {
+        return false;
+    };
     let signature = Signature::from_bytes(&sig_arr);
 
     verifying_key.verify_strict(nonce, &signature).is_ok()
@@ -336,7 +382,10 @@ async fn expiry_loop(state: AppState) {
 }
 
 fn env_u64(key: &str, default: u64) -> u64 {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 #[tokio::main]
@@ -355,7 +404,10 @@ async fn main() {
     tokio::spawn(expiry_loop(state.clone()));
 
     let app = Router::new()
-        .route("/", get(|| async { "pigeon-relay: blind ciphertext mailbox\n" }))
+        .route(
+            "/",
+            get(|| async { "pigeon-relay: blind ciphertext mailbox\n" }),
+        )
         .route("/healthz", get(|| async { "ok" }))
         .route("/ws", get(ws_handler))
         .with_state(state);
