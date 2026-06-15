@@ -218,7 +218,7 @@ Pigeon keeps the trust cost minimal:
   server-to-server protocol.
 - **Relay URLs in the card are unauthenticated delivery hints**, not signed
   identity: only the 128-byte bundle is signed. They are exchanged over the
-  in-person QR channel, and a wrong/hostile relay can only observe that
+  in-person QR channel, and a wrong or malicious relay can only observe that
   ciphertext for a key exists, or drop it (a DoS) — it cannot read content or
   affect trust, which live entirely in the bundle and the ratchet. Reading a
   mailbox still requires proving ownership of its key (a signed challenge), so a
