@@ -26,7 +26,8 @@ struct ChatsListView: View {
         }
       }
       .navigationTitle("Pigeon")
-      .safeAreaInset(edge: .top) { statusStrip }
+      .navigationBarTitleDisplayMode(.inline)
+      .safeAreaInset(edge: .bottom) { statusStrip }
       .toolbar {
         ToolbarItem(placement: .topBarLeading) {
           Button {
@@ -36,6 +37,12 @@ struct ChatsListView: View {
               .font(.title3.weight(.semibold))
           }
           .accessibilityLabel("Menu")
+        }
+        ToolbarItem(placement: .principal) {
+          Text("Pigeon")
+            .font(.system(.title2, design: .serif).smallCaps().weight(.semibold))
+            .tracking(3)
+            .foregroundStyle(.tint)
         }
         ToolbarItem(placement: .topBarTrailing) {
           Button {

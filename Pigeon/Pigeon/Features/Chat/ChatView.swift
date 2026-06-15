@@ -54,6 +54,7 @@ struct ChatView: View {
       .padding()
     }
     .navigationTitle(contact.displayName)
+    .navigationBarTitleDisplayMode(.inline)
     .onAppear { session.activeChatID = contact.id }
     .onDisappear { if session.activeChatID == contact.id { session.activeChatID = nil } }
     .toolbar {

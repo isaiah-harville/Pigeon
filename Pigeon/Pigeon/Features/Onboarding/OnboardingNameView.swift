@@ -33,9 +33,7 @@ struct OnboardingNameView: View {
       TextField("Your name", text: $name)
         .textFieldStyle(.roundedBorder)
         .padding(.horizontal, 40)
-        #if os(iOS)
-          .textInputAutocapitalization(.words)
-        #endif
+        .textInputAutocapitalization(.words)
 
       Button {
         session.setMyName(trimmed)
