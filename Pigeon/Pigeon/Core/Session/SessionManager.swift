@@ -45,6 +45,9 @@ final class SessionManager {
     /// The chat currently on screen (its notifications are suppressed while active).
     var activeChatID: Data?
     private var isAppActive = true
+    /// Whether we've already posted the "you have messages, unlock" notification
+    /// during the current locked session (reset on unlock).
+    private var notifiedWhileLocked = false
 
     func setAppActive(_ active: Bool) { isAppActive = active }
     func dismissBanner() { banner = nil }
@@ -99,6 +102,7 @@ final class SessionManager {
         ephemeralContactIDs = Set(state.ephemeralContactIDs.compactMap { Data(base64Encoded: $0) })
         myName = state.myName
         isUnlocked = true
+        notifiedWhileLocked = false
         for contact in contacts { ensureEstablishing(contactID: contact.id) }
     }
 
@@ -259,7 +263,15 @@ final class SessionManager {
         guard let envelope = try? SessionEnvelope(decoding: data) else { return }
         guard envelope.recipient == myID else { return } // not addressed to us
         guard let contact = contacts.first(where: { $0.id == envelope.sender }) else {
-            return // message from someone we have not verified
+            // No matching contact. If we're locked (e.g. relaunched in the
+            // background — no Face ID prompt possible), we can't decrypt or even
+            // load contacts, but a message *is* for us: prompt the user to open
+            // the app. Once, until unlocked, to avoid notification spam.
+            if !isUnlocked && !notifiedWhileLocked {
+                notifiedWhileLocked = true
+                onIncomingNotification?()
+            }
+            return
         }
         switch envelope.type {
         case .handshake: handleHandshake(envelope.payload, from: contact)

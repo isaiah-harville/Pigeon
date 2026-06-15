@@ -22,8 +22,15 @@ struct PigeonApp: App {
     init() {
         do {
             let identity = try IdentityManager()
+            let session = SessionManager(identity: identity)
+            let notifier = MessageNotifier()
+            // Wire here (not in a view task): a background relaunch on a BLE
+            // event won't run view lifecycle, but must still post notifications.
+            notifier.start()
+            session.onIncomingNotification = { notifier.notifyIncomingMessage() }
             _identity = State(initialValue: identity)
-            _session = State(initialValue: SessionManager(identity: identity))
+            _session = State(initialValue: session)
+            _notifier = State(initialValue: notifier)
         } catch {
             fatalError("Failed to initialize device identity: \(error)")
         }
@@ -35,10 +42,6 @@ struct PigeonApp: App {
                 .environment(identity)
                 .environment(session)
                 .environment(vault)
-                .task {
-                    notifier.start()
-                    session.onIncomingNotification = { notifier.notifyIncomingMessage() }
-                }
                 .onChange(of: scenePhase) { _, phase in
                     session.setAppActive(phase == .active)
                 }

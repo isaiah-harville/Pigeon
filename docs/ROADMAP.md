@@ -57,8 +57,6 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 
 ### 🟡 In progress
 
-- **CoreBluetooth state restoration** — keep receiving (and notifying) after iOS
-  *terminates* the app, not just when backgrounded-alive.
 - **UI polish** — ongoing refinement of chat/contacts.
 
 ### ⬜ Next
@@ -116,8 +114,12 @@ Several are audit blockers (see [SECURITY_MODEL.md](SECURITY_MODEL.md) → Audit
 - **Connection topology** — dedupe the two-way central/peripheral link per pair.
 - **Store-and-forward** — queued messages have no age expiry; relay-level
   store-and-forward (holding *others'* packets) is future work (see data mules).
-- **Background reception** — works while backgrounded-alive (bluetooth-central);
-  surviving full app termination is the in-progress state-restoration work.
+- **Background reception** — works while backgrounded-alive, and CoreBluetooth
+  state restoration relaunches the app on a BLE event after termination. But
+  biometric-gated storage can't be unlocked in the background, so a relaunched
+  app can't decrypt — it posts a generic "open Pigeon" notification and processes
+  the message once the user unlocks. (Decrypting in the background would require
+  weakening the at-rest key's protection — deliberately not done.)
 - **Lint/format debt** — SwiftLint/SwiftFormat pre-commit hooks fail; commits use
   `--no-verify` for now. Do a cleanup pass.
 

@@ -62,11 +62,17 @@ final class PeerTransport: NSObject {
     private var sweepTimer: Timer?
     /// Notifications waiting for the peripheral transmit queue to drain.
     private var pendingNotifications: [Data] = []
+    /// Whether our GATT service has been added (or restored), so we don't re-add it.
+    private var didAddService = false
 
     override init() {
         super.init()
-        central = CBCentralManager(delegate: self, queue: nil)
-        peripheralManager = CBPeripheralManager(delegate: self, queue: nil)
+        // Restoration identifiers let iOS relaunch us in the background on a BLE
+        // event after the app was terminated (see willRestoreState handlers).
+        central = CBCentralManager(delegate: self, queue: nil,
+                                   options: [CBCentralManagerOptionRestoreIdentifierKey: "com.isaiah-harville.Pigeon.central"])
+        peripheralManager = CBPeripheralManager(delegate: self, queue: nil,
+                                                options: [CBPeripheralManagerOptionRestoreIdentifierKey: "com.isaiah-harville.Pigeon.peripheral"])
         // Periodically recover stuck links: keep scanning and reconnect any
         // known peer that isn't currently connected.
         sweepTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
@@ -188,6 +194,22 @@ extension PeerTransport: CBCentralManagerDelegate {
         }
     }
 
+    func centralManager(_ manager: CBCentralManager, willRestoreState dict: [String: Any]) {
+        // Reattach to peripherals iOS restored after relaunching us in the background.
+        guard let restored = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] else { return }
+        for peripheral in restored {
+            peripheral.delegate = self
+            peripherals[peripheral.identifier] = peripheral
+            if peripheral.state == .connected {
+                peripheral.discoverServices([BluetoothConstants.service]) // refresh characteristics
+            } else {
+                manager.connect(peripheral, options: nil)
+            }
+        }
+        updateConnectedCount()
+        note("Restored \(restored.count) peer(s)")
+    }
+
     func centralManager(_ manager: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
         if let existing = peripherals[peripheral.identifier] {
@@ -264,7 +286,7 @@ extension PeerTransport: CBPeripheralDelegate {
 
 extension PeerTransport: CBPeripheralManagerDelegate {
     func peripheralManagerDidUpdateState(_ manager: CBPeripheralManager) {
-        guard manager.state == .poweredOn else { return }
+        guard manager.state == .poweredOn, !didAddService else { return }
 
         let inbound = CBMutableCharacteristic(type: BluetoothConstants.inbound,
                                               properties: [.write],
@@ -281,7 +303,25 @@ extension PeerTransport: CBPeripheralManagerDelegate {
         manager.add(service)
     }
 
+    // MARK: State restoration (relaunched in the background on a BLE event)
+
+    func peripheralManager(_ manager: CBPeripheralManager,
+                           willRestoreState dict: [String: Any]) {
+        // Recover our advertised service so we can keep notifying restored centrals.
+        if let services = dict[CBPeripheralManagerRestoredStateServicesKey] as? [CBMutableService] {
+            for service in services where service.uuid == BluetoothConstants.service {
+                for characteristic in service.characteristics ?? []
+                where characteristic.uuid == BluetoothConstants.outbound {
+                    outboundCharacteristic = characteristic as? CBMutableCharacteristic
+                }
+                didAddService = true // already added by the restored session
+            }
+            note("Restored peripheral state")
+        }
+    }
+
     func peripheralManager(_ manager: CBPeripheralManager, didAdd service: CBService, error: Error?) {
+        didAddService = true
         manager.startAdvertising([
             CBAdvertisementDataServiceUUIDsKey: [BluetoothConstants.service],
             CBAdvertisementDataLocalNameKey: "Pigeon",
