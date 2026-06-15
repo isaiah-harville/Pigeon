@@ -37,7 +37,7 @@ for the security design and audit-readiness tracking.
 | 3 | **BLE transport** — dual-role CoreBluetooth, GATT, fragmentation/reassembly | ✅ link verified on two devices |
 | 3b | **Encrypt the link** — SecureSession over mesh, identity binding, QR exchange, encrypted chat UI | ✅ built (awaiting two-device test) |
 | 4 | **Mesh** — packet format, TTL, duplicate-suppression, store-and-forward relay | 🟡 dedup + flood relay done; store-and-forward queue remains |
-| 5 | **Encrypted storage** — at-rest encryption + ephemeral mode | ⬜ |
+| 5 | **Encrypted storage** — at-rest encryption + ephemeral mode | ✅ built (biometric-gated Vault, EncryptedStore, ephemeral mode; awaiting device test) |
 | 6 | **UI** — onboarding, QR contact verification, real chat | ⬜ |
 | 7 | **Hardening** — traffic-analysis resistance, security review, audit prep | ⬜ |
 
