@@ -12,24 +12,28 @@ import Foundation
 import PigeonMesh
 
 /// The app-facing messaging surface for Phase 3b/4: send a message to the mesh,
-/// receive each message exactly once. Wraps `PeerTransport` and a `MeshRouter`.
+/// receive each message exactly once. Wraps any `Transport` and a `MeshRouter`,
+/// so the mesh runs unchanged over BLE today or other transports later.
 @MainActor
 @Observable
 final class MeshService {
 
-  private let transport: PeerTransport
+  private let transport: any Transport
   private let router = MeshRouter()
 
   /// Delivered once per unique message that reaches this device.
   var onMessage: ((Data) -> Void)?
 
   // UI passthroughs so views don't need to know about the transport.
-  var status: PeerTransport.Status { transport.status }
+  var status: TransportStatus { transport.status }
   var connectedPeerCount: Int { transport.connectedPeerCount }
   var log: [String] { transport.log }
 
-  init() {
-    transport = PeerTransport()
+  /// Defaults to the BLE transport; inject another `Transport` to run the mesh
+  /// over a different link (tests, Multipeer, relays, …).
+  init(transport: (any Transport)? = nil) {
+    let transport = transport ?? PeerTransport()
+    self.transport = transport
     transport.onMessage = { [weak self] data, _ in
       self?.handleInbound(data)
     }

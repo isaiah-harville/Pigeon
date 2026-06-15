@@ -21,22 +21,14 @@ import CoreBluetooth
 import Foundation
 import PigeonMesh
 
-/// Drives Bluetooth discovery and messaging and publishes observable state for
-/// the UI. Runs on the main actor; CoreBluetooth callbacks are delivered on the
-/// main queue.
+/// The BLE implementation of `Transport`. Drives Bluetooth discovery and
+/// messaging and publishes observable state for the UI. Runs on the main actor;
+/// CoreBluetooth callbacks are delivered on the main queue.
 @MainActor
 @Observable
-final class PeerTransport: NSObject {
+final class PeerTransport: NSObject, Transport {
 
-  /// Human-readable radio state for the UI.
-  enum Status: String {
-    case idle = "Idle"
-    case unauthorized = "Bluetooth not authorized"
-    case poweredOff = "Bluetooth is off"
-    case scanning = "Scanning for peers…"
-  }
-
-  private(set) var status: Status = .idle
+  private(set) var status: TransportStatus = .idle
   /// Number of peers we are currently connected to (as central).
   private(set) var connectedPeerCount = 0
   /// Recent activity, newest last — purely for the Phase 3 test UI.

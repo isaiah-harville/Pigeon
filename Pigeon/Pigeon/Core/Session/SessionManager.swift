@@ -154,7 +154,7 @@ final class SessionManager {
 
   // MARK: - UI passthroughs
 
-  var status: PeerTransport.Status { mesh.status }
+  var status: TransportStatus { mesh.status }
   var connectedPeerCount: Int { mesh.connectedPeerCount }
   var meshLog: [String] { mesh.log }
 
