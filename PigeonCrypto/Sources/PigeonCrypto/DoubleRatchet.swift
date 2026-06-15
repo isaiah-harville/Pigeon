@@ -15,250 +15,268 @@
 //  it does not implement any cryptographic math itself.
 //
 
-import Foundation
 import CryptoKit
+import Foundation
 
 /// Errors thrown by the ratchet.
 public enum RatchetError: Error, Equatable {
-    /// A message would require skipping more keys than `maxSkip` allows —
-    /// likely an attack or hopelessly lost chain, so we refuse.
-    case tooManySkippedMessages
-    /// The message header could not be decoded.
-    case malformedHeader
-    /// AEAD authentication failed (tampering, wrong key, or replay).
-    case decryptionFailed
+  /// A message would require skipping more keys than `maxSkip` allows —
+  /// likely an attack or hopelessly lost chain, so we refuse.
+  case tooManySkippedMessages
+  /// The message header could not be decoded.
+  case malformedHeader
+  /// AEAD authentication failed (tampering, wrong key, or replay).
+  case decryptionFailed
 }
 
 /// The plaintext header that travels with every ratchet message. It is not
 /// secret, but it is authenticated: it is folded into the AEAD associated
 /// data, so tampering breaks decryption.
 public struct RatchetHeader: Equatable, Sendable {
-    /// Sender's current DH ratchet public key (raw 32 bytes).
-    public let dhPublic: Data
-    /// Number of messages in the sender's *previous* sending chain.
-    public let previousChainLength: UInt32
-    /// Message number within the sender's current sending chain.
-    public let messageNumber: UInt32
+  /// Sender's current DH ratchet public key (raw 32 bytes).
+  public let dhPublic: Data
+  /// Number of messages in the sender's *previous* sending chain.
+  public let previousChainLength: UInt32
+  /// Message number within the sender's current sending chain.
+  public let messageNumber: UInt32
 
-    /// Fixed 40-byte wire encoding: 32-byte key ‖ PN (big-endian u32) ‖ N (big-endian u32).
-    public func encoded() -> Data {
-        var data = dhPublic
-        data.append(contentsOf: withUnsafeBytes(of: previousChainLength.bigEndian, Array.init))
-        data.append(contentsOf: withUnsafeBytes(of: messageNumber.bigEndian, Array.init))
-        return data
-    }
+  /// Fixed 40-byte wire encoding: 32-byte key ‖ PN (big-endian u32) ‖ N (big-endian u32).
+  public func encoded() -> Data {
+    var data = dhPublic
+    data.append(contentsOf: withUnsafeBytes(of: previousChainLength.bigEndian, Array.init))
+    data.append(contentsOf: withUnsafeBytes(of: messageNumber.bigEndian, Array.init))
+    return data
+  }
 
-    public init(dhPublic: Data, previousChainLength: UInt32, messageNumber: UInt32) {
-        self.dhPublic = dhPublic
-        self.previousChainLength = previousChainLength
-        self.messageNumber = messageNumber
-    }
+  public init(dhPublic: Data, previousChainLength: UInt32, messageNumber: UInt32) {
+    self.dhPublic = dhPublic
+    self.previousChainLength = previousChainLength
+    self.messageNumber = messageNumber
+  }
 
-    public init(decoding data: Data) throws {
-        guard data.count == 40 else { throw RatchetError.malformedHeader }
-        let base = data.startIndex
-        self.dhPublic = data[base ..< base + 32]
-        self.previousChainLength = data[(base + 32) ..< (base + 36)].loadBigEndianUInt32()
-        self.messageNumber = data[(base + 36) ..< (base + 40)].loadBigEndianUInt32()
-    }
+  public init(decoding data: Data) throws {
+    guard data.count == 40 else { throw RatchetError.malformedHeader }
+    let base = data.startIndex
+    self.dhPublic = data[base..<base + 32]
+    self.previousChainLength = data[(base + 32)..<(base + 36)].loadBigEndianUInt32()
+    self.messageNumber = data[(base + 36)..<(base + 40)].loadBigEndianUInt32()
+  }
 }
 
 /// A complete ratchet message: authenticated header plus AEAD ciphertext.
 public struct RatchetMessage: Equatable, Sendable {
-    public let header: RatchetHeader
-    public let ciphertext: Data
+  public let header: RatchetHeader
+  public let ciphertext: Data
 
-    public init(header: RatchetHeader, ciphertext: Data) {
-        self.header = header
-        self.ciphertext = ciphertext
-    }
+  public init(header: RatchetHeader, ciphertext: Data) {
+    self.header = header
+    self.ciphertext = ciphertext
+  }
 }
 
 /// One end of a Double Ratchet conversation. Holds mutable secret state and is
 /// therefore a reference type used from a single isolation domain at a time.
 public final class DoubleRatchetSession {
 
-    /// Identifies a stored message key for an out-of-order message.
-    private struct SkippedKeyID: Hashable {
-        let dhPublic: Data
-        let messageNumber: UInt32
+  /// Identifies a stored message key for an out-of-order message.
+  private struct SkippedKeyID: Hashable {
+    let dhPublic: Data
+    let messageNumber: UInt32
+  }
+
+  /// Safety cap on how many message keys we'll skip (and store) in response to
+  /// a single message, bounding memory and resisting a malicious gap.
+  public let maxSkip: Int
+
+  // Ratchet state (names follow the spec).
+  private var dhSelf: DHKeyPair  // DHs
+  private var dhRemote: Curve25519.KeyAgreement.PublicKey?  // DHr
+  private var rootKey: Data  // RK
+  private var sendingChainKey: Data?  // CKs
+  private var receivingChainKey: Data?  // CKr
+  private var sendCount: UInt32 = 0  // Ns
+  private var receiveCount: UInt32 = 0  // Nr
+  private var previousSendCount: UInt32 = 0  // PN
+  private var skipped: [SkippedKeyID: Data] = [:]  // MKSKIPPED
+
+  private init(
+    dhSelf: DHKeyPair,
+    dhRemote: Curve25519.KeyAgreement.PublicKey?,
+    rootKey: Data,
+    sendingChainKey: Data?,
+    maxSkip: Int
+  ) {
+    self.dhSelf = dhSelf
+    self.dhRemote = dhRemote
+    self.rootKey = rootKey
+    self.sendingChainKey = sendingChainKey
+    self.maxSkip = maxSkip
+  }
+
+  /// Initializes the side that sends first (Alice). Requires a shared secret
+  /// from the handshake and the responder's initial ratchet public key.
+  public static func initiator(
+    sharedSecret: Data,
+    remotePublicKey: Curve25519.KeyAgreement.PublicKey,
+    maxSkip: Int = 1000
+  ) throws -> DoubleRatchetSession {
+    let dhSelf = DHKeyPair()
+    let dhOut = try dhSelf.sharedSecret(with: remotePublicKey)
+    let (rk, cks) = Primitives.kdfRootKey(rootKey: sharedSecret, dhOutput: dhOut)
+    return DoubleRatchetSession(
+      dhSelf: dhSelf,
+      dhRemote: remotePublicKey,
+      rootKey: rk,
+      sendingChainKey: cks,
+      maxSkip: maxSkip)
+  }
+
+  /// Initializes the side that receives first (Bob). Uses the same shared
+  /// secret and the ratchet key pair whose public half was given to the initiator.
+  public static func responder(
+    sharedSecret: Data,
+    selfKeyPair: DHKeyPair,
+    maxSkip: Int = 1000
+  ) -> DoubleRatchetSession {
+    return DoubleRatchetSession(
+      dhSelf: selfKeyPair,
+      dhRemote: nil,
+      rootKey: sharedSecret,
+      sendingChainKey: nil,
+      maxSkip: maxSkip)
+  }
+
+  /// This side's current ratchet public key (what the peer needs to start as initiator).
+  public var publicKey: Curve25519.KeyAgreement.PublicKey { dhSelf.publicKey }
+
+  // MARK: - Encrypt
+
+  /// Encrypts `plaintext`, advancing the sending chain by one step.
+  /// `associatedData` (optional, e.g. transport metadata) is authenticated
+  /// alongside the header but not encrypted.
+  public func encrypt(_ plaintext: Data, associatedData: Data = Data()) throws -> RatchetMessage {
+    guard let cks = sendingChainKey else {
+      // Should never happen: the sending chain is established at init or
+      // after the first DH ratchet step.
+      throw RatchetError.decryptionFailed
+    }
+    let (nextCK, messageKey) = Primitives.kdfChainKey(chainKey: cks)
+    sendingChainKey = nextCK
+
+    let header = RatchetHeader(
+      dhPublic: dhSelf.publicKey.rawRepresentation,
+      previousChainLength: previousSendCount,
+      messageNumber: sendCount)
+    sendCount += 1
+
+    let ad = associatedData + header.encoded()
+    let ciphertext = try Primitives.encrypt(
+      plaintext: plaintext, messageKey: messageKey, associatedData: ad)
+    return RatchetMessage(header: header, ciphertext: ciphertext)
+  }
+
+  // MARK: - Decrypt
+
+  /// Decrypts `message`, performing a DH ratchet step and/or skipping message
+  /// keys as the header dictates. Handles out-of-order and dropped messages.
+  public func decrypt(_ message: RatchetMessage, associatedData: Data = Data()) throws -> Data {
+    let header = message.header
+
+    // 1. A previously skipped key may already cover this message.
+    if let plaintext = try decryptWithSkippedKey(message, associatedData: associatedData) {
+      return plaintext
     }
 
-    /// Safety cap on how many message keys we'll skip (and store) in response to
-    /// a single message, bounding memory and resisting a malicious gap.
-    public let maxSkip: Int
-
-    // Ratchet state (names follow the spec).
-    private var dhSelf: DHKeyPair                       // DHs
-    private var dhRemote: Curve25519.KeyAgreement.PublicKey?  // DHr
-    private var rootKey: Data                            // RK
-    private var sendingChainKey: Data?                  // CKs
-    private var receivingChainKey: Data?                // CKr
-    private var sendCount: UInt32 = 0                   // Ns
-    private var receiveCount: UInt32 = 0                // Nr
-    private var previousSendCount: UInt32 = 0           // PN
-    private var skipped: [SkippedKeyID: Data] = [:]     // MKSKIPPED
-
-    private init(dhSelf: DHKeyPair,
-                 dhRemote: Curve25519.KeyAgreement.PublicKey?,
-                 rootKey: Data,
-                 sendingChainKey: Data?,
-                 maxSkip: Int) {
-        self.dhSelf = dhSelf
-        self.dhRemote = dhRemote
-        self.rootKey = rootKey
-        self.sendingChainKey = sendingChainKey
-        self.maxSkip = maxSkip
+    // 2. New DH ratchet public key -> finish the old receiving chain, then step.
+    if dhRemote?.rawRepresentation != header.dhPublic {
+      try skipMessageKeys(until: header.previousChainLength)
+      try dhRatchet(header: header)
     }
 
-    /// Initializes the side that sends first (Alice). Requires a shared secret
-    /// from the handshake and the responder's initial ratchet public key.
-    public static func initiator(sharedSecret: Data,
-                                 remotePublicKey: Curve25519.KeyAgreement.PublicKey,
-                                 maxSkip: Int = 1000) throws -> DoubleRatchetSession {
-        let dhSelf = DHKeyPair()
-        let dhOut = try dhSelf.sharedSecret(with: remotePublicKey)
-        let (rk, cks) = Primitives.kdfRootKey(rootKey: sharedSecret, dhOutput: dhOut)
-        return DoubleRatchetSession(dhSelf: dhSelf,
-                                    dhRemote: remotePublicKey,
-                                    rootKey: rk,
-                                    sendingChainKey: cks,
-                                    maxSkip: maxSkip)
+    // 3. Skip any gap within the current receiving chain.
+    try skipMessageKeys(until: header.messageNumber)
+
+    // 4. Derive this message's key and advance the receiving chain.
+    guard let ckr = receivingChainKey else { throw RatchetError.decryptionFailed }
+    let (nextCK, messageKey) = Primitives.kdfChainKey(chainKey: ckr)
+    receivingChainKey = nextCK
+    receiveCount += 1
+
+    let ad = associatedData + header.encoded()
+    do {
+      return try Primitives.decrypt(
+        ciphertext: message.ciphertext, messageKey: messageKey, associatedData: ad)
+    } catch {
+      throw RatchetError.decryptionFailed
     }
+  }
 
-    /// Initializes the side that receives first (Bob). Uses the same shared
-    /// secret and the ratchet key pair whose public half was given to the initiator.
-    public static func responder(sharedSecret: Data,
-                                 selfKeyPair: DHKeyPair,
-                                 maxSkip: Int = 1000) -> DoubleRatchetSession {
-        return DoubleRatchetSession(dhSelf: selfKeyPair,
-                                    dhRemote: nil,
-                                    rootKey: sharedSecret,
-                                    sendingChainKey: nil,
-                                    maxSkip: maxSkip)
+  // MARK: - Internals
+
+  private func decryptWithSkippedKey(_ message: RatchetMessage, associatedData: Data) throws
+    -> Data?
+  {
+    let id = SkippedKeyID(
+      dhPublic: message.header.dhPublic, messageNumber: message.header.messageNumber)
+    guard let messageKey = skipped[id] else { return nil }
+    let ad = associatedData + message.header.encoded()
+    let plaintext: Data
+    do {
+      plaintext = try Primitives.decrypt(
+        ciphertext: message.ciphertext, messageKey: messageKey, associatedData: ad)
+    } catch {
+      throw RatchetError.decryptionFailed
     }
+    skipped[id] = nil  // each message key is used exactly once
+    return plaintext
+  }
 
-    /// This side's current ratchet public key (what the peer needs to start as initiator).
-    public var publicKey: Curve25519.KeyAgreement.PublicKey { dhSelf.publicKey }
-
-    // MARK: - Encrypt
-
-    /// Encrypts `plaintext`, advancing the sending chain by one step.
-    /// `associatedData` (optional, e.g. transport metadata) is authenticated
-    /// alongside the header but not encrypted.
-    public func encrypt(_ plaintext: Data, associatedData: Data = Data()) throws -> RatchetMessage {
-        guard let cks = sendingChainKey else {
-            // Should never happen: the sending chain is established at init or
-            // after the first DH ratchet step.
-            throw RatchetError.decryptionFailed
-        }
-        let (nextCK, messageKey) = Primitives.kdfChainKey(chainKey: cks)
-        sendingChainKey = nextCK
-
-        let header = RatchetHeader(dhPublic: dhSelf.publicKey.rawRepresentation,
-                                   previousChainLength: previousSendCount,
-                                   messageNumber: sendCount)
-        sendCount += 1
-
-        let ad = associatedData + header.encoded()
-        let ciphertext = try Primitives.encrypt(plaintext: plaintext, messageKey: messageKey, associatedData: ad)
-        return RatchetMessage(header: header, ciphertext: ciphertext)
+  /// Advances the receiving chain up to `until`, stashing each skipped message
+  /// key so a late-arriving message can still be decrypted.
+  private func skipMessageKeys(until: UInt32) throws {
+    guard let ckr = receivingChainKey, let dhr = dhRemote else { return }
+    guard until <= receiveCount || Int(until - receiveCount) <= maxSkip else {
+      throw RatchetError.tooManySkippedMessages
     }
-
-    // MARK: - Decrypt
-
-    /// Decrypts `message`, performing a DH ratchet step and/or skipping message
-    /// keys as the header dictates. Handles out-of-order and dropped messages.
-    public func decrypt(_ message: RatchetMessage, associatedData: Data = Data()) throws -> Data {
-        let header = message.header
-
-        // 1. A previously skipped key may already cover this message.
-        if let plaintext = try decryptWithSkippedKey(message, associatedData: associatedData) {
-            return plaintext
-        }
-
-        // 2. New DH ratchet public key -> finish the old receiving chain, then step.
-        if dhRemote?.rawRepresentation != header.dhPublic {
-            try skipMessageKeys(until: header.previousChainLength)
-            try dhRatchet(header: header)
-        }
-
-        // 3. Skip any gap within the current receiving chain.
-        try skipMessageKeys(until: header.messageNumber)
-
-        // 4. Derive this message's key and advance the receiving chain.
-        guard let ckr = receivingChainKey else { throw RatchetError.decryptionFailed }
-        let (nextCK, messageKey) = Primitives.kdfChainKey(chainKey: ckr)
-        receivingChainKey = nextCK
-        receiveCount += 1
-
-        let ad = associatedData + header.encoded()
-        do {
-            return try Primitives.decrypt(ciphertext: message.ciphertext, messageKey: messageKey, associatedData: ad)
-        } catch {
-            throw RatchetError.decryptionFailed
-        }
+    var chainKey = ckr
+    while receiveCount < until {
+      let (nextCK, messageKey) = Primitives.kdfChainKey(chainKey: chainKey)
+      skipped[SkippedKeyID(dhPublic: dhr.rawRepresentation, messageNumber: receiveCount)] =
+        messageKey
+      chainKey = nextCK
+      receiveCount += 1
     }
+    receivingChainKey = chainKey
+  }
 
-    // MARK: - Internals
+  /// Performs a DH ratchet step: derive a new receiving chain from the peer's
+  /// new key, rotate our own DH key, and derive a new sending chain.
+  private func dhRatchet(header: RatchetHeader) throws {
+    previousSendCount = sendCount
+    sendCount = 0
+    receiveCount = 0
 
-    private func decryptWithSkippedKey(_ message: RatchetMessage, associatedData: Data) throws -> Data? {
-        let id = SkippedKeyID(dhPublic: message.header.dhPublic, messageNumber: message.header.messageNumber)
-        guard let messageKey = skipped[id] else { return nil }
-        let ad = associatedData + message.header.encoded()
-        let plaintext: Data
-        do {
-            plaintext = try Primitives.decrypt(ciphertext: message.ciphertext, messageKey: messageKey, associatedData: ad)
-        } catch {
-            throw RatchetError.decryptionFailed
-        }
-        skipped[id] = nil // each message key is used exactly once
-        return plaintext
-    }
+    let remote = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: header.dhPublic)
+    dhRemote = remote
 
-    /// Advances the receiving chain up to `until`, stashing each skipped message
-    /// key so a late-arriving message can still be decrypted.
-    private func skipMessageKeys(until: UInt32) throws {
-        guard let ckr = receivingChainKey, let dhr = dhRemote else { return }
-        guard until <= receiveCount || Int(until - receiveCount) <= maxSkip else {
-            throw RatchetError.tooManySkippedMessages
-        }
-        var chainKey = ckr
-        while receiveCount < until {
-            let (nextCK, messageKey) = Primitives.kdfChainKey(chainKey: chainKey)
-            skipped[SkippedKeyID(dhPublic: dhr.rawRepresentation, messageNumber: receiveCount)] = messageKey
-            chainKey = nextCK
-            receiveCount += 1
-        }
-        receivingChainKey = chainKey
-    }
+    let (rk1, ckr) = Primitives.kdfRootKey(
+      rootKey: rootKey, dhOutput: try dhSelf.sharedSecret(with: remote))
+    rootKey = rk1
+    receivingChainKey = ckr
 
-    /// Performs a DH ratchet step: derive a new receiving chain from the peer's
-    /// new key, rotate our own DH key, and derive a new sending chain.
-    private func dhRatchet(header: RatchetHeader) throws {
-        previousSendCount = sendCount
-        sendCount = 0
-        receiveCount = 0
-
-        let remote = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: header.dhPublic)
-        dhRemote = remote
-
-        let (rk1, ckr) = Primitives.kdfRootKey(rootKey: rootKey, dhOutput: try dhSelf.sharedSecret(with: remote))
-        rootKey = rk1
-        receivingChainKey = ckr
-
-        dhSelf = DHKeyPair()
-        let (rk2, cks) = Primitives.kdfRootKey(rootKey: rootKey, dhOutput: try dhSelf.sharedSecret(with: remote))
-        rootKey = rk2
-        sendingChainKey = cks
-    }
+    dhSelf = DHKeyPair()
+    let (rk2, cks) = Primitives.kdfRootKey(
+      rootKey: rootKey, dhOutput: try dhSelf.sharedSecret(with: remote))
+    rootKey = rk2
+    sendingChainKey = cks
+  }
 }
 
-private extension Data {
-    /// Reads the first 4 bytes of the slice as a big-endian UInt32.
-    func loadBigEndianUInt32() -> UInt32 {
-        var value: UInt32 = 0
-        for byte in self { value = (value << 8) | UInt32(byte) }
-        return value
-    }
+extension Data {
+  /// Reads the first 4 bytes of the slice as a big-endian UInt32.
+  fileprivate func loadBigEndianUInt32() -> UInt32 {
+    var value: UInt32 = 0
+    for byte in self { value = (value << 8) | UInt32(byte) }
+    return value
+  }
 }

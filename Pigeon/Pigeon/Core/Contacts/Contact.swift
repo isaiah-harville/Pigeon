@@ -12,9 +12,9 @@ import PigeonCrypto
 /// static key, and the signature binding them; it must have passed
 /// `bundle.isValid()` before becoming a Contact.
 struct Contact: Identifiable, Equatable {
-    let bundle: IdentityBundle
-    var displayName: String
+  let bundle: IdentityBundle
+  var displayName: String
 
-    /// Identity public key, used as the stable contact id.
-    var id: Data { bundle.identityKey }
+  /// Identity public key, used as the stable contact id.
+  var id: Data { bundle.identityKey }
 }

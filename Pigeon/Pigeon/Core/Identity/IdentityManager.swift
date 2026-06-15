@@ -6,8 +6,8 @@
 //  X25519 Noise static key bound to it.
 //
 
-import Foundation
 import CryptoKit
+import Foundation
 import PigeonCrypto
 
 /// Creates and holds the device's long-term keys.
@@ -24,71 +24,74 @@ import PigeonCrypto
 @Observable
 final class IdentityManager {
 
-    private static let identityAccount = "identity.ed25519.private"
-    private static let staticAccount = "noise.static.x25519.private"
+  private static let identityAccount = "identity.ed25519.private"
+  private static let staticAccount = "noise.static.x25519.private"
 
-    private let store: KeychainStore
-    private let staticStore: KeychainStore
-    private var privateKey: Curve25519.Signing.PrivateKey
-    private var staticKeyPair: DHKeyPair
+  private let store: KeychainStore
+  private let staticStore: KeychainStore
+  private var privateKey: Curve25519.Signing.PrivateKey
+  private var staticKeyPair: DHKeyPair
 
-    /// The public identity safe to share with peers (Ed25519).
-    var publicKey: IdentityPublicKey {
-        IdentityPublicKey(signingKey: privateKey.publicKey)
+  /// The public identity safe to share with peers (Ed25519).
+  var publicKey: IdentityPublicKey {
+    IdentityPublicKey(signingKey: privateKey.publicKey)
+  }
+
+  /// The X25519 Noise static key pair used to establish encrypted sessions.
+  var noiseStaticKey: DHKeyPair { staticKeyPair }
+
+  /// The signed, shareable identity bundle (Ed25519 identity ‖ X25519 static ‖
+  /// signature). This is what we encode into our QR code.
+  var identityBundle: IdentityBundle {
+    let staticPub = staticKeyPair.publicKey.rawRepresentation
+    // Signing our own static key cannot fail with a valid identity key.
+    let signature = (try? privateKey.signature(for: staticPub)) ?? Data()
+    return IdentityBundle(
+      identityKey: privateKey.publicKey.rawRepresentation,
+      staticKey: staticPub,
+      signature: signature)
+  }
+
+  /// Loads existing keys, generating and persisting any that are missing.
+  init(
+    store: KeychainStore = KeychainStore(account: IdentityManager.identityAccount),
+    staticStore: KeychainStore = KeychainStore(account: IdentityManager.staticAccount)
+  ) throws {
+    self.store = store
+    self.staticStore = staticStore
+
+    if let existing = try store.get() {
+      self.privateKey = try Curve25519.Signing.PrivateKey(rawRepresentation: existing)
+    } else {
+      let fresh = Curve25519.Signing.PrivateKey()
+      try store.set(fresh.rawRepresentation)
+      self.privateKey = fresh
     }
 
-    /// The X25519 Noise static key pair used to establish encrypted sessions.
-    var noiseStaticKey: DHKeyPair { staticKeyPair }
-
-    /// The signed, shareable identity bundle (Ed25519 identity ‖ X25519 static ‖
-    /// signature). This is what we encode into our QR code.
-    var identityBundle: IdentityBundle {
-        let staticPub = staticKeyPair.publicKey.rawRepresentation
-        // Signing our own static key cannot fail with a valid identity key.
-        let signature = (try? privateKey.signature(for: staticPub)) ?? Data()
-        return IdentityBundle(identityKey: privateKey.publicKey.rawRepresentation,
-                              staticKey: staticPub,
-                              signature: signature)
+    if let existingStatic = try staticStore.get() {
+      let key = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: existingStatic)
+      self.staticKeyPair = DHKeyPair(privateKey: key)
+    } else {
+      let fresh = DHKeyPair()
+      try staticStore.set(fresh.privateKey.rawRepresentation)
+      self.staticKeyPair = fresh
     }
+  }
 
-    /// Loads existing keys, generating and persisting any that are missing.
-    init(store: KeychainStore = KeychainStore(account: IdentityManager.identityAccount),
-         staticStore: KeychainStore = KeychainStore(account: IdentityManager.staticAccount)) throws {
-        self.store = store
-        self.staticStore = staticStore
+  /// Signs `data` with the identity key.
+  func sign(_ data: Data) throws -> Data {
+    try privateKey.signature(for: data)
+  }
 
-        if let existing = try store.get() {
-            self.privateKey = try Curve25519.Signing.PrivateKey(rawRepresentation: existing)
-        } else {
-            let fresh = Curve25519.Signing.PrivateKey()
-            try store.set(fresh.rawRepresentation)
-            self.privateKey = fresh
-        }
+  /// Destroys the current identity and static key and generates fresh ones.
+  /// Irreversible: all existing trust relationships become invalid.
+  func resetIdentity() throws {
+    let fresh = Curve25519.Signing.PrivateKey()
+    try store.set(fresh.rawRepresentation)
+    self.privateKey = fresh
 
-        if let existingStatic = try staticStore.get() {
-            let key = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: existingStatic)
-            self.staticKeyPair = DHKeyPair(privateKey: key)
-        } else {
-            let fresh = DHKeyPair()
-            try staticStore.set(fresh.privateKey.rawRepresentation)
-            self.staticKeyPair = fresh
-        }
-    }
-
-    /// Signs `data` with the identity key.
-    func sign(_ data: Data) throws -> Data {
-        try privateKey.signature(for: data)
-    }
-
-    /// Destroys the current identity and static key and generates fresh ones.
-    /// Irreversible: all existing trust relationships become invalid.
-    func resetIdentity() throws {
-        let fresh = Curve25519.Signing.PrivateKey()
-        try store.set(fresh.rawRepresentation)
-        self.privateKey = fresh
-
-        let freshStatic = DHKeyPair()
-        try staticStore.set(freshStatic.privateKey.rawRepresentation)
-        self.staticKeyPair = freshStatic
-    }
+    let freshStatic = DHKeyPair()
+    try staticStore.set(freshStatic.privateKey.rawRepresentation)
+    self.staticKeyPair = freshStatic
+  }
 }

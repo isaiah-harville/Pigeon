@@ -9,24 +9,24 @@
 import PackageDescription
 
 let package = Package(
-    name: "PigeonMesh",
-    platforms: [
-        .iOS(.v17),
-        .macOS(.v14),
-    ],
-    products: [
-        .library(name: "PigeonMesh", targets: ["PigeonMesh"]),
-    ],
-    targets: [
-        .target(
-            name: "PigeonMesh",
-            swiftSettings: [
-                .swiftLanguageMode(.v6),
-            ]
-        ),
-        .testTarget(
-            name: "PigeonMeshTests",
-            dependencies: ["PigeonMesh"]
-        ),
-    ]
+  name: "PigeonMesh",
+  platforms: [
+    .iOS(.v17),
+    .macOS(.v14),
+  ],
+  products: [
+    .library(name: "PigeonMesh", targets: ["PigeonMesh"])
+  ],
+  targets: [
+    .target(
+      name: "PigeonMesh",
+      swiftSettings: [
+        .swiftLanguageMode(.v6)
+      ]
+    ),
+    .testTarget(
+      name: "PigeonMeshTests",
+      dependencies: ["PigeonMesh"]
+    ),
+  ]
 )

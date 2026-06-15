@@ -9,24 +9,24 @@
 import PackageDescription
 
 let package = Package(
-    name: "PigeonCrypto",
-    platforms: [
-        .iOS(.v17),
-        .macOS(.v14),
-    ],
-    products: [
-        .library(name: "PigeonCrypto", targets: ["PigeonCrypto"]),
-    ],
-    targets: [
-        .target(
-            name: "PigeonCrypto",
-            swiftSettings: [
-                .swiftLanguageMode(.v6),
-            ]
-        ),
-        .testTarget(
-            name: "PigeonCryptoTests",
-            dependencies: ["PigeonCrypto"]
-        ),
-    ]
+  name: "PigeonCrypto",
+  platforms: [
+    .iOS(.v17),
+    .macOS(.v14),
+  ],
+  products: [
+    .library(name: "PigeonCrypto", targets: ["PigeonCrypto"])
+  ],
+  targets: [
+    .target(
+      name: "PigeonCrypto",
+      swiftSettings: [
+        .swiftLanguageMode(.v6)
+      ]
+    ),
+    .testTarget(
+      name: "PigeonCryptoTests",
+      dependencies: ["PigeonCrypto"]
+    ),
+  ]
 )
