@@ -42,18 +42,15 @@ struct ContentView: View {
 
                 Section("Contacts") {
                     if session.contacts.isEmpty {
-                        Text("No contacts yet. Add one by scanning their QR code.")
-                            .foregroundStyle(.secondary)
+                        ContentUnavailableView("No Contacts",
+                                               systemImage: "person.crop.circle.badge.plus",
+                                               description: Text("Add someone by scanning their QR code."))
                     }
                     ForEach(session.contacts) { contact in
                         NavigationLink {
                             ChatView(contact: contact)
                         } label: {
-                            HStack {
-                                Image(systemName: session.establishedContactIDs.contains(contact.id) ? "lock.fill" : "lock.open")
-                                    .foregroundStyle(session.establishedContactIDs.contains(contact.id) ? .green : .secondary)
-                                Text(contact.displayName)
-                            }
+                            contactRow(contact)
                         }
                     }
                     Button {
@@ -74,5 +71,48 @@ struct ContentView: View {
                 AddContactView()
             }
         }
+    }
+
+    @ViewBuilder
+    private func contactRow(_ contact: Contact) -> some View {
+        let secure = session.establishedContactIDs.contains(contact.id)
+        HStack(spacing: 12) {
+            ZStack {
+                Circle().fill(.tint.opacity(0.2))
+                Text(initials(contact.displayName)).font(.headline).foregroundStyle(.tint)
+            }
+            .frame(width: 40, height: 40)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(contact.displayName).font(.headline)
+                    if session.isEphemeral(contact) {
+                        Image(systemName: "clock.arrow.circlepath").font(.caption2).foregroundStyle(.orange)
+                    }
+                }
+                Text(previewText(contact))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Image(systemName: secure ? "lock.fill" : "lock.open")
+                .font(.footnote)
+                .foregroundStyle(secure ? .green : .secondary)
+        }
+    }
+
+    private func previewText(_ contact: Contact) -> String {
+        guard let message = session.lastMessage(with: contact) else {
+            return session.establishedContactIDs.contains(contact.id) ? "Secure — say hello" : "Connecting…"
+        }
+        let prefix = message.mine ? "You: " : ""
+        return prefix + message.text
+    }
+
+    private func initials(_ name: String) -> String {
+        let parts = name.split(separator: " ").prefix(2)
+        let letters = parts.compactMap { $0.first }.map(String.init).joined()
+        return letters.isEmpty ? "?" : letters.uppercased()
     }
 }

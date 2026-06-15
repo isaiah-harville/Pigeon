@@ -238,6 +238,11 @@ final class SessionManager {
         conversations[contact.id] ?? []
     }
 
+    /// The most recent non-system message with `contact`, for list previews.
+    func lastMessage(with contact: Contact) -> ChatMessage? {
+        conversations[contact.id]?.last(where: { !$0.system })
+    }
+
     // MARK: - Inbound
 
     private func handleInbound(_ data: Data) {
