@@ -28,23 +28,23 @@ final class SessionManager {
   /// read link state. `nil` when a mesh was injected (e.g. in tests).
   let relay: RelayTransport?
 
-  private(set) var contacts: [Contact] = []
+  var contacts: [Contact] = []
   /// Identity ids of contacts with a fully established, verified session.
-  private(set) var establishedContactIDs: Set<Data> = []
+  var establishedContactIDs: Set<Data> = []
   /// What the UI shows: every message this session, persisted or not.
-  private(set) var conversations: [Data: [ChatMessage]] = [:]
+  var conversations: [Data: [ChatMessage]] = [:]
   /// Contacts whose chat is ephemeral — new messages are kept in memory only.
-  private(set) var ephemeralContactIDs: Set<Data> = []
+  var ephemeralContactIDs: Set<Data> = []
   /// The local user's own display name, shared in their QR card.
-  private(set) var myName: String = ""
-  private(set) var log: [String] = []
+  var myName: String = ""
+  var log: [String] = []
 
   /// Called to surface a local notification when a message arrives while the
   /// app is backgrounded.
   var onIncomingNotification: (() -> Void)?
   /// A transient in-app banner shown when a message arrives in the foreground
   /// and the user isn't already viewing that chat.
-  private(set) var banner: InAppBanner?
+  var banner: InAppBanner?
   /// The chat currently on screen (its notifications are suppressed while active).
   var activeChatID: Data?
   var isAppActive = true

@@ -37,16 +37,22 @@ final class PeerTransport: NSObject, Transport {
   /// Invoked with each fully reassembled inbound message and its source id.
   var onMessage: ((_ message: Data, _ peerID: String) -> Void)?
 
-  private lazy var central = CBCentralManager(
-    delegate: self,
-    queue: nil,
-    options: [CBCentralManagerOptionRestoreIdentifierKey: "com.isaiah-harville.Pigeon.central"])
-  private lazy var peripheralManager = CBPeripheralManager(
-    delegate: self,
-    queue: nil,
-    options: [
-      CBPeripheralManagerOptionRestoreIdentifierKey: "com.isaiah-harville.Pigeon.peripheral"
-    ])
+  @ObservationIgnored private var centralRef: CBCentralManager?
+  @ObservationIgnored private var peripheralManagerRef: CBPeripheralManager?
+
+  private var central: CBCentralManager {
+    guard let centralRef else {
+      preconditionFailure("CBCentralManager used before initialization")
+    }
+    return centralRef
+  }
+
+  private var peripheralManager: CBPeripheralManager {
+    guard let peripheralManagerRef else {
+      preconditionFailure("CBPeripheralManager used before initialization")
+    }
+    return peripheralManagerRef
+  }
 
   // Peripheral (server) side.
   private var outboundCharacteristic: CBMutableCharacteristic?
@@ -69,8 +75,16 @@ final class PeerTransport: NSObject, Transport {
     super.init()
     // Restoration identifiers let iOS relaunch us in the background on a BLE
     // event after the app was terminated (see willRestoreState handlers).
-    _ = central
-    _ = peripheralManager
+    centralRef = CBCentralManager(
+      delegate: self,
+      queue: nil,
+      options: [CBCentralManagerOptionRestoreIdentifierKey: "com.isaiah-harville.Pigeon.central"])
+    peripheralManagerRef = CBPeripheralManager(
+      delegate: self,
+      queue: nil,
+      options: [
+        CBPeripheralManagerOptionRestoreIdentifierKey: "com.isaiah-harville.Pigeon.peripheral"
+      ])
     // Periodically recover stuck links: keep scanning and reconnect any
     // known peer that isn't currently connected.
     sweepTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
