@@ -36,14 +36,24 @@ final class SessionManager {
     private(set) var myName: String = ""
     private(set) var log: [String] = []
 
-    /// Called to surface a notification when a message arrives and the user
-    /// isn't actively viewing that chat.
+    /// Called to surface a local notification when a message arrives while the
+    /// app is backgrounded.
     var onIncomingNotification: (() -> Void)?
+    /// A transient in-app banner shown when a message arrives in the foreground
+    /// and the user isn't already viewing that chat.
+    private(set) var banner: InAppBanner?
     /// The chat currently on screen (its notifications are suppressed while active).
     var activeChatID: Data?
     private var isAppActive = true
 
     func setAppActive(_ active: Bool) { isAppActive = active }
+    func dismissBanner() { banner = nil }
+
+    struct InAppBanner: Equatable, Identifiable {
+        let id = UUID()
+        let title: String
+        let body: String
+    }
 
     private var sessions: [Data: SecureSession] = [:]
     /// The initiator's first handshake message, kept so retries resend the
@@ -321,9 +331,21 @@ final class SessionManager {
         received.id = id
         record(received, for: contact.id)
 
-        // Notify unless the user is actively looking at this chat.
-        if !(isAppActive && activeChatID == contact.id) {
-            onIncomingNotification?()
+        // Surface a notification unless the user is actively viewing this chat.
+        guard !(isAppActive && activeChatID == contact.id) else { return }
+        if isAppActive {
+            showBanner(title: contact.displayName, body: text)
+        } else {
+            onIncomingNotification?() // local notification while backgrounded
+        }
+    }
+
+    private func showBanner(title: String, body: String) {
+        let banner = InAppBanner(title: title, body: body)
+        self.banner = banner
+        Task {
+            try? await Task.sleep(for: .seconds(3))
+            if self.banner == banner { self.banner = nil }
         }
     }
 

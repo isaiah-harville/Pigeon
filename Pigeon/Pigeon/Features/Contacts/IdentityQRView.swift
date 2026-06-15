@@ -15,13 +15,23 @@ struct IdentityQRView: View {
     @State private var showRename = false
     @State private var editedName = ""
     @State private var showCopied = false
+    @State private var qrImage: CGImage?
 
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                QRCode.image(from: session.myCard.encoded())
-                    .frame(maxWidth: 280, maxHeight: 280)
-                    .padding()
+                Group {
+                    if let qrImage {
+                        Image(decorative: qrImage, scale: 1.0)
+                            .interpolation(.none)
+                            .resizable()
+                            .scaledToFit()
+                    } else {
+                        ProgressView()
+                    }
+                }
+                .frame(maxWidth: 280, maxHeight: 280)
+                .padding()
 
                 Button {
                     editedName = session.myName
@@ -62,6 +72,8 @@ struct IdentityQRView: View {
             .padding()
         }
         .navigationTitle("My Identity")
+        .onAppear { regenerateQR() }
+        .onChange(of: session.myName) { regenerateQR() }
         .overlay(alignment: .bottom) {
             if showCopied {
                 Label("Copied to clipboard", systemImage: "checkmark.circle.fill")
@@ -84,5 +96,9 @@ struct IdentityQRView: View {
         } message: {
             Text("This name is shared in your QR code.")
         }
+    }
+
+    private func regenerateQR() {
+        qrImage = QRCode.cgImage(from: session.myCard.encoded())
     }
 }
