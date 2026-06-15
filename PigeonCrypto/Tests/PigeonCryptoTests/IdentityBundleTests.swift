@@ -12,7 +12,7 @@ import XCTest
 final class IdentityBundleTests: XCTestCase {
 
   /// Builds a valid bundle: a static key signed by an identity key.
-  private func makeBundle() -> (
+  private func makeBundle() throws -> (
     bundle: IdentityBundle,
     identity: Curve25519.Signing.PrivateKey,
     staticKey: DHKeyPair
@@ -20,7 +20,7 @@ final class IdentityBundleTests: XCTestCase {
     let identity = Curve25519.Signing.PrivateKey()
     let staticKey = DHKeyPair()
     let staticPub = staticKey.publicKey.rawRepresentation
-    let signature = try! identity.signature(for: staticPub)
+    let signature = try identity.signature(for: staticPub)
     let bundle = IdentityBundle(
       identityKey: identity.publicKey.rawRepresentation,
       staticKey: staticPub,
@@ -28,12 +28,12 @@ final class IdentityBundleTests: XCTestCase {
     return (bundle, identity, staticKey)
   }
 
-  func testValidBundleVerifies() {
-    XCTAssertTrue(makeBundle().bundle.isValid())
+  func testValidBundleVerifies() throws {
+    XCTAssertTrue(try makeBundle().bundle.isValid())
   }
 
-  func testTamperedStaticKeyFailsVerification() {
-    let (bundle, _, _) = makeBundle()
+  func testTamperedStaticKeyFailsVerification() throws {
+    let (bundle, _, _) = try makeBundle()
     var badStatic = bundle.staticKey
     badStatic[badStatic.startIndex] ^= 0xFF
     let forged = IdentityBundle(
@@ -43,8 +43,8 @@ final class IdentityBundleTests: XCTestCase {
     XCTAssertFalse(forged.isValid())
   }
 
-  func testWrongIdentityKeyFailsVerification() {
-    let (bundle, _, _) = makeBundle()
+  func testWrongIdentityKeyFailsVerification() throws {
+    let (bundle, _, _) = try makeBundle()
     let otherIdentity = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
     let forged = IdentityBundle(
       identityKey: otherIdentity,
@@ -53,8 +53,8 @@ final class IdentityBundleTests: XCTestCase {
     XCTAssertFalse(forged.isValid())
   }
 
-  func testCorruptSignatureFailsVerification() {
-    let (bundle, _, _) = makeBundle()
+  func testCorruptSignatureFailsVerification() throws {
+    let (bundle, _, _) = try makeBundle()
     var badSig = bundle.signature
     badSig[badSig.startIndex] ^= 0xFF
     let forged = IdentityBundle(
@@ -65,7 +65,7 @@ final class IdentityBundleTests: XCTestCase {
   }
 
   func testEncodingRoundTrip() throws {
-    let (bundle, _, _) = makeBundle()
+    let (bundle, _, _) = try makeBundle()
     let decoded = try IdentityBundle(decoding: bundle.encoded())
     XCTAssertEqual(decoded, bundle)
     XCTAssertEqual(bundle.encoded().count, IdentityBundle.size)
@@ -73,8 +73,8 @@ final class IdentityBundleTests: XCTestCase {
   }
 
   func testDecodeRejectsWrongLength() {
-    XCTAssertThrowsError(try IdentityBundle(decoding: Data(repeating: 0, count: 100))) {
-      XCTAssertEqual($0 as? IdentityError, .malformedBundle)
+    XCTAssertThrowsError(try IdentityBundle(decoding: Data(repeating: 0, count: 100))) { error in
+      XCTAssertEqual(error as? IdentityError, .malformedBundle)
     }
   }
 }

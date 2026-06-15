@@ -28,6 +28,7 @@ public enum NoiseError: Error, Equatable {
   case notYourTurn
   case handshakeNotFinished
   case handshakeAlreadyFinished
+  case invalidState
 }
 
 // MARK: - Noise HKDF
@@ -195,8 +196,8 @@ public final class NoiseHandshakeState {
   private static let dhLen = 32
 
   private let isInitiator: Bool
-  private let s: DHKeyPair  // local static
-  private var e: DHKeyPair?  // local ephemeral
+  private let staticKeyPair: DHKeyPair  // local static
+  private var ephemeralKeyPair: DHKeyPair?  // local ephemeral
   private var rs: Data?  // remote static (raw)
   private var re: Data?  // remote ephemeral (raw)
   private let sym: SymmetricState
@@ -204,7 +205,7 @@ public final class NoiseHandshakeState {
 
   public init(initiator: Bool, staticKey: DHKeyPair) {
     self.isInitiator = initiator
-    self.s = staticKey
+    self.staticKeyPair = staticKey
     self.sym = SymmetricState(protocolName: Self.protocolName)
     sym.mixHash(Data())  // empty prologue
   }
@@ -214,7 +215,7 @@ public final class NoiseHandshakeState {
 
   private var isMyTurn: Bool {
     guard !isComplete else { return false }
-    let initiatorWrites = (messageIndex % 2 == 0)
+    let initiatorWrites = messageIndex.isMultiple(of: 2)
     return initiatorWrites == isInitiator
   }
 
@@ -232,11 +233,11 @@ public final class NoiseHandshakeState {
       switch token {
       case "e":
         let ephemeral = DHKeyPair()
-        e = ephemeral
+        ephemeralKeyPair = ephemeral
         buffer.append(ephemeral.publicKey.rawRepresentation)
         sym.mixHash(ephemeral.publicKey.rawRepresentation)
       case "s":
-        buffer.append(try sym.encryptAndHash(s.publicKey.rawRepresentation))
+        buffer.append(try sym.encryptAndHash(staticKeyPair.publicKey.rawRepresentation))
       default:
         try mixDH(token)
       }
@@ -278,16 +279,39 @@ public final class NoiseHandshakeState {
   private func mixDH(_ token: String) throws {
     switch token {
     case "ee":
-      sym.mixKey(try dh(e!, re!))
+      sym.mixKey(try dh(requireEphemeralKey(), requireRemoteEphemeral()))
     case "es":
-      sym.mixKey(isInitiator ? try dh(e!, rs!) : try dh(s, re!))
+      let output =
+        isInitiator
+        ? try dh(requireEphemeralKey(), requireRemoteStatic())
+        : try dh(staticKeyPair, requireRemoteEphemeral())
+      sym.mixKey(output)
     case "se":
-      sym.mixKey(isInitiator ? try dh(s, re!) : try dh(e!, rs!))
+      let output =
+        isInitiator
+        ? try dh(staticKeyPair, requireRemoteEphemeral())
+        : try dh(requireEphemeralKey(), requireRemoteStatic())
+      sym.mixKey(output)
     case "ss":
-      sym.mixKey(try dh(s, rs!))
+      sym.mixKey(try dh(staticKeyPair, requireRemoteStatic()))
     default:
       break
     }
+  }
+
+  private func requireEphemeralKey() throws -> DHKeyPair {
+    guard let ephemeralKeyPair else { throw NoiseError.invalidState }
+    return ephemeralKeyPair
+  }
+
+  private func requireRemoteStatic() throws -> Data {
+    guard let rs else { throw NoiseError.invalidState }
+    return rs
+  }
+
+  private func requireRemoteEphemeral() throws -> Data {
+    guard let re else { throw NoiseError.invalidState }
+    return re
   }
 
   /// Finalizes the handshake into transport ciphers + peer identity binding.

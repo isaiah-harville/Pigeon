@@ -134,8 +134,8 @@ function_parameter_count:
   error: 6
 
 large_tuple:
-  warning: 3
-  error: 4
+  warning: 4
+  error: 5
 
 nesting:
   type_level:

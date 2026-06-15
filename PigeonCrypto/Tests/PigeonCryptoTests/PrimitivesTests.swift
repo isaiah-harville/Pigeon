@@ -75,9 +75,11 @@ final class PrimitivesTests: XCTestCase {
       plaintext: Data("hello".utf8), messageKey: mk, associatedData: ad)
     ct[ct.startIndex] ^= 0xFF  // flip a bit
 
-    XCTAssertThrowsError(try Primitives.decrypt(ciphertext: ct, messageKey: mk, associatedData: ad))
-    {
-      XCTAssertEqual($0 as? CryptoError, .authenticationFailed)
+    let decrypt = {
+      try Primitives.decrypt(ciphertext: ct, messageKey: mk, associatedData: ad)
+    }
+    XCTAssertThrowsError(try decrypt()) { error in
+      XCTAssertEqual(error as? CryptoError, .authenticationFailed)
     }
   }
 
@@ -88,8 +90,8 @@ final class PrimitivesTests: XCTestCase {
 
     XCTAssertThrowsError(
       try Primitives.decrypt(ciphertext: ct, messageKey: mk, associatedData: Data("B".utf8))
-    ) {
-      XCTAssertEqual($0 as? CryptoError, .authenticationFailed)
+    ) { error in
+      XCTAssertEqual(error as? CryptoError, .authenticationFailed)
     }
   }
 
@@ -97,8 +99,8 @@ final class PrimitivesTests: XCTestCase {
     XCTAssertThrowsError(
       try Primitives.encrypt(
         plaintext: Data("x".utf8), messageKey: Data([0x00]), associatedData: Data())
-    ) {
-      XCTAssertEqual($0 as? CryptoError, .invalidLength)
+    ) { error in
+      XCTAssertEqual(error as? CryptoError, .invalidLength)
     }
   }
 }

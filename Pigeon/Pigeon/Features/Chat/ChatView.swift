@@ -20,72 +20,90 @@ struct ChatView: View {
   private var messages: [ChatMessage] { session.messages(with: contact) }
 
   var body: some View {
+    chatLayout
+      .navigationTitle(contact.displayName)
+      .navigationBarTitleDisplayMode(.inline)
+      .onAppear { session.activeChatID = contact.id }
+      .onDisappear { if session.activeChatID == contact.id { session.activeChatID = nil } }
+      .toolbar { chatToolbar }
+      .sheet(isPresented: $showSafetyNumber) {
+        SafetyNumberSheet(number: session.safetyNumber(with: contact), name: contact.displayName)
+      }
+      .alert("Rename Contact", isPresented: $showRename) {
+        TextField("Name", text: $newName)
+        Button("Cancel", role: .cancel) {}
+        Button("Save") { session.renameContact(contact, to: newName) }
+      }
+  }
+
+  private var chatLayout: some View {
     VStack(spacing: 0) {
       statusBanner
+      messagesScroll
+      composer
+    }
+  }
 
-      ScrollViewReader { proxy in
-        ScrollView {
-          LazyVStack(alignment: .leading, spacing: 6) {
-            ForEach(messages) { message in
-              bubble(message).id(message.id)
-            }
-          }
-          .padding()
-        }
-        .onChange(of: messages.count) {
-          if let last = messages.last {
-            withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+  private var messagesScroll: some View {
+    ScrollViewReader { proxy in
+      ScrollView {
+        LazyVStack(alignment: .leading, spacing: 6) {
+          ForEach(messages) { message in
+            bubble(message).id(message.id)
           }
         }
-        .onAppear {
-          if let last = messages.last { proxy.scrollTo(last.id, anchor: .bottom) }
+        .padding()
+      }
+      .onChange(of: messages.count) {
+        if let last = messages.last {
+          withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
         }
       }
+      .onAppear {
+        if let last = messages.last { proxy.scrollTo(last.id, anchor: .bottom) }
+      }
+    }
+  }
 
-      HStack {
-        TextField("Message", text: $draft)
-          .textFieldStyle(.roundedBorder)
-        Button("Send") {
-          session.send(draft, to: contact)
-          draft = ""
-        }
-        .disabled(draft.isEmpty)
+  private var composer: some View {
+    HStack {
+      TextField("Message", text: $draft)
+        .textFieldStyle(.roundedBorder)
+      Button("Send") {
+        session.send(draft, to: contact)
+        draft = ""
       }
-      .padding()
+      .disabled(draft.isEmpty)
     }
-    .navigationTitle(contact.displayName)
-    .navigationBarTitleDisplayMode(.inline)
-    .onAppear { session.activeChatID = contact.id }
-    .onDisappear { if session.activeChatID == contact.id { session.activeChatID = nil } }
-    .toolbar {
-      ToolbarItem(placement: .primaryAction) {
-        Menu {
-          Toggle(isOn: ephemeralBinding) {
-            Label("Ephemeral chat", systemImage: "clock.arrow.circlepath")
-          }
-          Button {
-            newName = contact.displayName
-            showRename = true
-          } label: {
-            Label("Rename", systemImage: "pencil")
-          }
-          Button {
-            showSafetyNumber = true
-          } label: {
-            Label("Safety number", systemImage: "checkmark.shield")
-          }
-        } label: {
-          Image(systemName: "ellipsis.circle")
-        }
+    .padding()
+  }
+
+  @ToolbarContentBuilder
+  private var chatToolbar: some ToolbarContent {
+    ToolbarItem(placement: .primaryAction) {
+      Menu {
+        chatMenuContent
+      } label: {
+        Image(systemName: "ellipsis.circle")
       }
     }
-    .sheet(isPresented: $showSafetyNumber) {
-      SafetyNumberSheet(number: session.safetyNumber(with: contact), name: contact.displayName)
+  }
+
+  @ViewBuilder
+  private var chatMenuContent: some View {
+    Toggle(isOn: ephemeralBinding) {
+      Label("Ephemeral chat", systemImage: "clock.arrow.circlepath")
     }
-    .alert("Rename Contact", isPresented: $showRename) {
-      TextField("Name", text: $newName)
-      Button("Cancel", role: .cancel) {}
-      Button("Save") { session.renameContact(contact, to: newName) }
+    Button {
+      newName = contact.displayName
+      showRename = true
+    } label: {
+      Label("Rename", systemImage: "pencil")
+    }
+    Button {
+      showSafetyNumber = true
+    } label: {
+      Label("Safety number", systemImage: "checkmark.shield")
     }
   }
 
@@ -183,12 +201,10 @@ private struct SafetyNumberSheet: View {
     NavigationStack {
       ScrollView {
         VStack(spacing: 16) {
-          Text(
-            "Compare this with \(name) in person. If the numbers match on both devices, no one is intercepting your conversation."
-          )
-          .font(.footnote)
-          .foregroundStyle(.secondary)
-          .multilineTextAlignment(.center)
+          Text(explanation)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
           Text(number)
             .font(.title3.monospaced())
             .multilineTextAlignment(.center)
@@ -202,5 +218,12 @@ private struct SafetyNumberSheet: View {
         }
       }
     }
+  }
+
+  private var explanation: String {
+    """
+    Compare this with \(name) in person. If the numbers match on both devices, \
+    no one is intercepting your conversation.
+    """
   }
 }

@@ -16,7 +16,19 @@ struct ChatMessage: Identifiable, Equatable, Codable {
   /// A centered notice (e.g. "Ephemeral enabled") rather than a chat bubble.
   var system: Bool = false
 
-  init(mine: Bool, text: String, pending: Bool = false, system: Bool = false) {
+  init(mine: Bool, text: String) {
+    self.init(mine: mine, text: text, pending: false, system: false)
+  }
+
+  init(mine: Bool, text: String, pending: Bool) {
+    self.init(mine: mine, text: text, pending: pending, system: false)
+  }
+
+  init(mine: Bool, text: String, system: Bool) {
+    self.init(mine: mine, text: text, pending: false, system: system)
+  }
+
+  init(mine: Bool, text: String, pending: Bool, system: Bool) {
     self.mine = mine
     self.text = text
     self.pending = pending

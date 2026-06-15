@@ -62,9 +62,9 @@ public struct Fragment: Equatable, Sendable {
     guard data.count >= Self.headerSize else { throw FragmentationError.malformedFragment }
     let base = data.startIndex
     guard data[base] == Self.version else { throw FragmentationError.malformedFragment }
-    self.messageID = data.readBigEndianUInt16(at: base + 1)
-    self.index = data.readBigEndianUInt16(at: base + 3)
-    self.count = data.readBigEndianUInt16(at: base + 5)
+    self.messageID = readBigEndianUInt16(data, at: base + 1)
+    self.index = readBigEndianUInt16(data, at: base + 3)
+    self.count = readBigEndianUInt16(data, at: base + 5)
     self.payload = Data(data[(base + Self.headerSize)...])
     guard count >= 1, index < count else { throw FragmentationError.inconsistentFragment }
   }
@@ -143,25 +143,39 @@ public final class Reassembler {
 
     // Single-fragment fast path: nothing to buffer.
     if fragment.count == 1 {
-      pending[fragment.messageID] = nil
-      guard fragment.payload.count <= maxMessageBytes else {
-        throw FragmentationError.messageTooLarge
-      }
-      return fragment.payload
+      return try ingestSingleFragment(fragment)
     }
 
     sequenceCounter &+= 1
+    var entry = pendingEntry(for: fragment)
+    try store(fragment, in: &entry)
 
-    // Start (or reset, if the count changed — a reused ID) the pending entry.
-    var entry: Pending
-    if let existing = pending[fragment.messageID], existing.count == fragment.count {
-      entry = existing
-    } else {
-      entry = Pending(
-        count: fragment.count, fragments: [:], byteCount: 0, sequence: sequenceCounter)
+    if let message = try assembledMessage(from: entry, messageID: fragment.messageID) {
+      return message
     }
 
-    // Ignore duplicate fragments rather than double-counting bytes.
+    pending[fragment.messageID] = entry
+    evictIfNeeded()
+    return nil
+  }
+
+  private func ingestSingleFragment(_ fragment: Fragment) throws -> Data {
+    pending[fragment.messageID] = nil
+    guard fragment.payload.count <= maxMessageBytes else {
+      throw FragmentationError.messageTooLarge
+    }
+    return fragment.payload
+  }
+
+  private func pendingEntry(for fragment: Fragment) -> Pending {
+    if let existing = pending[fragment.messageID], existing.count == fragment.count {
+      return existing
+    }
+    return Pending(
+      count: fragment.count, fragments: [:], byteCount: 0, sequence: sequenceCounter)
+  }
+
+  private func store(_ fragment: Fragment, in entry: inout Pending) throws {
     if entry.fragments[fragment.index] == nil {
       entry.byteCount += fragment.payload.count
       guard entry.byteCount <= maxMessageBytes else {
@@ -170,21 +184,19 @@ public final class Reassembler {
       }
       entry.fragments[fragment.index] = fragment.payload
     }
+  }
 
-    // Complete?
-    if entry.fragments.count == Int(entry.count) {
-      pending[fragment.messageID] = nil
-      var message = Data(capacity: entry.byteCount)
-      for i in 0..<entry.count {
-        guard let part = entry.fragments[i] else { throw FragmentationError.inconsistentFragment }
-        message.append(part)
+  private func assembledMessage(from entry: Pending, messageID: UInt16) throws -> Data? {
+    guard entry.fragments.count == Int(entry.count) else { return nil }
+    pending[messageID] = nil
+    var message = Data(capacity: entry.byteCount)
+    for index in 0..<entry.count {
+      guard let part = entry.fragments[index] else {
+        throw FragmentationError.inconsistentFragment
       }
-      return message
+      message.append(part)
     }
-
-    pending[fragment.messageID] = entry
-    evictIfNeeded()
-    return nil
+    return message
   }
 
   /// Number of in-flight (incomplete) messages currently buffered.
@@ -199,8 +211,6 @@ public final class Reassembler {
   }
 }
 
-extension Data {
-  fileprivate func readBigEndianUInt16(at index: Int) -> UInt16 {
-    (UInt16(self[index]) << 8) | UInt16(self[index + 1])
-  }
+private func readBigEndianUInt16(_ data: Data, at index: Int) -> UInt16 {
+  (UInt16(data[index]) << 8) | UInt16(data[index + 1])
 }

@@ -17,40 +17,40 @@ struct ScannerReticleShape: Shape {
 
   func path(in rect: CGRect) -> Path {
     var path = Path()
-    let r = min(radius, min(rect.width, rect.height) / 2)
-    let l = legLength
+    let cornerRadius = min(radius, min(rect.width, rect.height) / 2)
+    let leg = legLength
 
     // Top-left
-    path.move(to: CGPoint(x: rect.minX, y: rect.minY + r + l))
-    path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + r))
+    path.move(to: CGPoint(x: rect.minX, y: rect.minY + cornerRadius + leg))
+    path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + cornerRadius))
     path.addQuadCurve(
-      to: CGPoint(x: rect.minX + r, y: rect.minY),
+      to: CGPoint(x: rect.minX + cornerRadius, y: rect.minY),
       control: CGPoint(x: rect.minX, y: rect.minY))
-    path.addLine(to: CGPoint(x: rect.minX + r + l, y: rect.minY))
+    path.addLine(to: CGPoint(x: rect.minX + cornerRadius + leg, y: rect.minY))
 
     // Top-right
-    path.move(to: CGPoint(x: rect.maxX - r - l, y: rect.minY))
-    path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.minY))
+    path.move(to: CGPoint(x: rect.maxX - cornerRadius - leg, y: rect.minY))
+    path.addLine(to: CGPoint(x: rect.maxX - cornerRadius, y: rect.minY))
     path.addQuadCurve(
-      to: CGPoint(x: rect.maxX, y: rect.minY + r),
+      to: CGPoint(x: rect.maxX, y: rect.minY + cornerRadius),
       control: CGPoint(x: rect.maxX, y: rect.minY))
-    path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + r + l))
+    path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + cornerRadius + leg))
 
     // Bottom-right
-    path.move(to: CGPoint(x: rect.maxX, y: rect.maxY - r - l))
-    path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - r))
+    path.move(to: CGPoint(x: rect.maxX, y: rect.maxY - cornerRadius - leg))
+    path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - cornerRadius))
     path.addQuadCurve(
-      to: CGPoint(x: rect.maxX - r, y: rect.maxY),
+      to: CGPoint(x: rect.maxX - cornerRadius, y: rect.maxY),
       control: CGPoint(x: rect.maxX, y: rect.maxY))
-    path.addLine(to: CGPoint(x: rect.maxX - r - l, y: rect.maxY))
+    path.addLine(to: CGPoint(x: rect.maxX - cornerRadius - leg, y: rect.maxY))
 
     // Bottom-left
-    path.move(to: CGPoint(x: rect.minX + r + l, y: rect.maxY))
-    path.addLine(to: CGPoint(x: rect.minX + r, y: rect.maxY))
+    path.move(to: CGPoint(x: rect.minX + cornerRadius + leg, y: rect.maxY))
+    path.addLine(to: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY))
     path.addQuadCurve(
-      to: CGPoint(x: rect.minX, y: rect.maxY - r),
+      to: CGPoint(x: rect.minX, y: rect.maxY - cornerRadius),
       control: CGPoint(x: rect.minX, y: rect.maxY))
-    path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - r - l))
+    path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - cornerRadius - leg))
 
     return path
   }

@@ -33,7 +33,7 @@ final class SecureSessionTests: XCTestCase {
     return (alice, bob, aliceStatic, bobStatic)
   }
 
-  private func msg(_ s: String) -> Data { Data(s.utf8) }
+  private func msg(_ string: String) -> Data { Data(string.utf8) }
 
   func testEstablishesAndVerifiesPeerIdentity() throws {
     let (alice, bob, aliceStatic, bobStatic) = try establish()
@@ -55,10 +55,10 @@ final class SecureSessionTests: XCTestCase {
 
     // Multiple rounds, exercising DH ratchet steps through the public API.
     for i in 0..<5 {
-      let a = try alice.encrypt(msg("a\(i)"))
-      XCTAssertEqual(try bob.decrypt(a), msg("a\(i)"))
-      let b = try bob.encrypt(msg("b\(i)"))
-      XCTAssertEqual(try alice.decrypt(b), msg("b\(i)"))
+      let aliceMessage = try alice.encrypt(msg("a\(i)"))
+      XCTAssertEqual(try bob.decrypt(aliceMessage), msg("a\(i)"))
+      let bobMessage = try bob.encrypt(msg("b\(i)"))
+      XCTAssertEqual(try alice.decrypt(bobMessage), msg("b\(i)"))
     }
   }
 
@@ -74,15 +74,15 @@ final class SecureSessionTests: XCTestCase {
 
   func testEncryptBeforeEstablishedThrows() throws {
     let alice = SecureSession.initiator(localStatic: DHKeyPair())
-    XCTAssertThrowsError(try alice.encrypt(msg("too soon"))) {
-      XCTAssertEqual($0 as? SessionError, .notEstablished)
+    XCTAssertThrowsError(try alice.encrypt(msg("too soon"))) { error in
+      XCTAssertEqual(error as? SessionError, .notEstablished)
     }
   }
 
   func testMalformedWireRejected() throws {
     let (_, bob, _, _) = try establish()
-    XCTAssertThrowsError(try bob.decrypt(Data([0x00, 0x01, 0x02]))) {
-      XCTAssertEqual($0 as? SessionError, .malformedMessage)
+    XCTAssertThrowsError(try bob.decrypt(Data([0x00, 0x01, 0x02]))) { error in
+      XCTAssertEqual(error as? SessionError, .malformedMessage)
     }
   }
 

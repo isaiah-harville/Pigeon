@@ -53,9 +53,15 @@ final class IdentityManager {
   }
 
   /// Loads existing keys, generating and persisting any that are missing.
+  convenience init() throws {
+    try self.init(
+      store: KeychainStore(account: IdentityManager.identityAccount),
+      staticStore: KeychainStore(account: IdentityManager.staticAccount))
+  }
+
   init(
-    store: KeychainStore = KeychainStore(account: IdentityManager.identityAccount),
-    staticStore: KeychainStore = KeychainStore(account: IdentityManager.staticAccount)
+    store: KeychainStore,
+    staticStore: KeychainStore
   ) throws {
     self.store = store
     self.staticStore = staticStore

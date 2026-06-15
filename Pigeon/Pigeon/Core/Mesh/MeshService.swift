@@ -31,8 +31,11 @@ final class MeshService {
 
   /// Defaults to the BLE transport; inject another `Transport` to run the mesh
   /// over a different link (tests, Multipeer, relays, …).
-  init(transport: (any Transport)? = nil) {
-    let transport = transport ?? PeerTransport()
+  convenience init() {
+    self.init(transport: PeerTransport())
+  }
+
+  init(transport: any Transport) {
     self.transport = transport
     transport.onMessage = { [weak self] data, _ in
       self?.handleInbound(data)

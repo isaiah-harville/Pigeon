@@ -26,11 +26,11 @@ enum SafetyNumber {
 
   /// Computes the safety number for the local and remote identities.
   static func compute(local: IdentityPublicKey, remote: IdentityPublicKey) -> String {
-    let a = local.rawRepresentation
-    let b = remote.rawRepresentation
+    let localBytes = local.rawRepresentation
+    let remoteBytes = remote.rawRepresentation
 
     // Sort so the result is independent of argument order.
-    let (first, second) = lexicographicallyOrdered(a, b)
+    let (first, second) = lexicographicallyOrdered(localBytes, remoteBytes)
 
     let digestA = iteratedDigest(of: first)
     let digestB = iteratedDigest(of: second)

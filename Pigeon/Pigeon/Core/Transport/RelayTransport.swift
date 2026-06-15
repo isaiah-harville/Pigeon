@@ -197,7 +197,7 @@ final class RelayTransport: Transport {
 
   private func send(_ socket: URLSessionWebSocketTask, _ object: [String: String]) {
     guard let data = try? JSONSerialization.data(withJSONObject: object) else { return }
-    let text = String(decoding: data, as: UTF8.self)
+    guard let text = String(bytes: data, encoding: .utf8) else { return }
     Task { try? await socket.send(.string(text)) }
   }
 

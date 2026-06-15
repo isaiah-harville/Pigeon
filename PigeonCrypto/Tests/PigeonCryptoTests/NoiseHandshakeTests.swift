@@ -88,23 +88,24 @@ final class NoiseHandshakeTests: XCTestCase {
     var m2 = try responder.writeMessage()
     m2[m2.count - 1] ^= 0xFF  // corrupt the responder's encrypted static/payload
 
-    XCTAssertThrowsError(try initiator.readMessage(m2)) {
-      XCTAssertEqual($0 as? NoiseError, .decryptionFailed)
+    XCTAssertThrowsError(try initiator.readMessage(m2)) { error in
+      XCTAssertEqual(error as? NoiseError, .decryptionFailed)
     }
   }
 
   func testOutOfOrderWritesRejected() throws {
     let responder = NoiseHandshakeState(initiator: false, staticKey: DHKeyPair())
     // Responder must read message 1 before it may write.
-    XCTAssertThrowsError(try responder.writeMessage()) {
-      XCTAssertEqual($0 as? NoiseError, .notYourTurn)
+    XCTAssertThrowsError(try responder.writeMessage()) { error in
+      XCTAssertEqual(error as? NoiseError, .notYourTurn)
     }
   }
 
   func testIndependentSessionsDiffer() throws {
-    let (a, _, _) = try runHandshake(initiatorStatic: DHKeyPair(), responderStatic: DHKeyPair())
-    let (b, _, _) = try runHandshake(initiatorStatic: DHKeyPair(), responderStatic: DHKeyPair())
+    let (first, _, _) = try runHandshake(initiatorStatic: DHKeyPair(), responderStatic: DHKeyPair())
+    let (second, _, _) = try runHandshake(
+      initiatorStatic: DHKeyPair(), responderStatic: DHKeyPair())
     // Fresh ephemerals => different transcript hashes per session.
-    XCTAssertNotEqual(a.handshakeHash, b.handshakeHash)
+    XCTAssertNotEqual(first.handshakeHash, second.handshakeHash)
   }
 }

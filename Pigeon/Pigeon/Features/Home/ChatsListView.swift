@@ -18,44 +18,51 @@ struct ChatsListView: View {
 
   var body: some View {
     NavigationStack {
-      Group {
-        if session.contacts.isEmpty {
-          emptyState
-        } else {
-          contactList
-        }
+      content
+    }
+  }
+
+  private var content: some View {
+    Group {
+      if session.contacts.isEmpty {
+        emptyState
+      } else {
+        contactList
       }
-      .navigationTitle("Pigeon")
-      .navigationBarTitleDisplayMode(.inline)
-      .safeAreaInset(edge: .bottom) { statusStrip }
-      .toolbar {
-        ToolbarItem(placement: .topBarLeading) {
-          Button {
-            showMenu = true
-          } label: {
-            Image(systemName: "line.3.horizontal")
-              .font(.title3.weight(.semibold))
-          }
-          .accessibilityLabel("Menu")
-        }
-        ToolbarItem(placement: .principal) {
-          Text("Pigeon")
-            .font(.system(size: 28, weight: .heavy, design: .rounded).smallCaps())
-            .tracking(2)
-            .foregroundStyle(.white)
-        }
-        ToolbarItem(placement: .topBarTrailing) {
-          Button {
-            showAddContact = true
-          } label: {
-            Image(systemName: "qrcode.viewfinder")
-              .font(.title3)
-          }
-          .accessibilityLabel("Add contact")
-        }
+    }
+    .navigationTitle("Pigeon")
+    .navigationBarTitleDisplayMode(.inline)
+    .safeAreaInset(edge: .bottom) { statusStrip }
+    .toolbar { toolbarContent }
+    .sheet(isPresented: $showAddContact) { AddContactView() }
+    .sheet(isPresented: $showMenu) { MenuView() }
+  }
+
+  @ToolbarContentBuilder
+  private var toolbarContent: some ToolbarContent {
+    ToolbarItem(placement: .topBarLeading) {
+      Button {
+        showMenu = true
+      } label: {
+        Image(systemName: "line.3.horizontal")
+          .font(.title3.weight(.semibold))
       }
-      .sheet(isPresented: $showAddContact) { AddContactView() }
-      .sheet(isPresented: $showMenu) { MenuView() }
+      .accessibilityLabel("Menu")
+    }
+    ToolbarItem(placement: .principal) {
+      Text("Pigeon")
+        .font(.system(size: 28, weight: .heavy, design: .rounded).smallCaps())
+        .tracking(2)
+        .foregroundStyle(.white)
+    }
+    ToolbarItem(placement: .topBarTrailing) {
+      Button {
+        showAddContact = true
+      } label: {
+        Image(systemName: "qrcode.viewfinder")
+          .font(.title3)
+      }
+      .accessibilityLabel("Add contact")
     }
   }
 
@@ -149,38 +156,49 @@ private struct ContactRow: View {
   private var secure: Bool { session.establishedContactIDs.contains(contact.id) }
 
   var body: some View {
-    HStack(spacing: 14) {
-      ContactAvatar(name: contact.displayName, seed: contact.id, size: 52)
+    HStack(spacing: 14) { rowContent }
+      .padding(.vertical, 2)
+  }
 
-      VStack(alignment: .leading, spacing: 3) {
-        HStack(spacing: 5) {
-          Text(contact.displayName)
-            .font(.headline)
-            .lineLimit(1)
-          if session.isEphemeral(contact) {
-            Image(systemName: "clock.arrow.circlepath")
-              .font(.caption2)
-              .foregroundStyle(.orange)
-          }
-          Spacer(minLength: 4)
-          if let time = timeString {
-            Text(time)
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-        }
-        HStack(spacing: 5) {
-          Image(systemName: secure ? "lock.fill" : "lock.open")
-            .font(.caption2)
-            .foregroundStyle(secure ? .green : .secondary)
-          Text(previewText)
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-        }
+  @ViewBuilder
+  private var rowContent: some View {
+    ContactAvatar(name: contact.displayName, seed: contact.id, size: 52)
+
+    VStack(alignment: .leading, spacing: 3) {
+      titleRow
+      previewRow
+    }
+  }
+
+  private var titleRow: some View {
+    HStack(spacing: 5) {
+      Text(contact.displayName)
+        .font(.headline)
+        .lineLimit(1)
+      if session.isEphemeral(contact) {
+        Image(systemName: "clock.arrow.circlepath")
+          .font(.caption2)
+          .foregroundStyle(.orange)
+      }
+      Spacer(minLength: 4)
+      if let time = timeString {
+        Text(time)
+          .font(.caption)
+          .foregroundStyle(.secondary)
       }
     }
-    .padding(.vertical, 2)
+  }
+
+  private var previewRow: some View {
+    HStack(spacing: 5) {
+      Image(systemName: secure ? "lock.fill" : "lock.open")
+        .font(.caption2)
+        .foregroundStyle(secure ? .green : .secondary)
+      Text(previewText)
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+    }
   }
 
   private var previewText: String {

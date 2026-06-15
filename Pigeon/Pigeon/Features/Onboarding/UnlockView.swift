@@ -16,6 +16,11 @@ struct UnlockView: View {
   @State private var error: String?
 
   var body: some View {
+    content
+      .padding()
+  }
+
+  private var content: some View {
     VStack(spacing: 24) {
       Spacer()
       Image(systemName: "lock.shield")
@@ -23,13 +28,11 @@ struct UnlockView: View {
         .foregroundStyle(.tint)
       Text("Pigeon")
         .font(.largeTitle.bold())
-      Text(
-        "Your messages are stored encrypted on this device. Unlock with Face ID or Touch ID to continue."
-      )
-      .font(.callout)
-      .foregroundStyle(.secondary)
-      .multilineTextAlignment(.center)
-      .padding(.horizontal)
+      Text(explanation)
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+        .padding(.horizontal)
 
       Button {
         unlock()
@@ -46,7 +49,13 @@ struct UnlockView: View {
       }
       Spacer()
     }
-    .padding()
+  }
+
+  private var explanation: String {
+    """
+    Your messages are stored encrypted on this device. Unlock with Face ID or \
+    Touch ID to continue.
+    """
   }
 
   private func unlock() {

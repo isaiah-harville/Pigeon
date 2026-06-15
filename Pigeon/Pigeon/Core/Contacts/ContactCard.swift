@@ -32,8 +32,16 @@ struct ContactCard {
 
   private static let version: UInt8 = 0x02
 
+  init(name: String, bundle: IdentityBundle) {
+    self.init(name: name, bundle: bundle, relayURLs: [], relaySignature: Data())
+  }
+
+  init(name: String, bundle: IdentityBundle, relayURLs: [URL]) {
+    self.init(name: name, bundle: bundle, relayURLs: relayURLs, relaySignature: Data())
+  }
+
   init(
-    name: String, bundle: IdentityBundle, relayURLs: [URL] = [], relaySignature: Data = Data()
+    name: String, bundle: IdentityBundle, relayURLs: [URL], relaySignature: Data
   ) {
     self.name = name
     self.bundle = bundle
@@ -70,7 +78,8 @@ struct ContactCard {
     let body = Data(raw.dropFirst(IdentityBundle.size))
     guard body.first == Self.version else {
       // Legacy card: everything after the bundle is the name; no relays.
-      self.name = String(decoding: body, as: UTF8.self)
+      guard let name = String(bytes: body, encoding: .utf8) else { return nil }
+      self.name = name
       self.relayURLs = []
       self.relaySignature = Data()
       return
@@ -82,14 +91,15 @@ struct ContactCard {
       let signatureField = Self.readField(body, &cursor)
     else { return nil }
 
-    self.name = String(decoding: nameField, as: UTF8.self)
+    guard let name = String(bytes: nameField, encoding: .utf8) else { return nil }
+    self.name = name
     // Honour the advertised relays only if signed by this very identity.
     if !signatureField.isEmpty,
       let identity = try? IdentityPublicKey(rawRepresentation: bundle.identityKey),
       identity.isValidSignature(signatureField, for: urlField)
     {
-      self.relayURLs = String(decoding: urlField, as: UTF8.self)
-        .split(separator: "\n").compactMap { URL(string: String($0)) }
+      guard let relayString = String(bytes: urlField, encoding: .utf8) else { return nil }
+      self.relayURLs = relayString.split(separator: "\n").compactMap { URL(string: String($0)) }
       self.relaySignature = signatureField
     } else {
       self.relayURLs = []

@@ -17,48 +17,72 @@ struct RelaySettingsView: View {
   @State private var newURL = ""
 
   var body: some View {
+    relayList
+      .navigationTitle("Relays")
+      .navigationBarTitleDisplayMode(.inline)
+      .onAppear { urls = session.relayURLs }
+  }
+
+  private var relayList: some View {
     List {
-      Section {
-        HStack(spacing: 8) {
-          Circle().fill(stateColor).frame(width: 8, height: 8)
-          Text(stateText).foregroundStyle(.secondary)
-        }
-      } header: {
-        Text("Status")
-      }
-
-      Section {
-        ForEach(urls, id: \.self) { url in
-          Text(url.absoluteString)
-            .font(.callout.monospaced())
-            .lineLimit(1)
-            .truncationMode(.middle)
-        }
-        .onDelete { offsets in
-          urls.remove(atOffsets: offsets)
-          save()
-        }
-
-        HStack {
-          TextField("wss://relay.example.com/ws", text: $newURL)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .font(.callout.monospaced())
-            .onSubmit(add)
-          Button("Add", action: add)
-            .disabled(!RelaySettings.isValidEndpoint(newURL))
-        }
-      } header: {
-        Text("Relays")
-      } footer: {
-        Text(
-          "Pigeon deposits end-to-end-encrypted ciphertext for your contacts on these relays so they can reach you off Bluetooth. Use wss:// (TLS). A relay never sees message content, but does see connection metadata."
-        )
-      }
+      statusSection
+      relaysSection
     }
-    .navigationTitle("Relays")
-    .navigationBarTitleDisplayMode(.inline)
-    .onAppear { urls = session.relayURLs }
+  }
+
+  private var statusSection: some View {
+    Section {
+      HStack(spacing: 8) {
+        Circle().fill(stateColor).frame(width: 8, height: 8)
+        Text(stateText).foregroundStyle(.secondary)
+      }
+    } header: {
+      Text("Status")
+    }
+  }
+
+  private var relaysSection: some View {
+    Section {
+      relaysRows
+      addRelayRow
+    } header: {
+      Text("Relays")
+    } footer: {
+      Text(relaysFooter)
+    }
+  }
+
+  private var relaysRows: some View {
+    ForEach(urls, id: \.self) { url in
+      Text(url.absoluteString)
+        .font(.callout.monospaced())
+        .lineLimit(1)
+        .truncationMode(.middle)
+    }
+    .onDelete { offsets in
+      urls.remove(atOffsets: offsets)
+      save()
+    }
+  }
+
+  private var addRelayRow: some View {
+    HStack {
+      TextField("wss://relay.example.com/ws", text: $newURL)
+        .textInputAutocapitalization(.never)
+        .autocorrectionDisabled()
+        .font(.callout.monospaced())
+        .onSubmit(add)
+      Button("Add", action: add)
+        .disabled(!RelaySettings.isValidEndpoint(newURL))
+    }
+  }
+
+  private var relaysFooter: String {
+    """
+    Pigeon deposits end-to-end-encrypted ciphertext for your contacts on these \
+    relays so they can reach you off Bluetooth. Use wss:// (TLS). A relay never \
+    sees message content, but does see connection metadata.
+    """
   }
 
   private func add() {

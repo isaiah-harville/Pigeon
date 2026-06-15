@@ -33,7 +33,11 @@ final class Vault {
 
   /// Loads (or, on first launch, creates) the DEK. May present a biometric
   /// prompt. Safe to call repeatedly; a no-op once unlocked.
-  func unlock(reason: String = "Unlock your Pigeon messages") async throws {
+  func unlock() async throws {
+    try await unlock(reason: "Unlock your Pigeon messages")
+  }
+
+  func unlock(reason: String) async throws {
     if isUnlocked { return }
     let keyData = try await Self.loadOrCreateKey(reason: reason)
     self.key = SymmetricKey(data: keyData)

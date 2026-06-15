@@ -15,6 +15,11 @@ struct OnboardingNameView: View {
   private var trimmed: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
 
   var body: some View {
+    content
+      .padding()
+  }
+
+  private var content: some View {
     VStack(spacing: 24) {
       Spacer()
       Image(systemName: "person.crop.circle.badge.checkmark")
@@ -22,13 +27,11 @@ struct OnboardingNameView: View {
         .foregroundStyle(.tint)
       Text("What's your name?")
         .font(.title.bold())
-      Text(
-        "This is shown to people who scan your QR code, so they don't have to type it. You can change it anytime."
-      )
-      .font(.callout)
-      .foregroundStyle(.secondary)
-      .multilineTextAlignment(.center)
-      .padding(.horizontal)
+      Text(explanation)
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+        .padding(.horizontal)
 
       TextField("Your name", text: $name)
         .textFieldStyle(.roundedBorder)
@@ -45,6 +48,12 @@ struct OnboardingNameView: View {
       .padding(.horizontal, 40)
       Spacer()
     }
-    .padding()
+  }
+
+  private var explanation: String {
+    """
+    This is shown to people who scan your QR code, so they don't have to type it. \
+    You can change it anytime.
+    """
   }
 }

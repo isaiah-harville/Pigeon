@@ -58,8 +58,8 @@ public struct RatchetHeader: Equatable, Sendable {
     guard data.count == 40 else { throw RatchetError.malformedHeader }
     let base = data.startIndex
     self.dhPublic = data[base..<base + 32]
-    self.previousChainLength = data[(base + 32)..<(base + 36)].loadBigEndianUInt32()
-    self.messageNumber = data[(base + 36)..<(base + 40)].loadBigEndianUInt32()
+    self.previousChainLength = loadBigEndianUInt32(data[(base + 32)..<(base + 36)])
+    self.messageNumber = loadBigEndianUInt32(data[(base + 36)..<(base + 40)])
   }
 }
 
@@ -272,11 +272,9 @@ public final class DoubleRatchetSession {
   }
 }
 
-extension Data {
-  /// Reads the first 4 bytes of the slice as a big-endian UInt32.
-  fileprivate func loadBigEndianUInt32() -> UInt32 {
-    var value: UInt32 = 0
-    for byte in self { value = (value << 8) | UInt32(byte) }
-    return value
-  }
+/// Reads the first 4 bytes of the slice as a big-endian UInt32.
+private func loadBigEndianUInt32(_ data: Data.SubSequence) -> UInt32 {
+  var value: UInt32 = 0
+  for byte in data { value = (value << 8) | UInt32(byte) }
+  return value
 }

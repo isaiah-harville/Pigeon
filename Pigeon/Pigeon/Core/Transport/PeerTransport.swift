@@ -37,8 +37,16 @@ final class PeerTransport: NSObject, Transport {
   /// Invoked with each fully reassembled inbound message and its source id.
   var onMessage: ((_ message: Data, _ peerID: String) -> Void)?
 
-  private var central: CBCentralManager!
-  private var peripheralManager: CBPeripheralManager!
+  private lazy var central = CBCentralManager(
+    delegate: self,
+    queue: nil,
+    options: [CBCentralManagerOptionRestoreIdentifierKey: "com.isaiah-harville.Pigeon.central"])
+  private lazy var peripheralManager = CBPeripheralManager(
+    delegate: self,
+    queue: nil,
+    options: [
+      CBPeripheralManagerOptionRestoreIdentifierKey: "com.isaiah-harville.Pigeon.peripheral"
+    ])
 
   // Peripheral (server) side.
   private var outboundCharacteristic: CBMutableCharacteristic?
@@ -61,14 +69,8 @@ final class PeerTransport: NSObject, Transport {
     super.init()
     // Restoration identifiers let iOS relaunch us in the background on a BLE
     // event after the app was terminated (see willRestoreState handlers).
-    central = CBCentralManager(
-      delegate: self, queue: nil,
-      options: [CBCentralManagerOptionRestoreIdentifierKey: "com.isaiah-harville.Pigeon.central"])
-    peripheralManager = CBPeripheralManager(
-      delegate: self, queue: nil,
-      options: [
-        CBPeripheralManagerOptionRestoreIdentifierKey: "com.isaiah-harville.Pigeon.peripheral"
-      ])
+    _ = central
+    _ = peripheralManager
     // Periodically recover stuck links: keep scanning and reconnect any
     // known peer that isn't currently connected.
     sweepTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
@@ -89,7 +91,11 @@ final class PeerTransport: NSObject, Transport {
   /// Broadcasts `message` to every connected peer, in both roles. BLE is a flood
   /// transport, so the `recipient` hint is ignored — the mesh addresses and
   /// deduplicates above this layer.
-  func broadcast(_ message: Data, to _: Data? = nil) {
+  func broadcast(_ message: Data) {
+    broadcast(message, to: nil)
+  }
+
+  func broadcast(_ message: Data, to _: Data?) {
     let fragments: [Fragment]
     do {
       fragments = try fragmenter.fragment(
@@ -121,9 +127,10 @@ final class PeerTransport: NSObject, Transport {
       }
     }
     let paths = writeTargets > 0 || notified
-    note(
-      "Sent \(message.count)B/\(fragments.count)f via \(writeTargets) write(s)\(notified ? " + notify" : "")\(paths ? "" : " — NO PATH")"
-    )
+    let notifyText = notified ? " + notify" : ""
+    let pathText = paths ? "" : " — NO PATH"
+    let summary = "Sent \(message.count)B/\(fragments.count)f via \(writeTargets) write(s)"
+    note("\(summary)\(notifyText)\(pathText)")
   }
 
   // MARK: - Helpers

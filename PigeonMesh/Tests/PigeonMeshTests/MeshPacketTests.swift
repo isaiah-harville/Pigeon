@@ -17,25 +17,25 @@ final class MeshPacketTests: XCTestCase {
   // MARK: - Packet encoding
 
   func testPacketRoundTrip() throws {
-    let p = packet(ttl: 5, payload: Data("carrier".utf8))
-    let decoded = try MeshPacket(decoding: p.encoded())
-    XCTAssertEqual(decoded, p)
-    XCTAssertEqual(p.encoded().count, MeshPacket.headerSize + 7)
+    let packet = packet(ttl: 5, payload: Data("carrier".utf8))
+    let decoded = try MeshPacket(decoding: packet.encoded())
+    XCTAssertEqual(decoded, packet)
+    XCTAssertEqual(packet.encoded().count, MeshPacket.headerSize + 7)
   }
 
   func testRandomIDsAreUniqueAndSized() {
-    let a = MeshPacket.randomID()
-    let b = MeshPacket.randomID()
-    XCTAssertEqual(a.count, MeshPacket.idSize)
-    XCTAssertNotEqual(a, b)
+    let firstID = MeshPacket.randomID()
+    let secondID = MeshPacket.randomID()
+    XCTAssertEqual(firstID.count, MeshPacket.idSize)
+    XCTAssertNotEqual(firstID, secondID)
   }
 
   func testDecodeRejectsShortOrBadVersion() {
     XCTAssertThrowsError(try MeshPacket(decoding: Data([1, 2, 3])))
     var bytes = packet().encoded()
     bytes[bytes.startIndex] = 0x09
-    XCTAssertThrowsError(try MeshPacket(decoding: bytes)) {
-      XCTAssertEqual($0 as? MeshError, .malformedPacket)
+    XCTAssertThrowsError(try MeshPacket(decoding: bytes)) { error in
+      XCTAssertEqual(error as? MeshError, .malformedPacket)
     }
   }
 
@@ -61,36 +61,36 @@ final class MeshPacketTests: XCTestCase {
 
   func testSeenCacheEvictsOldest() {
     let cache = SeenCache(capacity: 2)
-    let a = MeshPacket.randomID()
-    let b = MeshPacket.randomID()
-    let c = MeshPacket.randomID()
-    cache.insert(a)
-    cache.insert(b)
-    cache.insert(c)  // evicts a
-    XCTAssertFalse(cache.contains(a))
-    XCTAssertTrue(cache.contains(b))
-    XCTAssertTrue(cache.contains(c))
+    let firstID = MeshPacket.randomID()
+    let secondID = MeshPacket.randomID()
+    let thirdID = MeshPacket.randomID()
+    cache.insert(firstID)
+    cache.insert(secondID)
+    cache.insert(thirdID)  // evicts firstID
+    XCTAssertFalse(cache.contains(firstID))
+    XCTAssertTrue(cache.contains(secondID))
+    XCTAssertTrue(cache.contains(thirdID))
   }
 
   // MARK: - Router
 
   func testOriginateProducesDeliverableUniquePackets() {
     let router = MeshRouter(defaultTTL: 8)
-    let p = router.originate(Data("msg".utf8))
-    XCTAssertEqual(p.ttl, 8)
-    XCTAssertEqual(p.payload, Data("msg".utf8))
+    let packet = router.originate(Data("msg".utf8))
+    XCTAssertEqual(packet.ttl, 8)
+    XCTAssertEqual(packet.payload, Data("msg".utf8))
   }
 
   func testIngestDeliversOnceThenDedupes() {
     let router = MeshRouter()
-    let p = packet(ttl: 8, payload: Data("once".utf8))
+    let packet = packet(ttl: 8, payload: Data("once".utf8))
 
-    let first = router.ingest(p)
+    let first = router.ingest(packet)
     XCTAssertEqual(first.deliver, Data("once".utf8))
     XCTAssertEqual(first.relay?.ttl, 7)
 
     // The same packet arriving again over another path is dropped.
-    let second = router.ingest(p)
+    let second = router.ingest(packet)
     XCTAssertNil(second.deliver)
     XCTAssertNil(second.relay)
   }
@@ -99,10 +99,10 @@ final class MeshPacketTests: XCTestCase {
     // Models exactly the observed bug: one logical message, two BLE paths.
     let router = MeshRouter()
     let originator = MeshRouter()
-    let p = originator.originate(Data("hello from A".utf8))
+    let packet = originator.originate(Data("hello from A".utf8))
 
-    let viaPathOne = router.ingest(p)
-    let viaPathTwo = router.ingest(p)  // same packetID, different transport source
+    let viaPathOne = router.ingest(packet)
+    let viaPathTwo = router.ingest(packet)  // same packetID, different transport source
 
     XCTAssertEqual(viaPathOne.deliver, Data("hello from A".utf8))
     XCTAssertNil(viaPathTwo.deliver)  // delivered exactly once
@@ -110,16 +110,16 @@ final class MeshPacketTests: XCTestCase {
 
   func testOriginatorIgnoresItsOwnEcho() {
     let router = MeshRouter()
-    let p = router.originate(Data("echo".utf8))
+    let packet = router.originate(Data("echo".utf8))
     // If our own packet floods back to us, we must not deliver it to ourselves.
-    XCTAssertNil(router.ingest(p).deliver)
+    XCTAssertNil(router.ingest(packet).deliver)
   }
 
   func testIngestAtTTL1DeliversButDoesNotRelay() {
     let router = MeshRouter()
-    let p = packet(ttl: 1, payload: Data("last hop".utf8))
-    let r = router.ingest(p)
-    XCTAssertEqual(r.deliver, Data("last hop".utf8))
-    XCTAssertNil(r.relay)
+    let packet = packet(ttl: 1, payload: Data("last hop".utf8))
+    let result = router.ingest(packet)
+    XCTAssertEqual(result.deliver, Data("last hop".utf8))
+    XCTAssertNil(result.relay)
   }
 }

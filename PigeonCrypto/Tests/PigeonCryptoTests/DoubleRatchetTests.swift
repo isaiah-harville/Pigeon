@@ -33,7 +33,7 @@ final class DoubleRatchetTests: XCTestCase {
     return (alice, bob)
   }
 
-  private func msg(_ s: String) -> Data { Data(s.utf8) }
+  private func msg(_ string: String) -> Data { Data(string.utf8) }
 
   func testInOrderConversation() throws {
     let (alice, bob) = try makePair()
@@ -54,9 +54,9 @@ final class DoubleRatchetTests: XCTestCase {
   func testMultipleMessagesBeforeReply() throws {
     let (alice, bob) = try makePair()
     let plaintexts = (0..<5).map { msg("burst \($0)") }
-    let sent = try plaintexts.map { try alice.encrypt($0) }
-    for (i, m) in sent.enumerated() {
-      XCTAssertEqual(try bob.decrypt(m), plaintexts[i])
+    let sent = try plaintexts.map { plaintext in try alice.encrypt(plaintext) }
+    for (index, message) in sent.enumerated() {
+      XCTAssertEqual(try bob.decrypt(message), plaintexts[index])
     }
   }
 
@@ -87,10 +87,10 @@ final class DoubleRatchetTests: XCTestCase {
     let (alice, bob) = try makePair()
     // Several DH ratchet steps as direction alternates.
     for i in 0..<8 {
-      let a = try alice.encrypt(msg("a\(i)"))
-      XCTAssertEqual(try bob.decrypt(a), msg("a\(i)"))
-      let b = try bob.encrypt(msg("b\(i)"))
-      XCTAssertEqual(try alice.decrypt(b), msg("b\(i)"))
+      let aliceMessage = try alice.encrypt(msg("a\(i)"))
+      XCTAssertEqual(try bob.decrypt(aliceMessage), msg("a\(i)"))
+      let bobMessage = try bob.encrypt(msg("b\(i)"))
+      XCTAssertEqual(try alice.decrypt(bobMessage), msg("b\(i)"))
     }
   }
 
@@ -121,32 +121,34 @@ final class DoubleRatchetTests: XCTestCase {
 
   func testTamperedCiphertextRejected() throws {
     let (alice, bob) = try makePair()
-    var m = try alice.encrypt(msg("secret"))
-    var ct = m.ciphertext
-    ct[ct.startIndex] ^= 0x01
-    m = RatchetMessage(header: m.header, ciphertext: ct)
-    XCTAssertThrowsError(try bob.decrypt(m)) {
-      XCTAssertEqual($0 as? RatchetError, .decryptionFailed)
+    var message = try alice.encrypt(msg("secret"))
+    var ciphertext = message.ciphertext
+    ciphertext[ciphertext.startIndex] ^= 0x01
+    message = RatchetMessage(header: message.header, ciphertext: ciphertext)
+    XCTAssertThrowsError(try bob.decrypt(message)) { error in
+      XCTAssertEqual(error as? RatchetError, .decryptionFailed)
     }
   }
 
   func testTamperedHeaderRejected() throws {
     let (alice, bob) = try makePair()
-    let m = try alice.encrypt(msg("secret"))
+    let message = try alice.encrypt(msg("secret"))
     // Forge the message number; header is authenticated as AAD.
     let forged = RatchetHeader(
-      dhPublic: m.header.dhPublic,
-      previousChainLength: m.header.previousChainLength,
-      messageNumber: m.header.messageNumber &+ 1)
-    XCTAssertThrowsError(try bob.decrypt(RatchetMessage(header: forged, ciphertext: m.ciphertext)))
+      dhPublic: message.header.dhPublic,
+      previousChainLength: message.header.previousChainLength,
+      messageNumber: message.header.messageNumber &+ 1)
+    XCTAssertThrowsError(
+      try bob.decrypt(RatchetMessage(header: forged, ciphertext: message.ciphertext)))
   }
 
   func testTooManySkippedMessagesRejected() throws {
     let (alice, bob) = try makePair(maxSkip: 5)
     var last: RatchetMessage?
     for i in 0..<10 { last = try alice.encrypt(msg("m\(i)")) }  // gap of 9 > maxSkip
-    XCTAssertThrowsError(try bob.decrypt(last!)) {
-      XCTAssertEqual($0 as? RatchetError, .tooManySkippedMessages)
+    let lastMessage = try XCTUnwrap(last)
+    XCTAssertThrowsError(try bob.decrypt(lastMessage)) { error in
+      XCTAssertEqual(error as? RatchetError, .tooManySkippedMessages)
     }
   }
 

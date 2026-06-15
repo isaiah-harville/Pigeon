@@ -39,8 +39,8 @@ final class SessionEnvelopeTests: XCTestCase {
   }
 
   func testDecodeRejectsShort() {
-    XCTAssertThrowsError(try SessionEnvelope(decoding: Data(repeating: 1, count: 10))) {
-      XCTAssertEqual($0 as? EnvelopeError, .malformedEnvelope)
+    XCTAssertThrowsError(try SessionEnvelope(decoding: Data(repeating: 1, count: 10))) { error in
+      XCTAssertEqual(error as? EnvelopeError, .malformedEnvelope)
     }
   }
 
@@ -48,8 +48,8 @@ final class SessionEnvelopeTests: XCTestCase {
     var bytes = SessionEnvelope(type: .message, sender: id(1), recipient: id(2), payload: Data())
       .encoded()
     bytes[bytes.startIndex] = 0x09
-    XCTAssertThrowsError(try SessionEnvelope(decoding: bytes)) {
-      XCTAssertEqual($0 as? EnvelopeError, .malformedEnvelope)
+    XCTAssertThrowsError(try SessionEnvelope(decoding: bytes)) { error in
+      XCTAssertEqual(error as? EnvelopeError, .malformedEnvelope)
     }
   }
 
@@ -57,8 +57,8 @@ final class SessionEnvelopeTests: XCTestCase {
     var bytes = SessionEnvelope(type: .message, sender: id(1), recipient: id(2), payload: Data())
       .encoded()
     bytes[bytes.startIndex + 1] = 0x07  // not a valid EnvelopeType
-    XCTAssertThrowsError(try SessionEnvelope(decoding: bytes)) {
-      XCTAssertEqual($0 as? EnvelopeError, .malformedEnvelope)
+    XCTAssertThrowsError(try SessionEnvelope(decoding: bytes)) { error in
+      XCTAssertEqual(error as? EnvelopeError, .malformedEnvelope)
     }
   }
 }

@@ -15,81 +15,122 @@ struct MenuView: View {
 
   var body: some View {
     NavigationStack {
-      List {
-        Section {
-          NavigationLink {
-            IdentityQRView()
-          } label: {
-            HStack(spacing: 14) {
-              ContactAvatar(
-                name: session.myName,
-                seed: identity.publicKey.rawRepresentation,
-                size: 56)
-              VStack(alignment: .leading, spacing: 2) {
-                Text(session.myName.isEmpty ? "You" : session.myName)
-                  .font(.title3.weight(.semibold))
-                Label("Show my QR code", systemImage: "qrcode")
-                  .font(.subheadline)
-                  .foregroundStyle(.secondary)
-              }
-            }
-            .padding(.vertical, 4)
-          }
-        }
+      menuList
+        .navigationTitle("Menu")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { doneToolbar }
+    }
+  }
 
-        Section("Identity") {
-          LabeledContent("Fingerprint", value: identity.publicKey.shortFingerprint)
-            .font(.callout.monospaced())
-        }
+  private var menuList: some View {
+    List {
+      identityCardSection
+      fingerprintSection
+      bluetoothSection
+      relaySection
+      activitySection
+    }
+  }
 
-        Section("Bluetooth") {
-          HStack {
-            Label("Status", systemImage: "dot.radiowaves.left.and.right")
-            Spacer()
-            HStack(spacing: 6) {
-              Circle().fill(statusColor).frame(width: 8, height: 8)
-              Text(session.status.rawValue).foregroundStyle(.secondary)
-            }
-          }
-          LabeledContent("Connected peers", value: "\(session.connectedPeerCount)")
-        }
+  private var identityCardSection: some View {
+    Section {
+      NavigationLink {
+        IdentityQRView()
+      } label: {
+        identityCard
+      }
+    }
+  }
 
-        Section {
-          NavigationLink {
-            RelaySettingsView()
-          } label: {
-            HStack {
-              Label("Internet relays", systemImage: "antenna.radiowaves.left.and.right")
-              Spacer()
-              HStack(spacing: 6) {
-                Circle().fill(relayColor).frame(width: 8, height: 8)
-                Text(relayText).foregroundStyle(.secondary)
-              }
-            }
-          }
-        } footer: {
-          Text(
-            "Optional. Reach contacts who are out of Bluetooth range. Off by default — Pigeon stays serverless until you add one."
-          )
-        }
+  private var identityCard: some View {
+    HStack(spacing: 14) {
+      ContactAvatar(
+        name: session.myName,
+        seed: identity.publicKey.rawRepresentation,
+        size: 56)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(session.myName.isEmpty ? "You" : session.myName)
+          .font(.title3.weight(.semibold))
+        Label("Show my QR code", systemImage: "qrcode")
+          .font(.subheadline)
+          .foregroundStyle(.secondary)
+      }
+    }
+    .padding(.vertical, 4)
+  }
 
-        if !session.log.isEmpty {
-          Section("Activity") {
-            ForEach(Array(session.log.suffix(12).enumerated()), id: \.offset) { _, line in
-              Text(line)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-          }
+  private var fingerprintSection: some View {
+    Section("Identity") {
+      LabeledContent("Fingerprint", value: identity.publicKey.shortFingerprint)
+        .font(.callout.monospaced())
+    }
+  }
+
+  private var bluetoothSection: some View {
+    Section("Bluetooth") {
+      HStack {
+        Label("Status", systemImage: "dot.radiowaves.left.and.right")
+        Spacer()
+        statusIndicator
+      }
+      LabeledContent("Connected peers", value: "\(session.connectedPeerCount)")
+    }
+  }
+
+  private var statusIndicator: some View {
+    HStack(spacing: 6) {
+      Circle().fill(statusColor).frame(width: 8, height: 8)
+      Text(session.status.rawValue).foregroundStyle(.secondary)
+    }
+  }
+
+  private var relaySection: some View {
+    Section {
+      NavigationLink {
+        RelaySettingsView()
+      } label: {
+        relayRow
+      }
+    } footer: {
+      Text(relayFooter)
+    }
+  }
+
+  private var relayRow: some View {
+    HStack {
+      Label("Internet relays", systemImage: "antenna.radiowaves.left.and.right")
+      Spacer()
+      HStack(spacing: 6) {
+        Circle().fill(relayColor).frame(width: 8, height: 8)
+        Text(relayText).foregroundStyle(.secondary)
+      }
+    }
+  }
+
+  private var relayFooter: String {
+    """
+    Optional. Reach contacts who are out of Bluetooth range. Off by default — \
+    Pigeon stays serverless until you add one.
+    """
+  }
+
+  @ViewBuilder
+  private var activitySection: some View {
+    if !session.log.isEmpty {
+      Section("Activity") {
+        ForEach(Array(session.log.suffix(12).enumerated()), id: \.offset) { _, line in
+          Text(line)
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
       }
-      .navigationTitle("Menu")
-      .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Done") { dismiss() }
-        }
-      }
+    }
+  }
+
+  @ToolbarContentBuilder
+  private var doneToolbar: some ToolbarContent {
+    ToolbarItem(placement: .confirmationAction) {
+      Button("Done") { dismiss() }
     }
   }
 

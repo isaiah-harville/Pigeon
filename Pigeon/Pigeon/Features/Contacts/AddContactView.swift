@@ -18,34 +18,45 @@ struct AddContactView: View {
 
   var body: some View {
     NavigationStack {
-      ScrollView {
-        VStack(spacing: 24) {
-          scanner
-          Text("Point your camera at the other person's Pigeon QR code.")
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-            .padding(.horizontal)
-
-          if let error {
-            Label(error, systemImage: "exclamationmark.triangle.fill")
-              .font(.footnote)
-              .foregroundStyle(.red)
-              .multilineTextAlignment(.center)
-              .frame(maxWidth: .infinity)
+      content
+        .navigationTitle("Add Contact")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+          ToolbarItem(placement: .cancellationAction) {
+            Button("Cancel") { dismiss() }
           }
+        }
+    }
+  }
 
-          manualEntry
-        }
-        .padding()
+  private var content: some View {
+    ScrollView {
+      VStack(spacing: 24) {
+        scanner
+        scannerHint
+        errorLabel
+        manualEntry
       }
-      .navigationTitle("Add Contact")
-      .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel") { dismiss() }
-        }
-      }
+      .padding()
+    }
+  }
+
+  private var scannerHint: some View {
+    Text("Point your camera at the other person's Pigeon QR code.")
+      .font(.callout)
+      .foregroundStyle(.secondary)
+      .multilineTextAlignment(.center)
+      .padding(.horizontal)
+  }
+
+  @ViewBuilder
+  private var errorLabel: some View {
+    if let error {
+      Label(error, systemImage: "exclamationmark.triangle.fill")
+        .font(.footnote)
+        .foregroundStyle(.red)
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity)
     }
   }
 
