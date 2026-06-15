@@ -14,7 +14,7 @@ struct ContentView: View {
     @State private var showAddContact = false
 
     var body: some View {
-        if session.isReady {
+        if session.isUnlocked {
             hub
         } else {
             UnlockView()

@@ -21,6 +21,8 @@ struct PersistedContact: Codable {
 struct PersistedState: Codable {
     var contacts: [PersistedContact] = []
     var conversations: [String: [ChatMessage]] = [:]
+    /// Base64 identity ids of contacts whose chat is ephemeral.
+    var ephemeralContactIDs: [String] = []
 }
 
 /// Reads and writes `PersistedState` as an encrypted blob in Application Support.

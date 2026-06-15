@@ -22,6 +22,9 @@ public enum EnvelopeType: UInt8, Sendable {
     case handshake = 1
     /// An application message (ratchet ciphertext) for an established session.
     case message = 2
+    /// A request asking the peer (the initiator) to (re)start a handshake —
+    /// used to recover when one side has lost its session (e.g. after restart).
+    case rehandshakeRequest = 3
 }
 
 /// An identity-addressed envelope. `sender`/`recipient` are 32-byte identity

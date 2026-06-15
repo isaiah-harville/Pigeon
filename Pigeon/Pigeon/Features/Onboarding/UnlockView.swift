@@ -23,27 +23,20 @@ struct UnlockView: View {
                 .foregroundStyle(.tint)
             Text("Pigeon")
                 .font(.largeTitle.bold())
-            Text("Your messages are stored encrypted on this device. Unlock to continue, or use ephemeral mode to keep nothing on disk.")
+            Text("Your messages are stored encrypted on this device. Unlock with Face ID or Touch ID to continue.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
 
-            VStack(spacing: 12) {
-                Button {
-                    unlock()
-                } label: {
-                    Label("Unlock", systemImage: "faceid")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(unlocking)
-
-                Button("Use ephemeral mode") {
-                    session.useEphemeralMode()
-                }
-                .disabled(unlocking)
+            Button {
+                unlock()
+            } label: {
+                Label("Unlock", systemImage: "faceid")
+                    .frame(maxWidth: .infinity)
             }
+            .buttonStyle(.borderedProminent)
+            .disabled(unlocking)
             .padding(.horizontal, 40)
 
             if let error {

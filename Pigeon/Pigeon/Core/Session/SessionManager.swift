@@ -28,34 +28,33 @@ final class SessionManager {
     private(set) var contacts: [Contact] = []
     /// Identity ids of contacts with a fully established, verified session.
     private(set) var establishedContactIDs: Set<Data> = []
-    /// Decrypted conversation history per contact (in-memory, this session).
+    /// What the UI shows: every message this session, persisted or not.
     private(set) var conversations: [Data: [ChatMessage]] = [:]
+    /// Contacts whose chat is ephemeral — new messages are kept in memory only.
+    private(set) var ephemeralContactIDs: Set<Data> = []
     private(set) var log: [String] = []
 
     private var sessions: [Data: SecureSession] = [:]
     /// The initiator's first handshake message, kept so retries resend the
     /// *same* message (stable ephemeral) rather than starting over.
     private var pendingMsg1: [Data: Data] = [:]
+    /// The on-disk mirror of conversations (excludes ephemeral-era messages).
+    private var persistedConversations: [Data: [ChatMessage]] = [:]
     private var retryTimer: Timer?
 
     private var myID: Data { identity.publicKey.rawRepresentation }
 
-    /// Whether on-device history is unlocked, ephemeral, or still locked.
-    enum StorageState { case locked, persistent, ephemeral }
-    private(set) var storageState: StorageState = .locked
+    /// Locked until the vault is unlocked with Face ID / Touch ID.
+    private(set) var isUnlocked = false
     private var store: EncryptedStore?
 
     init(identity: IdentityManager, mesh: MeshService? = nil) {
         self.identity = identity
         self.mesh = mesh ?? MeshService()
-        // Contacts/history load after the vault is unlocked (or stay empty in
-        // ephemeral mode); BLE runs regardless.
+        // Contacts/history load after the vault is unlocked; BLE runs regardless.
         self.mesh.onMessage = { [weak self] data in self?.handleInbound(data) }
         startRetryLoop()
     }
-
-    /// True once the user has chosen persistent (unlocked) or ephemeral mode.
-    var isReady: Bool { storageState != .locked }
 
     /// Attaches the encrypted store after unlock: load persisted state and begin
     /// establishing sessions for known contacts.
@@ -70,16 +69,21 @@ final class SessionManager {
         for (key, messages) in state.conversations {
             if let id = Data(base64Encoded: key) { loaded[id] = messages }
         }
-        conversations = loaded
-        storageState = .persistent
+        persistedConversations = loaded
+        conversations = loaded // start the in-memory view from what's on disk
+        ephemeralContactIDs = Set(state.ephemeralContactIDs.compactMap { Data(base64Encoded: $0) })
+        isUnlocked = true
         for contact in contacts { establishIfNeeded(contactID: contact.id) }
     }
 
-    /// Runs without persistence: nothing is written to disk this session.
-    func useEphemeralMode() {
-        store?.wipe()
-        store = nil
-        storageState = .ephemeral
+    /// Whether `contact`'s chat is in ephemeral (don't-persist-new-messages) mode.
+    func isEphemeral(_ contact: Contact) -> Bool { ephemeralContactIDs.contains(contact.id) }
+
+    /// Toggles ephemeral mode for one chat. Affects only future messages;
+    /// already-saved history is left on disk untouched.
+    func setEphemeral(_ on: Bool, for contact: Contact) {
+        if on { ephemeralContactIDs.insert(contact.id) } else { ephemeralContactIDs.remove(contact.id) }
+        persist()
     }
 
     // MARK: - UI passthroughs
@@ -143,8 +147,7 @@ final class SessionManager {
         do {
             let ciphertext = try session.encrypt(Data(text.utf8))
             sendEnvelope(.message, payload: ciphertext, to: contact)
-            conversations[contact.id, default: []].append(ChatMessage(mine: true, text: text))
-            persist()
+            record(ChatMessage(mine: true, text: text), for: contact.id)
         } catch {
             note("Encrypt failed: \(error)")
         }
@@ -166,12 +169,11 @@ final class SessionManager {
         switch envelope.type {
         case .handshake: handleHandshake(envelope.payload, from: contact)
         case .message: handleMessage(envelope.payload, from: contact)
+        case .rehandshakeRequest: handleRehandshakeRequest(from: contact)
         }
     }
 
     private func handleHandshake(_ payload: Data, from contact: Contact) {
-        guard !establishedContactIDs.contains(contact.id) else { return } // already secure
-
         if isInitiator(toward: contact.id) {
             // We drive; this is the responder's reply on our stable session.
             guard let session = sessions[contact.id] else { return } // not started; retry will
@@ -181,8 +183,14 @@ final class SessionManager {
             note("← handshake reply from \"\(contact.displayName)\"")
             pump(session, with: contact)
         } else {
-            // We respond. A handshake message (re)starts us as responder; if our
-            // current session can't read it, the peer restarted, so reset once.
+            // We respond. A handshake (re)starts us as responder. If we already
+            // had an established session, the peer restarted and lost theirs —
+            // drop ours and re-handshake so we reconnect without a restart.
+            if establishedContactIDs.contains(contact.id) {
+                establishedContactIDs.remove(contact.id)
+                sessions[contact.id] = nil
+                note("Peer \"\(contact.displayName)\" restarted; re-establishing")
+            }
             var session = sessions[contact.id] ?? makeResponder(for: contact)
             if (try? session.readHandshakeMessage(payload)) == nil {
                 session = makeResponder(for: contact)
@@ -196,15 +204,38 @@ final class SessionManager {
     }
 
     private func handleMessage(_ payload: Data, from contact: Contact) {
-        guard let session = sessions[contact.id], establishedContactIDs.contains(contact.id) else { return }
+        guard let session = sessions[contact.id], establishedContactIDs.contains(contact.id) else {
+            // We have no session for a contact that's messaging us — our state is
+            // stale (we likely restarted). Trigger reconnection.
+            requestRehandshake(with: contact)
+            return
+        }
         do {
             let plaintext = try session.decrypt(payload)
             let text = String(decoding: plaintext, as: UTF8.self)
-            conversations[contact.id, default: []].append(ChatMessage(mine: false, text: text))
-            persist()
+            record(ChatMessage(mine: false, text: text), for: contact.id)
         } catch {
-            note("Decrypt failed from \"\(contact.displayName)\"")
+            note("Decrypt failed from \"\(contact.displayName)\" — re-establishing")
+            requestRehandshake(with: contact)
         }
+    }
+
+    /// Recovers a lost/stale session. The initiator restarts the handshake; the
+    /// responder asks the initiator to do so.
+    private func requestRehandshake(with contact: Contact) {
+        if isInitiator(toward: contact.id) {
+            resetSession(for: contact.id)
+            establishIfNeeded(contactID: contact.id)
+        } else {
+            sendEnvelope(.rehandshakeRequest, payload: Data(), to: contact)
+        }
+    }
+
+    private func handleRehandshakeRequest(from contact: Contact) {
+        guard isInitiator(toward: contact.id) else { return } // only the initiator can start
+        note("\"\(contact.displayName)\" requested re-handshake")
+        resetSession(for: contact.id)
+        establishIfNeeded(contactID: contact.id)
     }
 
     // MARK: - Handshake driving
@@ -259,11 +290,11 @@ final class SessionManager {
               remoteStatic == contact.bundle.staticKey,
               contact.bundle.isValid() else {
             sessions[contact.id] = nil
-            note("⚠️ Session REJECTED with \"\(contact.displayName)\": static key does not match verified identity")
+            note("\u{26A0}\u{FE0E} Session REJECTED with \"\(contact.displayName)\": static key does not match verified identity")
             return
         }
         establishedContactIDs.insert(contact.id)
-        note("🔒 Secure session established with \"\(contact.displayName)\"")
+        note("\u{1F512}\u{FE0E} Secure session established with \"\(contact.displayName)\"")
     }
 
     private func sendEnvelope(_ type: EnvelopeType, payload: Data, to contact: Contact) {
@@ -293,17 +324,29 @@ final class SessionManager {
         if log.count > 200 { log.removeFirst(log.count - 200) }
     }
 
-    /// Persists current contacts and conversations to the encrypted store
-    /// (no-op in ephemeral mode or before unlock).
+    /// Appends a message to the in-memory view, and to the on-disk mirror unless
+    /// the chat is ephemeral, then persists.
+    private func record(_ message: ChatMessage, for contactID: Data) {
+        conversations[contactID, default: []].append(message)
+        if !ephemeralContactIDs.contains(contactID) {
+            persistedConversations[contactID, default: []].append(message)
+        }
+        persist()
+    }
+
+    /// Writes contacts, the on-disk conversation mirror, and ephemeral flags to
+    /// the encrypted store (no-op before unlock).
     private func persist() {
-        guard let store, storageState == .persistent else { return }
+        guard let store, isUnlocked else { return }
         let persistedContacts = contacts.map {
             PersistedContact(name: $0.displayName, bundle: $0.bundle.encoded())
         }
-        var persistedConversations: [String: [ChatMessage]] = [:]
-        for (id, messages) in conversations {
-            persistedConversations[id.base64EncodedString()] = messages
+        var conversationsByKey: [String: [ChatMessage]] = [:]
+        for (id, messages) in persistedConversations {
+            conversationsByKey[id.base64EncodedString()] = messages
         }
-        store.save(PersistedState(contacts: persistedContacts, conversations: persistedConversations))
+        store.save(PersistedState(contacts: persistedContacts,
+                                  conversations: conversationsByKey,
+                                  ephemeralContactIDs: ephemeralContactIDs.map { $0.base64EncodedString() }))
     }
 }

@@ -43,7 +43,18 @@ struct ChatView: View {
         .navigationTitle(contact.displayName)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button("Safety #") { showSafetyNumber = true }
+                Menu {
+                    Toggle(isOn: ephemeralBinding) {
+                        Label("Ephemeral chat", systemImage: "clock.arrow.circlepath")
+                    }
+                    Button {
+                        showSafetyNumber = true
+                    } label: {
+                        Label("Safety number", systemImage: "checkmark.shield")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
             }
         }
         .sheet(isPresented: $showSafetyNumber) {
@@ -51,12 +62,23 @@ struct ChatView: View {
         }
     }
 
+    private var ephemeralBinding: Binding<Bool> {
+        Binding(
+            get: { session.isEphemeral(contact) },
+            set: { session.setEphemeral($0, for: contact) }
+        )
+    }
+
     @ViewBuilder
     private var statusBanner: some View {
-        HStack {
+        HStack(spacing: 6) {
             Image(systemName: isSecure ? "lock.fill" : "lock.open")
             Text(isSecure ? "End-to-end encrypted" : "Establishing secure session…")
             Spacer()
+            if session.isEphemeral(contact) {
+                Label("Ephemeral", systemImage: "clock.arrow.circlepath")
+                    .foregroundStyle(.orange)
+            }
         }
         .font(.footnote)
         .foregroundStyle(isSecure ? .green : .secondary)
