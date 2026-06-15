@@ -62,6 +62,11 @@ SECURITY_MODEL.md → Audit Readiness).
   SECURITY_MODEL.md.
 - **External security audit** before any real-world "secure" claim.
 
+## Beyond these phases
+
+Longer-term direction — **group chats** and **long-distance / non-Bluetooth
+secure transport** — is planned in [FUTURE_ROADMAP.md](FUTURE_ROADMAP.md).
+
 ## Standing principles
 
 - Security-critical code stays small, dependency-free, and auditable; compose
