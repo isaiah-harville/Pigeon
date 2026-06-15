@@ -88,7 +88,7 @@ architecture for reaching peers out of local range (decision recorded
 2026-06-16). It is a blind ciphertext mailbox: clients address delivery to a
 recipient's advertised relay(s); the relay never sees plaintext and is never
 trusted for confidentiality, authentication, or integrity. The relay server
-lives in this repo (`relay/`), ships as a Docker image, and is federated from the
+lives in this repo (`PigeonRelay/`), ships as a Docker image, and is federated from the
 start (many independent relays, chosen per user — no server-to-server protocol).
 Local delivery and relay delivery are both first-class transports carrying the
 same end-to-end ciphertext. See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md)

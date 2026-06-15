@@ -66,7 +66,7 @@ copyleft:
 - **The iOS app** (this repo, root [LICENSE](LICENSE)), **[`PigeonCrypto/`](PigeonCrypto/LICENSE)**,
   and **[`PigeonMesh/`](PigeonMesh/LICENSE)** — **MIT**. Permissive and App
   Store–compatible; the app links only these.
-- **[`relay/`](relay/LICENSE)** — **GNU AGPL-3.0-only**. It's a standalone
+- **[`PigeonRelay/`](PigeonRelay/LICENSE)** — **GNU AGPL-3.0-only**. It's a standalone
   network server (not linked into the app), so AGPL's network-source-availability
   (§13) applies to anyone running a modified relay, with no effect on the app.
 

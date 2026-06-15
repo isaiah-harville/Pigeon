@@ -1,13 +1,13 @@
-name: Relay
+name: PigeonRelay
 
 on:
   push:
     branches: [main]
-    paths: ["relay/**", ".github/workflows/relay.yml"]
+    paths: ["PigeonRelay/**", ".github/workflows/relay.yml"]
     tags: ["relay-v*"]
   pull_request:
     branches: [main]
-    paths: ["relay/**", ".github/workflows/relay.yml"]
+    paths: ["PigeonRelay/**", ".github/workflows/relay.yml"]
   workflow_dispatch:
 
 concurrency:
