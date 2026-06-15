@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Pigeon is secure, offline-capable messaging with end-to-end encryption, Bluetooth mesh, and zero-knowledge federated relay support."
+    />
+    <meta name="theme-color" content="#0a0d0b" />
+    <title>Pigeon | Secure Mesh Messaging</title>
+    <link rel="icon" href="/assets/appicon.png" />
+    <link rel="apple-touch-icon" href="/assets/appicon.png" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="site-shell">
+      <header class="site-header">
+        <a class="brand" href="/" aria-label="Pigeon home">
+          <img src="/assets/appicon.png" alt="" />
+          <span>Pigeon</span>
+        </a>
+        <nav aria-label="Primary navigation">
+          <a href="/privacy-policy/">Privacy</a>
+        </nav>
+      </header>
+
+      <main>
+        <section class="hero" aria-labelledby="hero-title">
+          <div class="hero-copy">
+            <p class="eyebrow">Offline-capable encrypted messaging</p>
+            <h1 id="hero-title">PIGEON</h1>
+            <p class="lede">
+              Tactical communication for short-range teams, private groups, and
+              situations where the network is unavailable or untrusted.
+            </p>
+          </div>
+
+          <div class="signal-panel" aria-label="Security posture">
+            <img src="/assets/appicon.png" alt="Pigeon app icon" />
+            <dl>
+              <div>
+                <dt>Transport</dt>
+                <dd>Mesh and federated relays</dd>
+              </div>
+              <div>
+                <dt>Identity</dt>
+                <dd>Public-key verification</dd>
+              </div>
+              <div>
+                <dt>Messages</dt>
+                <dd>End-to-end encrypted</dd>
+              </div>
+            </dl>
+          </div>
+        </section>
+
+        <section class="principles" aria-labelledby="principles-title">
+          <div>
+            <p class="eyebrow">Security model</p>
+            <h2 id="principles-title">Designed to leak as little as possible.</h2>
+          </div>
+          <div class="principle-grid">
+            <article>
+              <span>01</span>
+              <h3>No account layer</h3>
+              <p>
+                Pigeon does not require a phone number, email address, social
+                login, or cloud account to create an identity.
+              </p>
+            </article>
+            <article>
+              <span>02</span>
+              <h3>Keys stay local</h3>
+              <p>
+                Long-term identity keys are generated on-device. Private key
+                material is not uploaded to Pigeon infrastructure.
+              </p>
+            </article>
+            <article>
+              <span>03</span>
+              <h3>Offline-capable mesh</h3>
+              <p>
+                Nearby devices can exchange messages directly over local radio
+                without a central service in the middle.
+              </p>
+            </article>
+            <article>
+              <span>04</span>
+              <h3>Relays are blind</h3>
+              <p>
+                Optional relays move opaque ciphertext between mailboxes. They
+                do not receive keys and cannot decrypt message contents.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section class="assurance" aria-labelledby="assurance-title">
+          <h2 id="assurance-title">Built for hostile conditions.</h2>
+          <ul>
+            <li>End-to-end encryption for message content.</li>
+            <li>Human-verifiable safety numbers for peer identity checks.</li>
+            <li>Local encrypted storage for conversations on device.</li>
+            <li>No ads, tracking SDKs, or analytics pipeline.</li>
+          </ul>
+        </section>
+      </main>
+
+      <footer>
+        <span>Pigeon</span>
+        <a href="/privacy-policy/">Privacy Policy</a>
+      </footer>
+    </div>
+  </body>
+</html>

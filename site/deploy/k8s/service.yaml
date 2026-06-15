@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pigeon
+spec:
+  type: ClusterIP
+  selector:
+    app: pigeon
+  ports:
+    - port: 80
+      targetPort: http

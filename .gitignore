@@ -1,6 +1,10 @@
-# Xcode
-#
-# gitignore contributors: remember to update Global/Xcode.gitignore, Objective-C.gitignore & Swift.gitignore
+# Rust
+target/
+
+# Misc.
+local/
+
+# -- GitHub's Swift Template --
 
 ## User settings
 xcuserdata/

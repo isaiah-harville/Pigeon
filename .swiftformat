@@ -1,0 +1,20 @@
+# SwiftFormat is the source of truth for mechanical formatting.
+# Keep SwiftLint style rules that duplicate these choices disabled in .swiftlint.yml.
+
+--swiftversion 6.0
+--indent 4
+--tabwidth 4
+--linebreaks lf
+--trimwhitespace always
+--semicolons never
+--commas inline
+--maxwidth 100
+--wraparguments before-first
+--wrapparameters before-first
+--wrapcollections before-first
+--closingparen balanced
+--self remove
+--stripunusedargs closure-only
+--ifdef no-indent
+
+--exclude Pigeon/Pigeon.xcodeproj,PigeonCrypto/.build,PigeonCrypto/.swiftpm,PigeonMesh/.build,PigeonMesh/.swiftpm
