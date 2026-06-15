@@ -33,7 +33,12 @@ jobs:
         run: brew install swift-format
 
       - name: Check formatting
-        run: swift-format --recursive --lint .
+        run: |
+          swift-format lint --recursive --parallel SwingThoughts/
+          if [ $? -ne 0 ]; then
+            echo "Run 'swift-format format --recursive --in-place SwingThoughts/' locally to fix."
+            exit 1
+          fi
 
   package-tests:
     name: Swift Package Tests
