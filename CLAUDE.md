@@ -80,10 +80,24 @@ Be conservative with tokens.
 6. In the final response, summarize what changed, what was verified, and any
    remaining security caveat.
 
+## Remote Delivery (decided)
+
+An **opt-in, federated, zero-knowledge relay** is an approved part of the
+architecture for reaching peers out of local range (decision recorded
+2026-06-16). It is a blind ciphertext mailbox: clients address delivery to a
+recipient's advertised relay(s); the relay never sees plaintext and is never
+trusted for confidentiality, authentication, or integrity. The relay server
+lives in this repo (`relay/`), ships as a Docker image, and is federated from the
+start (many independent relays, chosen per user — no server-to-server protocol).
+Bluetooth/local delivery stays fully serverless; relays are off the path when
+peers are in range. See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) §6.1.
+
 ## Do Not Do
 
-- Do not add network services, analytics, telemetry, or cloud sync without an
-  explicit product decision.
+- Do not add analytics, telemetry, or cloud sync, and do not add *new* network
+  services beyond the decided relay (above), without an explicit product decision.
+- The relay must stay zero-knowledge: never give it plaintext, keys, linkable
+  logs, or any field that lets it read, link, or forge content.
 - Do not introduce unaudited crypto dependencies casually.
 - Do not weaken Keychain accessibility for convenience.
 - Do not paper over authentication failures with retries or fallback plaintext.

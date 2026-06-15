@@ -68,18 +68,24 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 ### 🟡 In progress
 
 - **UI polish** — ongoing refinement of chat/contacts.
+- **Relay transport (remote delivery)** — opt-in `RelayTransport` + a
+  self-hostable zero-knowledge mailbox server (target: homelab Kubernetes, then
+  federation). Carries the same E2E ciphertext to peers out of local range. See
+  [SECURITY_MODEL.md §6.1](SECURITY_MODEL.md). Pairs naturally with async first
+  contact (below) so a relayed message can reach a peer who was never in range.
 
 ### ⬜ Next
 
 - **Hardening / audit prep (Phase 7)** — clear the audit blockers below;
   traffic-analysis resistance (padding/cover traffic), key zeroization,
   constant-time compares, logging discipline.
-- **`Transport` abstraction** — make BLE one implementation of a `Transport`
-  protocol so `MeshService` can run over other transports. The key enabler for
-  everything in the horizon; cheap to do now, do it before shipping new transports.
+- **Relay metadata minimization** — sealed-sender addressing, padding, optional
+  Tor routing so the relay sees as little as possible (audit items 12–16).
 - **Async first contact (X3DH-style prekeys)** — message a peer who's offline at
   first contact (prekeys in the QR / gossiped over mesh). Unblocks long-distance
   and offline group messaging. Has prekey-exhaustion/replay tradeoffs.
+- **Local Wi-Fi transport** — Network.framework/Multipeer for same-network reach,
+  still serverless; another `Transport` implementation.
 
 ### 🔭 Horizon
 
@@ -100,12 +106,14 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 - **Delay-tolerant "data mules":** hold ciphertext addressed to a recipient and
   deliver when next encountered; physical movement bridges disconnected clusters.
 - **Internet (opt-in), in order of fit:** (1) **federated zero-knowledge relays**
-  — dumb, self-hostable mailboxes storing ciphertext only (Nostr-relay-like);
-  (2) **Tor** hidden services for metadata privacy (Briar-style); (3) direct P2P
-  (NAT traversal usually needs a TURN relay — partial at best).
+  — dumb, self-hostable mailboxes storing ciphertext only (Nostr-relay-like) —
+  *first relay now in progress, see above*; (2) **Tor** hidden services for
+  metadata privacy (Briar-style); (3) direct P2P (NAT traversal usually needs a
+  TURN relay — partial at best).
 - Metadata is the main new risk: mitigate with sealed-sender, onion routing,
   padding, cover traffic.
-- *Path:* Transport abstraction → data mules → federated relays → Tor.
+- *Path:* ~~Transport abstraction~~ ✅ → single self-hosted relay (in progress) →
+  federation → metadata hardening (sealed-sender/Tor) → data mules.
 
 ---
 
