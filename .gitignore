@@ -1,8 +1,8 @@
-# Data
-assets/
-
 # Rust
 target/
+
+# Misc.
+local/
 
 # -- GitHub's Swift Template --
 
