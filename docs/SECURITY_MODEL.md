@@ -87,12 +87,13 @@ End-to-end encryption is performed by the two conversation endpoints
 - **Identity reset** generates a fresh key, irreversibly invalidating all
   existing trust relationships. This is, and must remain, user-visible.
 
-> **Open binding issue (tracked):** the long-term key used by the Noise
-> handshake is an **X25519 static** key, while the *identity* key is **Ed25519**.
-> These must be cryptographically bound (the X25519 static signed by the Ed25519
-> identity, and both carried in the QR payload) so that verifying the safety
-> number actually authenticates the Noise channel. This binding is **not yet
-> implemented**. See [Audit Readiness](#audit-readiness--pre-audit-notes).
+> **Identity ↔ Noise-static binding (implemented):** the Noise handshake uses an
+> **X25519 static** key while the *identity* is **Ed25519**. These are bound via
+> `IdentityBundle` — the X25519 static key is signed by the Ed25519 identity, and
+> the signed bundle is the QR payload. At session establishment, the handshake's
+> `remoteStaticKey` is checked against the verified bundle, so comparing safety
+> numbers authenticates the encrypted channel. (Still in scope for the overall
+> audit.) See [Audit Readiness](#audit-readiness--pre-audit-notes).
 
 ---
 
@@ -204,11 +205,11 @@ what an auditor should examine and what must be resolved first. It is the
 authoritative to-do list for reaching audit readiness.
 
 ### Must-fix before an audit is meaningful
-1. **Bind Noise static ↔ Ed25519 identity (§4).** Today the QR/safety-number
-   flow verifies the Ed25519 identity, but the Noise handshake authenticates an
-   X25519 static key that is *not* cryptographically tied to it. Implement: a
-   long-term X25519 static signed by the Ed25519 identity, both in the QR
-   payload, with signature + binding verified at session establishment.
+1. ~~**Bind Noise static ↔ Ed25519 identity.**~~ ✅ **Implemented.** `IdentityBundle`
+   carries the X25519 static key signed by the Ed25519 identity; the QR payload
+   is the signed bundle; `SessionManager` rejects any established session whose
+   handshake `remoteStaticKey` does not equal the verified bundle's static key.
+   (Still subject to overall audit, but the gap is closed.)
 2. **Cross-validate Noise against the official test vectors.** Current tests
    prove our two ends interoperate (self-consistency); they do **not** prove
    byte-level conformance to `Noise_XX_25519_ChaChaPoly_SHA256`. Add the

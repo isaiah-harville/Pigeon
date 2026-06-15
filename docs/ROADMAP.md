@@ -35,8 +35,8 @@ for the security design and audit-readiness tracking.
 | 1 | **Identity** — Curve25519 key in Keychain, fingerprint, safety number | ✅ done |
 | 2 | **Crypto core** — primitives, Double Ratchet, Noise XX, SecureSession (44 tests) | ✅ done |
 | 3 | **BLE transport** — dual-role CoreBluetooth, GATT, fragmentation/reassembly | ✅ link verified on two devices |
-| 3b | **Encrypt the link** — run SecureSession handshake + ratchet over the transport | ▶ in progress |
-| 4 | **Mesh** — packet format, TTL, duplicate-suppression, store-and-forward relay | ⬜ |
+| 3b | **Encrypt the link** — SecureSession over mesh, identity binding, QR exchange, encrypted chat UI | ✅ built (awaiting two-device test) |
+| 4 | **Mesh** — packet format, TTL, duplicate-suppression, store-and-forward relay | 🟡 dedup + flood relay done; store-and-forward queue remains |
 | 5 | **Encrypted storage** — at-rest encryption + ephemeral mode | ⬜ |
 | 6 | **UI** — onboarding, QR contact verification, real chat | ⬜ |
 | 7 | **Hardening** — traffic-analysis resistance, security review, audit prep | ⬜ |
@@ -46,10 +46,11 @@ for the security design and audit-readiness tracking.
 Carried so we don't lose them; several are also audit blockers (see
 SECURITY_MODEL.md → Audit Readiness).
 
-- **Duplicate delivery (Phase 3 → 4):** if two devices connect in both roles, a
-  message arrives twice. To be absorbed by mesh dedup (seen-cache by message id).
-- **Identity ↔ Noise-static binding:** the Ed25519 identity is not yet
-  cryptographically bound to the X25519 Noise static key. **Audit blocker.**
+- **Duplicate delivery:** ✅ resolved — mesh dedup (seen-cache by packet id)
+  delivers each message once across multiple BLE paths.
+- **Identity ↔ Noise-static binding:** ✅ resolved — IdentityBundle signs the
+  X25519 static key with the Ed25519 identity; SessionManager rejects any
+  session whose handshake static key doesn't match the verified bundle.
 - **Official Noise test vectors:** current tests prove self-consistency only;
   add byte-level conformance vectors. **Audit blocker.**
 - **Async first contact:** interactive Noise for now; serverless X3DH-style
