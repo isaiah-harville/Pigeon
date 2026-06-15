@@ -129,6 +129,5 @@ re-handshake), dropped notifications (reliable notify queue).
 
 - Security-critical code stays small, dependency-free, and auditable; compose
   CryptoKit primitives rather than reimplement them.
-- Commit incrementally; each commit should build.
 - Be honest in docs about what is and isn't verified — nothing is "secure" until
   audited.
