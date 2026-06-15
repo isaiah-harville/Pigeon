@@ -31,7 +31,7 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: relay
+          workspaces: PigeonRelay
       - name: Format
         run: cargo fmt --check
       - name: Clippy
