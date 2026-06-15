@@ -33,6 +33,9 @@ final class SessionManager {
     private(set) var log: [String] = []
 
     private var sessions: [Data: SecureSession] = [:]
+    /// The initiator's first handshake message, kept so retries resend the
+    /// *same* message (stable ephemeral) rather than starting over.
+    private var pendingMsg1: [Data: Data] = [:]
     private var retryTimer: Timer?
 
     private var myID: Data { identity.publicKey.rawRepresentation }
@@ -82,8 +85,16 @@ final class SessionManager {
         }
         Self.saveContacts(contacts)
         note("Added contact \"\(name)\"")
+        // Re-scanning forces a fresh handshake (manual recovery if one stalled).
+        resetSession(for: bundle.identityKey)
         establishIfNeeded(contactID: bundle.identityKey)
         return true
+    }
+
+    private func resetSession(for contactID: Data) {
+        sessions[contactID] = nil
+        pendingMsg1[contactID] = nil
+        establishedContactIDs.remove(contactID)
     }
 
     // MARK: - Sending
@@ -124,20 +135,29 @@ final class SessionManager {
     }
 
     private func handleHandshake(_ payload: Data, from contact: Contact) {
-        // An inbound handshake means the peer is driving; if we have no session
-        // (or our in-progress one no longer fits), (re)start as responder.
-        var session = sessions[contact.id] ?? makeResponder(for: contact)
-        do {
-            try session.readHandshakeMessage(payload)
-        } catch {
-            // Likely a fresh restart from the initiator: reset and try once more.
-            session = makeResponder(for: contact)
+        guard !establishedContactIDs.contains(contact.id) else { return } // already secure
+
+        if isInitiator(toward: contact.id) {
+            // We drive; this is the responder's reply on our stable session.
+            guard let session = sessions[contact.id] else { return } // not started; retry will
             guard (try? session.readHandshakeMessage(payload)) != nil else {
-                note("Handshake read failed with \"\(contact.displayName)\"")
-                return
+                return // a stale/duplicate reply — ignore, keep our session intact
             }
+            note("← handshake reply from \"\(contact.displayName)\"")
+            pump(session, with: contact)
+        } else {
+            // We respond. A handshake message (re)starts us as responder; if our
+            // current session can't read it, the peer restarted, so reset once.
+            var session = sessions[contact.id] ?? makeResponder(for: contact)
+            if (try? session.readHandshakeMessage(payload)) == nil {
+                session = makeResponder(for: contact)
+                guard (try? session.readHandshakeMessage(payload)) != nil else {
+                    note("Handshake read failed from \"\(contact.displayName)\"")
+                    return
+                }
+            }
+            pump(session, with: contact)
         }
-        pump(session, with: contact)
     }
 
     private func handleMessage(_ payload: Data, from contact: Contact) {
@@ -161,10 +181,22 @@ final class SessionManager {
         guard !establishedContactIDs.contains(contactID) else { return }
         guard isInitiator(toward: contactID),
               let contact = contacts.first(where: { $0.id == contactID }) else { return }
-        // (Re)start a fresh initiator handshake.
-        let session = SecureSession.initiator(localStatic: identity.noiseStaticKey)
-        sessions[contactID] = session
-        pump(session, with: contact)
+
+        if sessions[contactID] == nil {
+            // Start a fresh handshake and remember msg1 for retries.
+            let session = SecureSession.initiator(localStatic: identity.noiseStaticKey)
+            sessions[contactID] = session
+            guard let msg1 = try? session.writeHandshakeMessage() else {
+                note("Failed to start handshake with \"\(contact.displayName)\"")
+                return
+            }
+            pendingMsg1[contactID] = msg1
+            sendEnvelope(.handshake, payload: msg1, to: contact)
+            note("→ handshake to \"\(contact.displayName)\"")
+        } else if let msg1 = pendingMsg1[contactID] {
+            // Resend the SAME msg1 (peer may not have been a contact yet / it was lost).
+            sendEnvelope(.handshake, payload: msg1, to: contact)
+        }
     }
 
     private func makeResponder(for contact: Contact) -> SecureSession {
@@ -178,6 +210,7 @@ final class SessionManager {
         while !session.isEstablished {
             guard let message = try? session.writeHandshakeMessage() else { break }
             sendEnvelope(.handshake, payload: message, to: contact)
+            note("→ handshake step to \"\(contact.displayName)\"")
         }
         finalize(session, with: contact)
     }
