@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		C0FFEE0000000000000000A3 /* PigeonCrypto in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE0000000000000000A2 /* PigeonCrypto */; };
+		C0FFEE0000000000000000B3 /* PigeonMesh in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE0000000000000000B2 /* PigeonMesh */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -28,6 +29,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C0FFEE0000000000000000A3 /* PigeonCrypto in Frameworks */,
+				C0FFEE0000000000000000B3 /* PigeonMesh in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -71,6 +73,7 @@
 			name = Pigeon;
 			packageProductDependencies = (
 				C0FFEE0000000000000000A2 /* PigeonCrypto */,
+				C0FFEE0000000000000000B2 /* PigeonMesh */,
 			);
 			productName = Pigeon;
 			productReference = BFCCC6E52FE0108F000F4D70 /* Pigeon.app */;
@@ -102,6 +105,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				C0FFEE0000000000000000A1 /* XCLocalSwiftPackageReference "../PigeonCrypto" */,
+				C0FFEE0000000000000000B1 /* XCLocalSwiftPackageReference "../PigeonMesh" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BFCCC6E62FE0108F000F4D70 /* Products */;
@@ -263,6 +267,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Pigeon uses Bluetooth to discover nearby devices and exchange end-to-end encrypted messages with no internet or servers.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -307,6 +312,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Pigeon uses Bluetooth to discover nearby devices and exchange end-to-end encrypted messages with no internet or servers.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -366,12 +372,20 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../PigeonCrypto;
 		};
+		C0FFEE0000000000000000B1 /* XCLocalSwiftPackageReference "../PigeonMesh" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../PigeonMesh;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		C0FFEE0000000000000000A2 /* PigeonCrypto */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = PigeonCrypto;
+		};
+		C0FFEE0000000000000000B2 /* PigeonMesh */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PigeonMesh;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
