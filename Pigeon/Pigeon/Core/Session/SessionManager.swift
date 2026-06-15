@@ -138,20 +138,37 @@ final class SessionManager {
 
     // MARK: - Sending
 
-    /// Sends `text` to `contact`. If no secure session is established yet (peer
-    /// out of range), the message is queued (store-and-forward) and delivered
-    /// when the session establishes.
+    /// Sends `text` to `contact`. The message stays *pending* until the peer
+    /// acknowledges it; it is (re)sent on each tick while a session exists and
+    /// queued otherwise, so it is never silently dropped on a disconnect.
     func send(_ text: String, to contact: Contact) {
-        if let session = sessions[contact.id], establishedContactIDs.contains(contact.id),
-           let ciphertext = try? session.encrypt(Data(text.utf8)) {
-            sendEnvelope(.message, payload: ciphertext, to: contact)
-            record(ChatMessage(mine: true, text: text), for: contact.id)
+        let message = ChatMessage(mine: true, text: text, pending: true)
+        record(message, for: contact.id)
+        if establishedContactIDs.contains(contact.id) {
+            transmit(message, to: contact)
         } else {
-            // Queue for later delivery and make sure we're trying to connect.
-            record(ChatMessage(mine: true, text: text, pending: true), for: contact.id)
             note("Queued message for \"\(contact.displayName)\" (will send when connected)")
             ensureEstablishing(contactID: contact.id)
         }
+    }
+
+    /// Encrypts and sends one app message (id + text) over the session.
+    private func transmit(_ message: ChatMessage, to contact: Contact) {
+        guard let session = sessions[contact.id],
+              let ciphertext = try? session.encrypt(Self.encodeMessage(id: message.id, text: message.text)) else { return }
+        sendEnvelope(.message, payload: ciphertext, to: contact)
+    }
+
+    /// App message wire form (inside the ratchet): UUID string (36 bytes) ‖ text.
+    private static func encodeMessage(id: UUID, text: String) -> Data {
+        Data(id.uuidString.utf8) + Data(text.utf8)
+    }
+
+    private static func decodeMessage(_ data: Data) -> (id: UUID, text: String)? {
+        guard data.count >= 36,
+              let idString = String(data: data.prefix(36), encoding: .utf8),
+              let id = UUID(uuidString: idString) else { return nil }
+        return (id, String(decoding: data.dropFirst(36), as: UTF8.self))
     }
 
     /// Conversation history with `contact`.
@@ -171,6 +188,7 @@ final class SessionManager {
         case .handshake: handleHandshake(envelope.payload, from: contact)
         case .message: handleMessage(envelope.payload, from: contact)
         case .rehandshakeRequest: handleRehandshakeRequest(from: contact)
+        case .ack: handleAck(envelope.payload, from: contact)
         }
     }
 
@@ -211,14 +229,34 @@ final class SessionManager {
             requestRehandshake(with: contact)
             return
         }
-        do {
-            let plaintext = try session.decrypt(payload)
-            let text = String(decoding: plaintext, as: UTF8.self)
-            record(ChatMessage(mine: false, text: text), for: contact.id)
-        } catch {
+        guard let plaintext = try? session.decrypt(payload),
+              let (id, text) = Self.decodeMessage(plaintext) else {
             note("Decrypt failed from \"\(contact.displayName)\" — re-establishing")
             requestRehandshake(with: contact)
+            return
         }
+        // Acknowledge every delivery (even duplicates) so the sender stops retrying.
+        sendAck(messageID: id, to: contact)
+        // Deduplicate by the sender's message id (a retried message arrives twice).
+        if conversations[contact.id]?.contains(where: { $0.id == id }) == true { return }
+        var received = ChatMessage(mine: false, text: text)
+        received.id = id
+        record(received, for: contact.id)
+    }
+
+    private func sendAck(messageID: UUID, to contact: Contact) {
+        guard let session = sessions[contact.id],
+              let ciphertext = try? session.encrypt(Data(messageID.uuidString.utf8)) else { return }
+        sendEnvelope(.ack, payload: ciphertext, to: contact)
+    }
+
+    private func handleAck(_ payload: Data, from contact: Contact) {
+        guard let session = sessions[contact.id],
+              let plaintext = try? session.decrypt(payload),
+              let idString = String(data: plaintext, encoding: .utf8),
+              let id = UUID(uuidString: idString) else { return }
+        setPending(false, messageID: id, contactID: contact.id)
+        persist()
     }
 
     /// Recovers a lost/stale session. The initiator restarts the handshake; the
@@ -300,7 +338,7 @@ final class SessionManager {
         }
         establishedContactIDs.insert(contact.id)
         note("Secure session established with \"\(contact.displayName)\"")
-        flushPending(to: contact) // deliver anything queued while out of range
+        sendPending(to: contact) // deliver anything queued while out of range
     }
 
     private func sendEnvelope(_ type: EnvelopeType, payload: Data, to contact: Contact) {
@@ -313,13 +351,17 @@ final class SessionManager {
     private func startRetryLoop() {
         retryTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             guard let self else { return }
-            Task { @MainActor in self.retryUnestablished() }
+            Task { @MainActor in self.tick() }
         }
     }
 
-    private func retryUnestablished() {
-        for contact in contacts where !establishedContactIDs.contains(contact.id) {
-            ensureEstablishing(contactID: contact.id)
+    private func tick() {
+        for contact in contacts {
+            if establishedContactIDs.contains(contact.id) {
+                sendPending(to: contact) // retry unacked messages until they land
+            } else {
+                ensureEstablishing(contactID: contact.id)
+            }
         }
     }
 
@@ -336,18 +378,15 @@ final class SessionManager {
 
     // MARK: - Store-and-forward
 
-    /// Sends any queued (pending) messages now that a session is established.
-    private func flushPending(to contact: Contact) {
-        guard let session = sessions[contact.id], establishedContactIDs.contains(contact.id) else { return }
+    /// (Re)sends every unacknowledged outbound message for a contact. Pending is
+    /// cleared only when the peer ACKs, so a message survives disconnects and
+    /// lost packets; duplicates are deduplicated by the recipient.
+    private func sendPending(to contact: Contact) {
+        guard establishedContactIDs.contains(contact.id) else { return }
         let pending = (conversations[contact.id] ?? []).filter { $0.mine && $0.pending }
-        guard !pending.isEmpty else { return }
         for message in pending {
-            guard let ciphertext = try? session.encrypt(Data(message.text.utf8)) else { continue }
-            sendEnvelope(.message, payload: ciphertext, to: contact)
-            setPending(false, messageID: message.id, contactID: contact.id)
+            transmit(message, to: contact)
         }
-        note("Delivered \(pending.count) queued message(s) to \"\(contact.displayName)\"")
-        persist()
     }
 
     /// Flips a message's pending flag in both the in-memory view and the disk mirror.

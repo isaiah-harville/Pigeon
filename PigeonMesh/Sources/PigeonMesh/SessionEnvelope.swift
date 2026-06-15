@@ -25,6 +25,9 @@ public enum EnvelopeType: UInt8, Sendable {
     /// A request asking the peer (the initiator) to (re)start a handshake —
     /// used to recover when one side has lost its session (e.g. after restart).
     case rehandshakeRequest = 3
+    /// A delivery acknowledgement: the (encrypted) id of a received message,
+    /// so the sender knows it landed and can stop retrying.
+    case ack = 4
 }
 
 /// An identity-addressed envelope. `sender`/`recipient` are 32-byte identity
