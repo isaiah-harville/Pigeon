@@ -36,7 +36,7 @@ struct ChatView: View {
                     session.send(draft, to: contact)
                     draft = ""
                 }
-                .disabled(draft.isEmpty || !isSecure)
+                .disabled(draft.isEmpty)
             }
             .padding()
         }
@@ -89,13 +89,22 @@ struct ChatView: View {
 
     @ViewBuilder
     private func bubble(_ message: ChatMessage) -> some View {
-        HStack {
+        HStack(alignment: .bottom, spacing: 4) {
             if message.mine { Spacer(minLength: 40) }
             Text(message.text)
                 .padding(8)
                 .background(message.mine ? Color.accentColor.opacity(0.25) : Color.gray.opacity(0.2))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
-            if !message.mine { Spacer(minLength: 40) }
+                .opacity(message.pending ? 0.6 : 1)
+            if message.mine {
+                if message.pending {
+                    Image(systemName: "clock")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Spacer(minLength: 40)
+            }
         }
     }
 }

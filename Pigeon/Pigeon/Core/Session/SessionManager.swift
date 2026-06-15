@@ -73,7 +73,7 @@ final class SessionManager {
         conversations = loaded // start the in-memory view from what's on disk
         ephemeralContactIDs = Set(state.ephemeralContactIDs.compactMap { Data(base64Encoded: $0) })
         isUnlocked = true
-        for contact in contacts { establishIfNeeded(contactID: contact.id) }
+        for contact in contacts { ensureEstablishing(contactID: contact.id) }
     }
 
     /// Whether `contact`'s chat is in ephemeral (don't-persist-new-messages) mode.
@@ -138,19 +138,19 @@ final class SessionManager {
 
     // MARK: - Sending
 
-    /// Encrypts and sends `text` to `contact` over its established session.
+    /// Sends `text` to `contact`. If no secure session is established yet (peer
+    /// out of range), the message is queued (store-and-forward) and delivered
+    /// when the session establishes.
     func send(_ text: String, to contact: Contact) {
-        guard let session = sessions[contact.id], establishedContactIDs.contains(contact.id) else {
-            note("No secure session with \"\(contact.displayName)\" yet")
-            establishIfNeeded(contactID: contact.id)
-            return
-        }
-        do {
-            let ciphertext = try session.encrypt(Data(text.utf8))
+        if let session = sessions[contact.id], establishedContactIDs.contains(contact.id),
+           let ciphertext = try? session.encrypt(Data(text.utf8)) {
             sendEnvelope(.message, payload: ciphertext, to: contact)
             record(ChatMessage(mine: true, text: text), for: contact.id)
-        } catch {
-            note("Encrypt failed: \(error)")
+        } else {
+            // Queue for later delivery and make sure we're trying to connect.
+            record(ChatMessage(mine: true, text: text, pending: true), for: contact.id)
+            note("Queued message for \"\(contact.displayName)\" (will send when connected)")
+            ensureEstablishing(contactID: contact.id)
         }
     }
 
@@ -300,6 +300,7 @@ final class SessionManager {
         }
         establishedContactIDs.insert(contact.id)
         note("Secure session established with \"\(contact.displayName)\"")
+        flushPending(to: contact) // deliver anything queued while out of range
     }
 
     private func sendEnvelope(_ type: EnvelopeType, payload: Data, to contact: Contact) {
@@ -318,13 +319,44 @@ final class SessionManager {
 
     private func retryUnestablished() {
         for contact in contacts where !establishedContactIDs.contains(contact.id) {
-            if isInitiator(toward: contact.id) {
-                establishIfNeeded(contactID: contact.id) // (re)send msg1
-            } else {
-                // We can't initiate; ask the initiator to (in case it restarted
-                // and thinks it's still established, or never started).
-                sendEnvelope(.rehandshakeRequest, payload: Data(), to: contact)
-            }
+            ensureEstablishing(contactID: contact.id)
+        }
+    }
+
+    /// Drives (re)establishment for one contact according to our role: the
+    /// initiator (re)sends msg1; the responder nudges the initiator to start.
+    private func ensureEstablishing(contactID: Data) {
+        guard !establishedContactIDs.contains(contactID) else { return }
+        if isInitiator(toward: contactID) {
+            establishIfNeeded(contactID: contactID)
+        } else if let contact = contacts.first(where: { $0.id == contactID }) {
+            sendEnvelope(.rehandshakeRequest, payload: Data(), to: contact)
+        }
+    }
+
+    // MARK: - Store-and-forward
+
+    /// Sends any queued (pending) messages now that a session is established.
+    private func flushPending(to contact: Contact) {
+        guard let session = sessions[contact.id], establishedContactIDs.contains(contact.id) else { return }
+        let pending = (conversations[contact.id] ?? []).filter { $0.mine && $0.pending }
+        guard !pending.isEmpty else { return }
+        for message in pending {
+            guard let ciphertext = try? session.encrypt(Data(message.text.utf8)) else { continue }
+            sendEnvelope(.message, payload: ciphertext, to: contact)
+            setPending(false, messageID: message.id, contactID: contact.id)
+        }
+        note("Delivered \(pending.count) queued message(s) to \"\(contact.displayName)\"")
+        persist()
+    }
+
+    /// Flips a message's pending flag in both the in-memory view and the disk mirror.
+    private func setPending(_ pending: Bool, messageID: UUID, contactID: Data) {
+        if let index = conversations[contactID]?.firstIndex(where: { $0.id == messageID }) {
+            conversations[contactID]?[index].pending = pending
+        }
+        if let index = persistedConversations[contactID]?.firstIndex(where: { $0.id == messageID }) {
+            persistedConversations[contactID]?[index].pending = pending
         }
     }
 
