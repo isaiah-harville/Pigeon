@@ -101,6 +101,10 @@ final class PeerTransport: NSObject {
         if log.count > 200 { log.removeFirst(log.count - 200) }
     }
 
+    private func updateConnectedCount() {
+        connectedPeerCount = peripherals.values.filter { $0.state == .connected }.count
+    }
+
     private func reassembler(for source: UUID) -> Reassembler {
         if let existing = reassemblers[source] { return existing }
         let made = Reassembler()
@@ -144,7 +148,11 @@ extension PeerTransport: CBCentralManagerDelegate {
 
     func centralManager(_ manager: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        guard peripherals[peripheral.identifier] == nil else { return }
+        if let existing = peripherals[peripheral.identifier] {
+            // Known peer that dropped (e.g. its app restarted): reconnect.
+            if existing.state != .connected { manager.connect(existing, options: nil) }
+            return
+        }
         peripherals[peripheral.identifier] = peripheral // retain before connecting
         note("Discovered peer \(peripheral.identifier.uuidString.prefix(8))")
         manager.connect(peripheral, options: nil)
@@ -153,24 +161,26 @@ extension PeerTransport: CBCentralManagerDelegate {
     func centralManager(_ manager: CBCentralManager, didConnect peripheral: CBPeripheral) {
         peripheral.delegate = self
         peripheral.discoverServices([BluetoothConstants.service])
-        connectedPeerCount = peripherals.count
+        updateConnectedCount()
         note("Connected to \(peripheral.identifier.uuidString.prefix(8))")
     }
 
     func centralManager(_ manager: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral,
                         error: Error?) {
-        peripherals[peripheral.identifier] = nil
         inboundCharacteristics[peripheral.identifier] = nil
         reassemblers[peripheral.identifier] = nil
-        connectedPeerCount = peripherals.count
-        note("Disconnected \(peripheral.identifier.uuidString.prefix(8))")
+        updateConnectedCount()
+        note("Disconnected \(peripheral.identifier.uuidString.prefix(8)); will reconnect")
+        // Keep the peripheral retained and issue a pending connect: CoreBluetooth
+        // reconnects automatically when the peer returns (e.g. after an app restart).
+        manager.connect(peripheral, options: nil)
         startScanningIfReady()
     }
 
     func centralManager(_ manager: CBCentralManager, didFailToConnect peripheral: CBPeripheral,
                         error: Error?) {
-        peripherals[peripheral.identifier] = nil
-        note("Failed to connect \(peripheral.identifier.uuidString.prefix(8))")
+        note("Failed to connect \(peripheral.identifier.uuidString.prefix(8)); retrying")
+        manager.connect(peripheral, options: nil) // stay pending until available
     }
 }
 

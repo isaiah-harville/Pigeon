@@ -234,9 +234,13 @@ final class SessionManager {
 
     private func handleRehandshakeRequest(from contact: Contact) {
         guard isInitiator(toward: contact.id) else { return } // only the initiator can start
-        note("\"\(contact.displayName)\" requested re-handshake")
-        resetSession(for: contact.id)
-        establishIfNeeded(contactID: contact.id)
+        // Restart only if we're established (peer lost it) or never started; if a
+        // handshake is already in progress, let it finish rather than clobber it.
+        if establishedContactIDs.contains(contact.id) || sessions[contact.id] == nil {
+            note("\"\(contact.displayName)\" requested re-handshake")
+            resetSession(for: contact.id)
+            establishIfNeeded(contactID: contact.id)
+        }
     }
 
     // MARK: - Handshake driving
@@ -291,11 +295,11 @@ final class SessionManager {
               remoteStatic == contact.bundle.staticKey,
               contact.bundle.isValid() else {
             sessions[contact.id] = nil
-            note("\u{26A0}\u{FE0E} Session REJECTED with \"\(contact.displayName)\": static key does not match verified identity")
+            note("Session REJECTED with \"\(contact.displayName)\": static key does not match verified identity")
             return
         }
         establishedContactIDs.insert(contact.id)
-        note("\u{1F512}\u{FE0E} Secure session established with \"\(contact.displayName)\"")
+        note("Secure session established with \"\(contact.displayName)\"")
     }
 
     private func sendEnvelope(_ type: EnvelopeType, payload: Data, to contact: Contact) {
@@ -314,7 +318,13 @@ final class SessionManager {
 
     private func retryUnestablished() {
         for contact in contacts where !establishedContactIDs.contains(contact.id) {
-            establishIfNeeded(contactID: contact.id)
+            if isInitiator(toward: contact.id) {
+                establishIfNeeded(contactID: contact.id) // (re)send msg1
+            } else {
+                // We can't initiate; ask the initiator to (in case it restarted
+                // and thinks it's still established, or never started).
+                sendEnvelope(.rehandshakeRequest, payload: Data(), to: contact)
+            }
         }
     }
 
