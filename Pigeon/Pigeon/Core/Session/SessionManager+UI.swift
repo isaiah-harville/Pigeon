@@ -32,8 +32,17 @@ extension SessionManager {
   /// Our shareable card (identity bundle + display name + the relays we can be
   /// reached at) for the QR, so scanners learn where to deposit for us.
   var myCard: ContactCard {
-    ContactCard(name: myName, bundle: identity.identityBundle, relayURLs: RelaySettings.urls())
+    let relayURLs = RelaySettings.urls()
+    let payload = ContactCard.relayPayload(relayURLs)
+    let signature = (try? identity.sign(payload)) ?? Data()
+    return ContactCard(
+      name: myName,
+      bundle: identity.identityBundle,
+      relayURLs: relayURLs,
+      relaySignature: signature)
   }
+
+  var myFingerprint: String { identity.publicKey.fingerprint }
 
   /// Sets the local user's own display name (shared in their QR card).
   func setMyName(_ name: String) {

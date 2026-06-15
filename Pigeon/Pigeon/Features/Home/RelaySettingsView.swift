@@ -45,6 +45,7 @@ struct RelaySettingsView: View {
     Section {
       relaysRows
       addRelayRow
+      recommendedRelayRow
     } header: {
       Text("Relays")
     } footer: {
@@ -67,7 +68,7 @@ struct RelaySettingsView: View {
 
   private var addRelayRow: some View {
     HStack {
-      TextField("wss://relay.example.com/ws", text: $newURL)
+      TextField(RelaySettings.recommendedURL.absoluteString, text: $newURL)
         .textInputAutocapitalization(.never)
         .autocorrectionDisabled()
         .font(.callout.monospaced())
@@ -75,6 +76,18 @@ struct RelaySettingsView: View {
       Button("Add", action: add)
         .disabled(!RelaySettings.isValidEndpoint(newURL))
     }
+  }
+
+  private var recommendedRelayRow: some View {
+    Button {
+      if !urls.contains(RelaySettings.recommendedURL) {
+        urls.append(RelaySettings.recommendedURL)
+        save()
+      }
+    } label: {
+      Label("Use recommended relay", systemImage: "checkmark.seal")
+    }
+    .disabled(urls.contains(RelaySettings.recommendedURL))
   }
 
   private var relaysFooter: String {

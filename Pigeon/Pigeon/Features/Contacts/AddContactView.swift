@@ -15,6 +15,8 @@ struct AddContactView: View {
   @State private var pasted = ""
   @State private var error: String?
   @State private var showManualEntry = false
+  @State private var showingMyQR = false
+  @State private var showingMyFingerprint = false
 
   var body: some View {
     NavigationStack {
@@ -32,7 +34,7 @@ struct AddContactView: View {
   private var content: some View {
     ScrollView {
       VStack(spacing: 24) {
-        scanner
+        scanPanel
         scannerHint
         errorLabel
         manualEntry
@@ -42,11 +44,17 @@ struct AddContactView: View {
   }
 
   private var scannerHint: some View {
-    Text("Point your camera at the other person's Pigeon QR code.")
+    Text(scannerHintText)
       .font(.callout)
       .foregroundStyle(.secondary)
       .multilineTextAlignment(.center)
       .padding(.horizontal)
+  }
+
+  private var scannerHintText: String {
+    showingMyQR
+      ? "Have the other person scan this QR code to add you."
+      : "Point your camera at the other person's Pigeon QR code."
   }
 
   @ViewBuilder
@@ -60,14 +68,25 @@ struct AddContactView: View {
     }
   }
 
-  private var scanner: some View {
+  private var scanPanel: some View {
+    VStack(spacing: 12) {
+      scannerFrame
+      scanToggleButton
+    }
+  }
+
+  private var scannerFrame: some View {
     ZStack {
-      QRScanner { code in handle(code) }
-      ScannerReticle()
+      if showingMyQR {
+        myQRCode
+      } else {
+        QRScanner { code in handle(code) }
+        ScannerReticle()
+      }
     }
     .aspectRatio(1, contentMode: .fit)
     .frame(maxWidth: 340)
-    .background(.black)
+    .background(showingMyQR ? Color(.systemBackground) : .black)
     .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
     .overlay(
       RoundedRectangle(cornerRadius: 28, style: .continuous)
@@ -76,13 +95,38 @@ struct AddContactView: View {
     .shadow(color: .black.opacity(0.15), radius: 12, y: 6)
   }
 
+  private var scanToggleButton: some View {
+    Button {
+      withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+        showingMyQR.toggle()
+      }
+    } label: {
+      Label(showingMyQR ? "Scan Contact QR" : "Show My QR", systemImage: "qrcode")
+    }
+    .buttonStyle(.bordered)
+    .buttonBorderShape(.capsule)
+  }
+
+  private var myQRCode: some View {
+    QRCode.image(from: session.myCard.encoded())
+      .padding(24)
+  }
+
   private var manualEntry: some View {
-    DisclosureGroup("Enter a code manually", isExpanded: $showManualEntry) {
-      manualEntryFields
+    DisclosureGroup(manualEntryTitle, isExpanded: $showManualEntry) {
+      if showingMyFingerprint {
+        myFingerprint
+      } else {
+        manualEntryFields
+      }
     }
     .tint(.secondary)
     .padding()
     .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+  }
+
+  private var manualEntryTitle: String {
+    showingMyFingerprint ? "My fingerprint" : "Enter a code manually"
   }
 
   private var manualEntryFields: some View {
@@ -98,6 +142,34 @@ struct AddContactView: View {
       }
       .buttonStyle(.borderedProminent)
       .disabled(pasted.isEmpty)
+      Button {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+          showingMyFingerprint = true
+        }
+      } label: {
+        Label("Show My Fingerprint", systemImage: "number")
+          .frame(maxWidth: .infinity)
+      }
+      .buttonStyle(.bordered)
+    }
+    .padding(.top, 4)
+  }
+
+  private var myFingerprint: some View {
+    VStack(spacing: 12) {
+      Text(session.myFingerprint)
+        .font(.callout.monospaced())
+        .multilineTextAlignment(.center)
+        .textSelection(.enabled)
+      Button {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+          showingMyFingerprint = false
+        }
+      } label: {
+        Label("Enter Contact Code", systemImage: "keyboard")
+          .frame(maxWidth: .infinity)
+      }
+      .buttonStyle(.bordered)
     }
     .padding(.top, 4)
   }

@@ -12,10 +12,20 @@ import Foundation
 
 enum RelaySettings {
   private static let key = "pigeon.relay.urls"
+  static var recommendedURL: URL {
+    guard let url = URL(string: "wss://relay.pigeonwire.app/ws") else {
+      preconditionFailure("Invalid built-in relay URL")
+    }
+    return url
+  }
+  static var recommendedURLs: [URL] { [recommendedURL] }
 
   /// The configured relay endpoints (expected to be `wss://…`).
   static func urls() -> [URL] {
-    (UserDefaults.standard.stringArray(forKey: key) ?? []).compactMap(URL.init(string:))
+    guard let stored = UserDefaults.standard.stringArray(forKey: key) else {
+      return recommendedURLs
+    }
+    return stored.compactMap(URL.init(string:))
   }
 
   static func setURLs(_ urls: [URL]) {
