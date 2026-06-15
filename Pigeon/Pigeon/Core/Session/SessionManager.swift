@@ -38,6 +38,10 @@ final class SessionManager {
     /// The initiator's first handshake message, kept so retries resend the
     /// *same* message (stable ephemeral) rather than starting over.
     private var pendingMsg1: [Data: Data] = [:]
+    /// Last handshake message received / sent per contact, for stop-and-wait
+    /// retransmission (resend our reply when the peer repeats its message).
+    private var lastHandshakeIn: [Data: Data] = [:]
+    private var lastHandshakeOut: [Data: Data] = [:]
     /// The on-disk mirror of conversations (excludes ephemeral-era messages).
     private var persistedConversations: [Data: [ChatMessage]] = [:]
     private var retryTimer: Timer?
@@ -133,6 +137,8 @@ final class SessionManager {
     private func resetSession(for contactID: Data) {
         sessions[contactID] = nil
         pendingMsg1[contactID] = nil
+        lastHandshakeIn[contactID] = nil
+        lastHandshakeOut[contactID] = nil
         establishedContactIDs.remove(contactID)
     }
 
@@ -193,18 +199,28 @@ final class SessionManager {
     }
 
     private func handleHandshake(_ payload: Data, from contact: Contact) {
+        // Stop-and-wait retransmit: a duplicate of the last handshake message we
+        // processed means our reply was lost — resend the same reply rather than
+        // churning a new session (which would move the target and never converge).
+        if payload == lastHandshakeIn[contact.id] {
+            if !establishedContactIDs.contains(contact.id), let reply = lastHandshakeOut[contact.id] {
+                sendEnvelope(.handshake, payload: reply, to: contact)
+            }
+            return
+        }
+        lastHandshakeIn[contact.id] = payload
+
         if isInitiator(toward: contact.id) {
             // We drive; this is the responder's reply on our stable session.
             guard let session = sessions[contact.id] else { return } // not started; retry will
             guard (try? session.readHandshakeMessage(payload)) != nil else {
-                return // a stale/duplicate reply — ignore, keep our session intact
+                return // unreadable reply — ignore, keep our session intact
             }
             note("← handshake reply from \"\(contact.displayName)\"")
             pump(session, with: contact)
         } else {
-            // We respond. A handshake (re)starts us as responder. If we already
-            // had an established session, the peer restarted and lost theirs —
-            // drop ours and re-handshake so we reconnect without a restart.
+            // We respond. A *new* handshake while established means the peer
+            // restarted and lost its session — drop ours and re-handshake.
             if establishedContactIDs.contains(contact.id) {
                 establishedContactIDs.remove(contact.id)
                 sessions[contact.id] = nil
@@ -320,6 +336,7 @@ final class SessionManager {
         while !session.isEstablished {
             guard let message = try? session.writeHandshakeMessage() else { break }
             sendEnvelope(.handshake, payload: message, to: contact)
+            lastHandshakeOut[contact.id] = message // for stop-and-wait retransmit
             note("→ handshake step to \"\(contact.displayName)\"")
         }
         finalize(session, with: contact)

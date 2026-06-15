@@ -59,11 +59,26 @@ final class PeerTransport: NSObject {
     // Outbound fragmenter + per-source reassemblers.
     private var fragmenter = Fragmenter()
     private var reassemblers: [UUID: Reassembler] = [:]
+    private var sweepTimer: Timer?
 
     override init() {
         super.init()
         central = CBCentralManager(delegate: self, queue: nil)
         peripheralManager = CBPeripheralManager(delegate: self, queue: nil)
+        // Periodically recover stuck links: keep scanning and reconnect any
+        // known peer that isn't currently connected.
+        sweepTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in self.sweep() }
+        }
+    }
+
+    private func sweep() {
+        guard central.state == .poweredOn else { return }
+        startScanningIfReady()
+        for peripheral in peripherals.values where peripheral.state != .connected && peripheral.state != .connecting {
+            central.connect(peripheral, options: nil)
+        }
     }
 
     /// Broadcasts `message` to every connected peer, in both roles.
