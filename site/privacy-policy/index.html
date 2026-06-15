@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Privacy Policy for Pigeon, an offline-first encrypted Bluetooth messaging app."
+    />
+    <meta name="theme-color" content="#0a0d0b" />
+    <title>Privacy Policy | Pigeon</title>
+    <link rel="icon" href="/assets/appicon.png" />
+    <link rel="apple-touch-icon" href="/assets/appicon.png" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="site-shell">
+      <header class="site-header">
+        <a class="brand" href="/" aria-label="Pigeon home">
+          <img src="/assets/appicon.png" alt="" />
+          <span>Pigeon</span>
+        </a>
+        <nav aria-label="Primary navigation">
+          <a href="/privacy-policy/" aria-current="page">Privacy</a>
+        </nav>
+      </header>
+
+      <main class="policy" aria-labelledby="policy-title">
+        <p class="eyebrow">Privacy Policy</p>
+        <h1 id="policy-title">Pigeon Privacy Policy</h1>
+        <p class="updated">Effective date: June 16, 2026</p>
+
+        <section>
+          <h2>Overview</h2>
+          <p>
+            Pigeon is an offline-first encrypted messaging app. It is designed
+            to minimize data collection: no advertising, no tracking SDKs, no
+            analytics pipeline, and no required account with Pigeon.
+          </p>
+          <p>
+            This policy explains what information Pigeon stores locally, what
+            may be visible to nearby devices or optional relay servers, and what
+            we do not collect.
+          </p>
+        </section>
+
+        <section>
+          <h2>Information Pigeon Does Not Collect</h2>
+          <p>Pigeon does not collect or receive:</p>
+          <ul>
+            <li>Your message plaintext.</li>
+            <li>Your private identity keys or session keys.</li>
+            <li>Your phone number, email address, or account password.</li>
+            <li>Your contacts address book.</li>
+            <li>Advertising identifiers.</li>
+            <li>Analytics events or behavioral tracking data.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2>Information Stored On Your Device</h2>
+          <p>
+            Pigeon stores information locally so the app can function. This may
+            include your device identity, contacts you add, safety numbers,
+            encrypted conversations, relay settings, and app preferences.
+          </p>
+          <p>
+            Your long-term private identity key is generated on your device and
+            stored using the Apple Keychain. Message and conversation data are
+            intended to remain on your device unless you choose to send a
+            message to another Pigeon user.
+          </p>
+        </section>
+
+        <section>
+          <h2>Messages And Encryption</h2>
+          <p>
+            Pigeon messages are end-to-end encrypted between devices. Transport
+            layers, including Bluetooth peers and optional relays, move encrypted
+            data and are not supposed to receive plaintext message content.
+          </p>
+          <p>
+            Recipients can read messages you send to them. Anyone with access to
+            an unlocked recipient device may also be able to view messages on
+            that device.
+          </p>
+        </section>
+
+        <section>
+          <h2>Bluetooth And Local Discovery</h2>
+          <p>
+            Pigeon uses Bluetooth to discover and communicate with nearby
+            devices. Nearby observers may be able to detect Bluetooth activity
+            and related radio metadata, such as the fact that a device is using
+            Pigeon nearby. Bluetooth transport metadata is not the same as
+            message plaintext.
+          </p>
+        </section>
+
+        <section>
+          <h2>Optional Relays</h2>
+          <p>
+            Pigeon can be configured to use relay servers for delivery when
+            devices are not in Bluetooth range. Relays are optional. If no relay
+            endpoint is configured, Pigeon operates without Pigeon relay
+            infrastructure.
+          </p>
+          <p>
+            A relay may receive mailbox public keys, encrypted ciphertext,
+            timestamps, delivery acknowledgments, and standard network metadata
+            such as IP addresses. Relays are designed not to receive private
+            keys and not to decrypt message contents.
+          </p>
+          <p>
+            If you use a relay operated by someone else, that operator's
+            handling of server logs and network metadata may be governed by
+            their own policies.
+          </p>
+        </section>
+
+        <section>
+          <h2>Website Logs</h2>
+          <p>
+            When you visit this website, the hosting provider may process
+            standard web server information such as IP address, browser type,
+            requested pages, and timestamps to deliver the site and maintain
+            security. This website does not use advertising cookies or tracking
+            pixels.
+          </p>
+        </section>
+
+        <section>
+          <h2>Children's Privacy</h2>
+          <p>
+            Pigeon is not directed to children under 13. We do not knowingly
+            collect personal information from children.
+          </p>
+        </section>
+
+        <section>
+          <h2>Data Sharing</h2>
+          <p>
+            We do not sell personal information. We do not share data for
+            advertising or cross-app tracking. Data may be disclosed if required
+            by law, or as necessary to operate hosting and relay infrastructure,
+            but message plaintext and private keys are not designed to be
+            available to that infrastructure.
+          </p>
+        </section>
+
+        <section>
+          <h2>Your Choices</h2>
+          <ul>
+            <li>You can remove relay endpoints to use only local Bluetooth transport.</li>
+            <li>You can delete contacts and conversations from your device.</li>
+            <li>
+              You can reset your Pigeon identity, but doing so breaks existing
+              trust relationships with peers.
+            </li>
+            <li>You can uninstall Pigeon to remove app data managed by iOS.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2>Changes</h2>
+          <p>
+            We may update this policy as Pigeon changes. If the app's data
+            practices change materially, this page and the App Store privacy
+            information should be updated before release.
+          </p>
+        </section>
+
+        <section>
+          <h2>Contact</h2>
+          <p>
+            For privacy questions, contact the developer through the support
+            link on Pigeon's App Store listing.
+          </p>
+        </section>
+      </main>
+
+      <footer>
+        <span>Pigeon</span>
+        <a href="/">Home</a>
+      </footer>
+    </div>
+  </body>
+</html>
