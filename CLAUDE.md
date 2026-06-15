@@ -1,7 +1,5 @@
 # CLAUDE.md
 
-This file gives Claude Code the local operating rules for Pigeon.
-
 ## Project Mission
 
 Pigeon is a secure, offline Bluetooth mesh messaging application. It should keep
@@ -70,6 +68,8 @@ the user home directory, report that clearly and rerun only with explicit user
 approval.
 
 ## Expected Agent Workflow
+
+Be conservative with tokens.
 
 1. Read `README.md`, this file, and any relevant files under `docs/`.
 2. Inspect the code paths involved before planning a change.
