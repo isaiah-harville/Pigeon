@@ -11,7 +11,7 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(IdentityManager.self) private var identity
-    @State private var transport = PeerTransport()
+    @State private var mesh = MeshService()
     @State private var draft = ""
     @State private var received: [String] = []
 
@@ -24,8 +24,8 @@ struct ContentView: View {
                 }
 
                 Section("Bluetooth") {
-                    LabeledContent("Status", value: transport.status.rawValue)
-                    LabeledContent("Connected peers", value: "\(transport.connectedPeerCount)")
+                    LabeledContent("Status", value: mesh.status.rawValue)
+                    LabeledContent("Connected peers", value: "\(mesh.connectedPeerCount)")
                 }
 
                 Section("Send to nearby peers") {
@@ -45,23 +45,23 @@ struct ContentView: View {
                 }
 
                 Section("Activity") {
-                    ForEach(Array(transport.log.suffix(15).enumerated()), id: \.offset) { _, line in
+                    ForEach(Array(mesh.log.suffix(15).enumerated()), id: \.offset) { _, line in
                         Text(line).font(.caption.monospaced()).foregroundStyle(.secondary)
                     }
                 }
             }
             .navigationTitle("Pigeon")
             .onAppear {
-                transport.onMessage = { data, peer in
+                mesh.onMessage = { data in
                     let text = String(data: data, encoding: .utf8) ?? "\(data.count) bytes"
-                    received.append("\(peer.prefix(8)): \(text)")
+                    received.append("peer: \(text)")
                 }
             }
         }
     }
 
     private func send() {
-        transport.broadcast(Data(draft.utf8))
+        mesh.send(Data(draft.utf8))
         received.append("me: \(draft)")
         draft = ""
     }
