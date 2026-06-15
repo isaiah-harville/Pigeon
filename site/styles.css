@@ -6,16 +6,16 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  --bg: #0a0d0b;
-  --panel: #101713;
-  --ink: #f3f7f1;
-  --muted: rgba(243, 247, 241, 0.68);
-  --dim: rgba(243, 247, 241, 0.44);
-  --line: rgba(151, 255, 191, 0.18);
-  --green: #7cffaa;
-  --green-strong: #23e67f;
-  --orange: #ff8a3d;
-  --steel: #9db7ad;
+  --bg: #07111f;
+  --panel: #0d1a2a;
+  --ink: #f5f9ff;
+  --muted: rgba(245, 249, 255, 0.7);
+  --dim: rgba(245, 249, 255, 0.46);
+  --line: rgba(89, 196, 255, 0.22);
+  --blue: #5bd7ff;
+  --blue-strong: #168cff;
+  --coral: #ff9966;
+  --steel: #9cb8cf;
 }
 
 * {
@@ -31,9 +31,9 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background:
-    linear-gradient(rgba(124, 255, 170, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(124, 255, 170, 0.04) 1px, transparent 1px),
-    linear-gradient(150deg, #0a0d0b 0%, #101713 52%, #0c120f 100%);
+    linear-gradient(rgba(91, 215, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(22, 140, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(150deg, #07111f 0%, #0d1a2a 48%, #061a38 100%);
   background-size: 44px 44px, 44px 44px, auto;
   color: var(--ink);
 }
@@ -97,7 +97,7 @@ footer a {
 nav a:hover,
 footer a:hover,
 .policy a:hover {
-  color: var(--green);
+  color: var(--blue);
 }
 
 .hero {
@@ -113,7 +113,7 @@ footer a:hover,
 
 .eyebrow {
   margin: 0 0 1.1rem;
-  color: var(--green);
+  color: var(--blue);
   font-size: 0.72rem;
   font-weight: 900;
   letter-spacing: 0.22em;
@@ -130,7 +130,7 @@ p {
 h1 {
   margin-bottom: 1.4rem;
   color: var(--ink);
-  font-size: clamp(4.8rem, 16vw, 13rem);
+  font-size: clamp(4.8rem, 14vw, 11.5rem);
   font-weight: 950;
   line-height: 0.78;
   letter-spacing: 0;
@@ -162,8 +162,8 @@ h3 {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 1rem;
-  background: rgba(16, 23, 19, 0.78);
-  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.36);
+  background: rgba(13, 26, 42, 0.82);
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.34);
 }
 
 .signal-panel img {
@@ -189,7 +189,7 @@ h3 {
   grid-template-columns: 7.5rem 1fr;
   gap: 1rem;
   padding: 0.85rem;
-  background: #0d120f;
+  background: #081524;
 }
 
 dt {
@@ -235,13 +235,13 @@ dd {
 article {
   min-height: 210px;
   padding: clamp(1.1rem, 2.4vw, 1.6rem);
-  background: rgba(13, 18, 15, 0.92);
+  background: rgba(8, 21, 36, 0.94);
 }
 
 article span {
   display: block;
   margin-bottom: 2.1rem;
-  color: var(--orange);
+  color: var(--coral);
   font-size: 0.72rem;
   font-weight: 950;
   letter-spacing: 0.2em;
@@ -272,7 +272,7 @@ article p,
 }
 
 .assurance li {
-  border-left: 2px solid var(--green-strong);
+  border-left: 2px solid var(--blue-strong);
   padding-left: 1rem;
   font-weight: 750;
 }
