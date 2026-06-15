@@ -138,7 +138,7 @@ public final class DoubleRatchetSession {
     selfKeyPair: DHKeyPair,
     maxSkip: Int = 1000
   ) -> DoubleRatchetSession {
-    return DoubleRatchetSession(
+    DoubleRatchetSession(
       dhSelf: selfKeyPair,
       dhRemote: nil,
       rootKey: sharedSecret,

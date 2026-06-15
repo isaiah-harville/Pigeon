@@ -90,8 +90,8 @@ final class SessionManager {
       let mailboxHex = identity.publicKey.rawRepresentation
         .map { String(format: "%02x", $0) }.joined()
       let relay = RelayTransport(
-        mailboxHex: mailboxHex,
-        sign: { [identity] nonce in try? identity.sign(nonce) })
+        mailboxHex: mailboxHex
+      ) { [identity] nonce in try? identity.sign(nonce) }
       self.mesh = MeshService(transport: CompositeTransport([PeerTransport(), relay]))
       self.relay = relay
     }
@@ -99,7 +99,7 @@ final class SessionManager {
     if let relay {
       relay.recipients = { [weak self] in self?.contacts.map(\.id) ?? [] }
       relay.relaysForRecipient = { [weak self] key in
-        self?.contacts.first(where: { $0.id == key })?.relayURLs ?? []
+        self?.contacts.first { $0.id == key }?.relayURLs ?? []
       }
       relay.reconfigure(RelaySettings.urls())
     }
@@ -313,7 +313,7 @@ final class SessionManager {
 
   /// The most recent non-system message with `contact`, for list previews.
   func lastMessage(with contact: Contact) -> ChatMessage? {
-    conversations[contact.id]?.last(where: { !$0.system })
+    conversations[contact.id]?.last { !$0.system }
   }
 
   // MARK: - Inbound

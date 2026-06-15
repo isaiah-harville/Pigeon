@@ -26,6 +26,6 @@ repos:
       - id: swiftlint
         name: SwiftLint
         language: system
-        entry: swiftlint lint --strict
+        entry: swiftlint --fix --strict && swiftlint lint --strict
         pass_filenames: false
         types: [swift]

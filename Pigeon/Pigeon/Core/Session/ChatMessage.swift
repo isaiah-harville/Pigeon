@@ -11,7 +11,7 @@ struct ChatMessage: Identifiable, Equatable, Codable {
   var id = UUID()
   let mine: Bool
   let text: String
-  var date: Date = Date()
+  var date = Date()
   var pending: Bool = false
   /// A centered notice (e.g. "Ephemeral enabled") rather than a chat bubble.
   var system: Bool = false

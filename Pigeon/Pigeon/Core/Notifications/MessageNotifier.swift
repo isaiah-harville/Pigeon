@@ -37,8 +37,8 @@ final class MessageNotifier: NSObject {
 extension MessageNotifier: UNUserNotificationCenterDelegate {
   // Show the banner even when the app is in the foreground (in-app notice).
   nonisolated func userNotificationCenter(
-    _ center: UNUserNotificationCenter,
-    willPresent notification: UNNotification,
+    _: UNUserNotificationCenter,
+    willPresent _: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
     completionHandler([.banner, .sound, .list])

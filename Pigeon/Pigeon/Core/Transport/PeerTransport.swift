@@ -89,7 +89,7 @@ final class PeerTransport: NSObject, Transport {
   /// Broadcasts `message` to every connected peer, in both roles. BLE is a flood
   /// transport, so the `recipient` hint is ignored — the mesh addresses and
   /// deduplicates above this layer.
-  func broadcast(_ message: Data, to recipient: Data? = nil) {
+  func broadcast(_ message: Data, to _: Data? = nil) {
     let fragments: [Fragment]
     do {
       fragments = try fragmenter.fragment(
@@ -217,7 +217,7 @@ extension PeerTransport: CBCentralManagerDelegate {
 
   func centralManager(
     _ manager: CBCentralManager, didDiscover peripheral: CBPeripheral,
-    advertisementData: [String: Any], rssi RSSI: NSNumber
+    advertisementData _: [String: Any], rssi _: NSNumber
   ) {
     if let existing = peripherals[peripheral.identifier] {
       // Known peer that dropped (e.g. its app restarted): reconnect.
@@ -229,7 +229,7 @@ extension PeerTransport: CBCentralManagerDelegate {
     manager.connect(peripheral, options: nil)
   }
 
-  func centralManager(_ manager: CBCentralManager, didConnect peripheral: CBPeripheral) {
+  func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
     peripheral.delegate = self
     peripheral.discoverServices([BluetoothConstants.service])
     updateConnectedCount()
@@ -238,7 +238,7 @@ extension PeerTransport: CBCentralManagerDelegate {
 
   func centralManager(
     _ manager: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral,
-    error: Error?
+    error _: Error?
   ) {
     inboundCharacteristics[peripheral.identifier] = nil
     reassemblers[peripheral.identifier] = nil
@@ -252,7 +252,7 @@ extension PeerTransport: CBCentralManagerDelegate {
 
   func centralManager(
     _ manager: CBCentralManager, didFailToConnect peripheral: CBPeripheral,
-    error: Error?
+    error _: Error?
   ) {
     note("Failed to connect \(peripheral.identifier.uuidString.prefix(8)); retrying")
     manager.connect(peripheral, options: nil)  // stay pending until available
@@ -262,7 +262,7 @@ extension PeerTransport: CBCentralManagerDelegate {
 // MARK: - CBPeripheralDelegate (central-side: talking to a remote peripheral)
 
 extension PeerTransport: CBPeripheralDelegate {
-  func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+  func peripheral(_ peripheral: CBPeripheral, didDiscoverServices _: Error?) {
     for service in peripheral.services ?? [] where service.uuid == BluetoothConstants.service {
       peripheral.discoverCharacteristics(
         [BluetoothConstants.inbound, BluetoothConstants.outbound],
@@ -272,7 +272,7 @@ extension PeerTransport: CBPeripheralDelegate {
 
   func peripheral(
     _ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService,
-    error: Error?
+    error _: Error?
   ) {
     for characteristic in service.characteristics ?? [] {
       switch characteristic.uuid {
@@ -290,7 +290,7 @@ extension PeerTransport: CBPeripheralDelegate {
 
   func peripheral(
     _ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic,
-    error: Error?
+    error _: Error?
   ) {
     guard let data = characteristic.value else { return }
     note("notify-recv \(data.count)B")
@@ -324,7 +324,7 @@ extension PeerTransport: CBPeripheralManagerDelegate {
   // MARK: State restoration (relaunched in the background on a BLE event)
 
   func peripheralManager(
-    _ manager: CBPeripheralManager,
+    _: CBPeripheralManager,
     willRestoreState dict: [String: Any]
   ) {
     // Recover our advertised service so we can keep notifying restored centrals.
@@ -340,7 +340,7 @@ extension PeerTransport: CBPeripheralManagerDelegate {
     }
   }
 
-  func peripheralManager(_ manager: CBPeripheralManager, didAdd service: CBService, error: Error?) {
+  func peripheralManager(_ manager: CBPeripheralManager, didAdd _: CBService, error _: Error?) {
     didAddService = true
     manager.startAdvertising([
       CBAdvertisementDataServiceUUIDsKey: [BluetoothConstants.service],
@@ -361,13 +361,13 @@ extension PeerTransport: CBPeripheralManagerDelegate {
     }
   }
 
-  func peripheralManagerIsReady(toUpdateSubscribers manager: CBPeripheralManager) {
+  func peripheralManagerIsReady(toUpdateSubscribers _: CBPeripheralManager) {
     flushNotifications()
   }
 
   func peripheralManager(
-    _ manager: CBPeripheralManager, central: CBCentral,
-    didSubscribeTo characteristic: CBCharacteristic
+    _: CBPeripheralManager, central: CBCentral,
+    didSubscribeTo _: CBCharacteristic
   ) {
     if !subscribedCentrals.contains(where: { $0.identifier == central.identifier }) {
       subscribedCentrals.append(central)
@@ -376,8 +376,8 @@ extension PeerTransport: CBPeripheralManagerDelegate {
   }
 
   func peripheralManager(
-    _ manager: CBPeripheralManager, central: CBCentral,
-    didUnsubscribeFrom characteristic: CBCharacteristic
+    _: CBPeripheralManager, central: CBCentral,
+    didUnsubscribeFrom _: CBCharacteristic
   ) {
     subscribedCentrals.removeAll { $0.identifier == central.identifier }
   }

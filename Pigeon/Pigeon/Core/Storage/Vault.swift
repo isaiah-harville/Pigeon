@@ -25,8 +25,8 @@ enum VaultError: Error {
 @Observable
 final class Vault {
 
-  private nonisolated static let service = "com.isaiah-harville.Pigeon.vault"
-  private nonisolated static let account = "vault.dek"
+  nonisolated private static let service = "com.isaiah-harville.Pigeon.vault"
+  nonisolated private static let account = "vault.dek"
 
   private(set) var isUnlocked = false
   private(set) var key: SymmetricKey?
@@ -42,7 +42,7 @@ final class Vault {
 
   // Keychain work runs off the main actor because reading a presence-gated
   // item blocks while the system auth UI is shown.
-  private nonisolated static func loadOrCreateKey(reason: String) async throws -> Data {
+  nonisolated private static func loadOrCreateKey(reason: String) async throws -> Data {
     try await withCheckedThrowingContinuation { continuation in
       DispatchQueue.global(qos: .userInitiated).async {
         do {
@@ -54,7 +54,7 @@ final class Vault {
     }
   }
 
-  private nonisolated static func loadOrCreateKeySync(reason: String) throws -> Data {
+  nonisolated private static func loadOrCreateKeySync(reason: String) throws -> Data {
     // Authentication context drives the biometric/passcode prompt.
     let context = LAContext()
     context.localizedReason = reason
@@ -83,7 +83,7 @@ final class Vault {
     }
   }
 
-  private nonisolated static func createKey() throws -> Data {
+  nonisolated private static func createKey() throws -> Data {
     let keyData = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
 
     // Prefer a presence-gated item; fall back to device-unlock-only if the

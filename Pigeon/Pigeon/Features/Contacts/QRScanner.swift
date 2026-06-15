@@ -23,7 +23,7 @@ struct QRScanner: UIViewControllerRepresentable {
     return controller
   }
 
-  func updateUIViewController(_ controller: ScannerViewController, context: Context) {}
+  func updateUIViewController(_: ScannerViewController, context _: Context) {}
 
   final class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate {
     private let onScan: (String) -> Void
@@ -32,9 +32,9 @@ struct QRScanner: UIViewControllerRepresentable {
     init(onScan: @escaping (String) -> Void) { self.onScan = onScan }
 
     func metadataOutput(
-      _ output: AVCaptureMetadataOutput,
+      _: AVCaptureMetadataOutput,
       didOutput metadataObjects: [AVMetadataObject],
-      from connection: AVCaptureConnection
+      from _: AVCaptureConnection
     ) {
       guard !hasScanned,
         let object = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
