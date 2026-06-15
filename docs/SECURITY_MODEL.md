@@ -155,8 +155,6 @@ code composes them into protocols; it **never implements primitive algorithms**.
 - Exposes `remoteStaticKey` for verification against the QR identity.
 
 ### 5.5 Why clean-room instead of libsignal
-- **License:** libsignal is **AGPL-3.0**; linking it would make Pigeon AGPL and
-  collides with App Store distribution terms (the VLC precedent).
 - **Fit:** libsignal is coupled to Signal's server-mediated model (registration,
   prekey servers, sealed sender) — a poor match for serverless BLE mesh.
 - **Auditability:** a focused Swift package over CryptoKit is something
@@ -164,6 +162,13 @@ code composes them into protocols; it **never implements primitive algorithms**.
 - **Risk boundary:** we implement *protocol composition*, not primitives, which
   is a far smaller and more checkable surface than implementing curve math.
   This does **not** remove the need for an external audit (§Audit Readiness).
+- **License:** the app and the packages it links (`PigeonCrypto`, `PigeonMesh`)
+  are **MIT** — permissive and App Store–compatible. The standalone **`relay`
+  server is AGPL-3.0-only** (it isn't linked into the app, so AGPL's network
+  copyleft applies only to relay operators). libsignal is AGPL-3.0; pulling it
+  into the app would force the app to AGPL and reintroduce the App Store conflict
+  (VLC precedent) — so license is now a reason the clean-room packages stay MIT,
+  alongside fit, auditability, and the risk boundary above.
 
 ---
 

@@ -58,3 +58,19 @@ composition, transport metadata, replay handling, persistence, and UI safety
 flows still need careful review.
 
 See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md).
+
+## License
+
+Pigeon is fully open source under a split chosen so the app stays freely
+distributable (incl. the App Store) while the network relay stays strongly
+copyleft:
+
+- **The iOS app** (this repo, root [LICENSE](LICENSE)), **[`PigeonCrypto/`](PigeonCrypto/LICENSE)**,
+  and **[`PigeonMesh/`](PigeonMesh/LICENSE)** — **MIT**. Permissive and App
+  Store–compatible; the app links only these.
+- **[`relay/`](relay/LICENSE)** — **GNU AGPL-3.0-only**. It's a standalone
+  network server (not linked into the app), so AGPL's network-source-availability
+  (§13) applies to anyone running a modified relay, with no effect on the app.
+
+Source is always available either way. See
+[docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) §5.5.
