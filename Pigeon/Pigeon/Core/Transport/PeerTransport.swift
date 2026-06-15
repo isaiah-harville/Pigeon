@@ -60,6 +60,8 @@ final class PeerTransport: NSObject {
     private var fragmenter = Fragmenter()
     private var reassemblers: [UUID: Reassembler] = [:]
     private var sweepTimer: Timer?
+    /// Notifications waiting for the peripheral transmit queue to drain.
+    private var pendingNotifications: [Data] = []
 
     override init() {
         super.init()
@@ -91,22 +93,29 @@ final class PeerTransport: NSObject {
             return
         }
 
+        var writeTargets = 0
+        var notified = false
         for fragment in fragments {
             let bytes = fragment.encoded()
 
             // Central path: write to each connected peripheral's inbound characteristic.
-            for (id, peripheral) in peripherals {
+            for (id, peripheral) in peripherals where peripheral.state == .connected {
                 if let characteristic = inboundCharacteristics[id] {
                     peripheral.writeValue(bytes, for: characteristic, type: .withResponse)
+                    writeTargets += 1
                 }
             }
 
             // Peripheral path: notify subscribed centrals via outbound characteristic.
-            if let characteristic = outboundCharacteristic, !subscribedCentrals.isEmpty {
-                peripheralManager.updateValue(bytes, for: characteristic, onSubscribedCentrals: nil)
+            // updateValue can fail when the transmit queue is full; queue it and
+            // resend from peripheralManagerIsReady so fragments are never dropped.
+            if outboundCharacteristic != nil, !subscribedCentrals.isEmpty {
+                enqueueNotification(bytes)
+                notified = true
             }
         }
-        note("Sent \(message.count)B in \(fragments.count) fragment(s)")
+        let paths = writeTargets > 0 || notified
+        note("Sent \(message.count)B/\(fragments.count)f via \(writeTargets) write(s)\(notified ? " + notify" : "")\(paths ? "" : " — NO PATH")")
     }
 
     // MARK: - Helpers
@@ -118,6 +127,24 @@ final class PeerTransport: NSObject {
 
     private func updateConnectedCount() {
         connectedPeerCount = peripherals.values.filter { $0.state == .connected }.count
+    }
+
+    /// Queues a notification and tries to flush. Notifications that don't fit the
+    /// current transmit queue are retried in `peripheralManagerIsReady`.
+    private func enqueueNotification(_ bytes: Data) {
+        pendingNotifications.append(bytes)
+        flushNotifications()
+    }
+
+    private func flushNotifications() {
+        guard let characteristic = outboundCharacteristic else { return }
+        while let next = pendingNotifications.first {
+            if peripheralManager.updateValue(next, for: characteristic, onSubscribedCentrals: nil) {
+                pendingNotifications.removeFirst()
+            } else {
+                break // queue full; resume when peripheralManagerIsReady fires
+            }
+        }
     }
 
     private func reassembler(for source: UUID) -> Reassembler {
@@ -215,8 +242,10 @@ extension PeerTransport: CBPeripheralDelegate {
             switch characteristic.uuid {
             case BluetoothConstants.inbound:
                 inboundCharacteristics[peripheral.identifier] = characteristic
+                note("Found write channel for \(peripheral.identifier.uuidString.prefix(8))")
             case BluetoothConstants.outbound:
                 peripheral.setNotifyValue(true, for: characteristic) // receive peer → us
+                note("Subscribed to \(peripheral.identifier.uuidString.prefix(8))")
             default:
                 break
             }
@@ -226,6 +255,7 @@ extension PeerTransport: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic,
                     error: Error?) {
         guard let data = characteristic.value else { return }
+        note("notify-recv \(data.count)B")
         receive(data, from: peripheral.identifier)
     }
 }
@@ -262,12 +292,17 @@ extension PeerTransport: CBPeripheralManagerDelegate {
     func peripheralManager(_ manager: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
         for request in requests {
             if let value = request.value {
+                note("write-recv \(value.count)B")
                 receive(value, from: request.central.identifier)
             }
         }
         if let first = requests.first {
             manager.respond(to: first, withResult: .success)
         }
+    }
+
+    func peripheralManagerIsReady(toUpdateSubscribers manager: CBPeripheralManager) {
+        flushNotifications()
     }
 
     func peripheralManager(_ manager: CBPeripheralManager, central: CBCentral,
