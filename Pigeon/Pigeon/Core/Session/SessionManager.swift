@@ -36,6 +36,15 @@ final class SessionManager {
     private(set) var myName: String = ""
     private(set) var log: [String] = []
 
+    /// Called to surface a notification when a message arrives and the user
+    /// isn't actively viewing that chat.
+    var onIncomingNotification: (() -> Void)?
+    /// The chat currently on screen (its notifications are suppressed while active).
+    var activeChatID: Data?
+    private var isAppActive = true
+
+    func setAppActive(_ active: Bool) { isAppActive = active }
+
     private var sessions: [Data: SecureSession] = [:]
     /// The initiator's first handshake message, kept so retries resend the
     /// *same* message (stable ephemeral) rather than starting over.
@@ -306,6 +315,11 @@ final class SessionManager {
         var received = ChatMessage(mine: false, text: text)
         received.id = id
         record(received, for: contact.id)
+
+        // Notify unless the user is actively looking at this chat.
+        if !(isAppActive && activeChatID == contact.id) {
+            onIncomingNotification?()
+        }
     }
 
     private func sendAck(messageID: UUID, to contact: Contact) {
