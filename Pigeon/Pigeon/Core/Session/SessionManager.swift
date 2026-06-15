@@ -24,6 +24,9 @@ final class SessionManager {
 
   private let identity: IdentityManager
   private let mesh: MeshService
+  /// The internet relay transport, kept so the UI can configure endpoints and
+  /// read link state. `nil` when a mesh was injected (e.g. in tests).
+  private let relay: RelayTransport?
 
   private(set) var contacts: [Contact] = []
   /// Identity ids of contacts with a fully established, verified session.
@@ -78,7 +81,28 @@ final class SessionManager {
 
   init(identity: IdentityManager, mesh: MeshService? = nil) {
     self.identity = identity
-    self.mesh = mesh ?? MeshService()
+    if let mesh {
+      self.mesh = mesh
+      self.relay = nil
+    } else {
+      // Run the mesh over BLE and an internet relay concurrently. The relay is
+      // inert until the user configures an endpoint.
+      let mailboxHex = identity.publicKey.rawRepresentation
+        .map { String(format: "%02x", $0) }.joined()
+      let relay = RelayTransport(
+        mailboxHex: mailboxHex,
+        sign: { [identity] nonce in try? identity.sign(nonce) })
+      self.mesh = MeshService(transport: CompositeTransport([PeerTransport(), relay]))
+      self.relay = relay
+    }
+    // `self` is fully initialized here, so closures may capture it.
+    if let relay {
+      relay.recipients = { [weak self] in self?.contacts.map(\.id) ?? [] }
+      relay.relaysForRecipient = { [weak self] key in
+        self?.contacts.first(where: { $0.id == key })?.relayURLs ?? []
+      }
+      relay.reconfigure(RelaySettings.urls())
+    }
     // Contacts/history load after the vault is unlocked; BLE runs regardless.
     self.mesh.onMessage = { [weak self] data in self?.handleInbound(data) }
     startRetryLoop()
@@ -93,7 +117,9 @@ final class SessionManager {
       guard let bundle = try? IdentityBundle(decoding: persisted.bundle), bundle.isValid() else {
         return nil
       }
-      return Contact(bundle: bundle, displayName: persisted.name)
+      return Contact(
+        bundle: bundle, displayName: persisted.name,
+        relayURLs: persisted.relayURLs.compactMap { URL(string: $0) })
     }
     var loaded: [Data: [ChatMessage]] = [:]
     for (key, messages) in state.conversations {
@@ -105,7 +131,13 @@ final class SessionManager {
     myName = state.myName
     isUnlocked = true
     notifiedWhileLocked = false
+    refreshRelay()  // pick up loaded contacts' relays
     for contact in contacts { ensureEstablishing(contactID: contact.id) }
+  }
+
+  /// Recomputes the relay connection pool (our relays plus every contact's).
+  private func refreshRelay() {
+    relay?.reconfigure(RelaySettings.urls())
   }
 
   /// Whether `contact`'s chat is in ephemeral (don't-persist-new-messages) mode.
@@ -158,11 +190,25 @@ final class SessionManager {
   var connectedPeerCount: Int { mesh.connectedPeerCount }
   var meshLog: [String] { mesh.log }
 
+  /// Relay (internet) link state for the UI; `.disabled` when none configured.
+  var relayLinkState: RelayTransport.LinkState { relay?.linkState ?? .disabled }
+  /// The configured relay endpoints.
+  var relayURLs: [URL] { RelaySettings.urls() }
+
+  /// Persists and applies a new set of relay endpoints.
+  func setRelayURLs(_ urls: [URL]) {
+    RelaySettings.setURLs(urls)
+    relay?.reconfigure(urls)
+  }
+
   /// Our own shareable identity bundle (for display as a QR code).
   var myBundle: IdentityBundle { identity.identityBundle }
 
-  /// Our shareable card (identity bundle + our chosen display name) for the QR.
-  var myCard: ContactCard { ContactCard(name: myName, bundle: identity.identityBundle) }
+  /// Our shareable card (identity bundle + display name + the relays we can be
+  /// reached at) for the QR, so scanners learn where to deposit for us.
+  var myCard: ContactCard {
+    ContactCard(name: myName, bundle: identity.identityBundle, relayURLs: RelaySettings.urls())
+  }
 
   /// Sets the local user's own display name (shared in their QR card).
   func setMyName(_ name: String) {
@@ -187,9 +233,11 @@ final class SessionManager {
 
   // MARK: - Contacts
 
-  /// Verifies and stores a scanned contact bundle, then begins establishing a session.
+  /// Verifies and stores a scanned contact bundle, then begins establishing a
+  /// session. `relayURLs` are the contact's advertised relay endpoints from
+  /// their QR card (where we deposit ciphertext for them off-Bluetooth).
   @discardableResult
-  func addContact(_ bundle: IdentityBundle, name: String) -> Bool {
+  func addContact(_ bundle: IdentityBundle, name: String, relayURLs: [URL] = []) -> Bool {
     guard bundle.isValid() else {
       note("Rejected contact \"\(name)\": invalid identity binding")
       return false
@@ -200,11 +248,12 @@ final class SessionManager {
     }
     if let index = contacts.firstIndex(where: { $0.id == bundle.identityKey }) {
       // Refresh the full bundle (e.g. a rotated static key), not just the name.
-      contacts[index] = Contact(bundle: bundle, displayName: name)
+      contacts[index] = Contact(bundle: bundle, displayName: name, relayURLs: relayURLs)
     } else {
-      contacts.append(Contact(bundle: bundle, displayName: name))
+      contacts.append(Contact(bundle: bundle, displayName: name, relayURLs: relayURLs))
     }
     persist()
+    refreshRelay()  // open a publish connection to the new contact's relays
     note("Added contact \"\(name)\"")
     // Re-scanning forces a fresh handshake (manual recovery if one stalled).
     resetSession(for: bundle.identityKey)
@@ -480,7 +529,9 @@ final class SessionManager {
   private func sendEnvelope(_ type: EnvelopeType, payload: Data, to contact: Contact) {
     let envelope = SessionEnvelope(
       type: type, sender: myID, recipient: contact.id, payload: payload)
-    mesh.send(envelope.encoded())
+    // The recipient hint lets the relay address this contact's mailbox directly;
+    // BLE ignores it and floods.
+    mesh.send(envelope.encoded(), to: contact.id)
   }
 
   // MARK: - Retry
@@ -558,7 +609,9 @@ final class SessionManager {
   private func persist() {
     guard let store, isUnlocked else { return }
     let persistedContacts = contacts.map {
-      PersistedContact(name: $0.displayName, bundle: $0.bundle.encoded())
+      PersistedContact(
+        name: $0.displayName, bundle: $0.bundle.encoded(),
+        relayURLs: $0.relayURLs.map(\.absoluteString))
     }
     var conversationsByKey: [String: [ChatMessage]] = [:]
     for (id, messages) in persistedConversations {

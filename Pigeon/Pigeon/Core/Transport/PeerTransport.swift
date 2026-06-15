@@ -86,8 +86,10 @@ final class PeerTransport: NSObject, Transport {
     }
   }
 
-  /// Broadcasts `message` to every connected peer, in both roles.
-  func broadcast(_ message: Data) {
+  /// Broadcasts `message` to every connected peer, in both roles. BLE is a flood
+  /// transport, so the `recipient` hint is ignored — the mesh addresses and
+  /// deduplicates above this layer.
+  func broadcast(_ message: Data, to recipient: Data? = nil) {
     let fragments: [Fragment]
     do {
       fragments = try fragmenter.fragment(

@@ -14,6 +14,10 @@ import PigeonCrypto
 struct Contact: Identifiable, Equatable {
   let bundle: IdentityBundle
   var displayName: String
+  /// Relay endpoints this contact advertised (from their QR card). Where we
+  /// deposit ciphertext for them when they're out of Bluetooth range. Empty for
+  /// contacts added before relay support, or who run no relay.
+  var relayURLs: [URL] = []
 
   /// Identity public key, used as the stable contact id.
   var id: Data { bundle.identityKey }

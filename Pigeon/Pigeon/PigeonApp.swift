@@ -2,7 +2,7 @@
 //  PigeonApp.swift
 //  Pigeon
 //
-//  Fully-offline, end-to-end-encrypted Bluetooth mesh messaging.
+//  Offline-capable, end-to-end-encrypted mesh messaging.
 //
 
 import SwiftUI

@@ -14,6 +14,9 @@ import PigeonCrypto
 struct PersistedContact: Codable {
   var name: String
   var bundle: Data
+  /// Advertised relay endpoints (absolute URL strings). Defaults empty so
+  /// stores written before relay support still decode.
+  var relayURLs: [String] = []
 }
 
 /// The complete persisted app state. Conversation keys are contact identity

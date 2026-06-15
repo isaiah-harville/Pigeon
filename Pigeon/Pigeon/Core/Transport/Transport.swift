@@ -46,6 +46,11 @@ protocol Transport: AnyObject {
   /// authenticated envelopes.
   var onMessage: ((_ message: Data, _ peerID: String) -> Void)? { get set }
 
-  /// Broadcasts an opaque message to every connected peer.
-  func broadcast(_ message: Data)
+  /// Sends an opaque message. `recipient` is the intended destination's identity
+  /// key when known (a direct, originated message), or `nil` for address-less
+  /// flooding (e.g. relaying someone else's packet onward). It is only a
+  /// delivery hint: flood transports like BLE ignore it and broadcast to all
+  /// peers, while a point-to-point transport (the relay) uses it to address the
+  /// recipient's mailbox and skips `nil` (it does not flood the internet).
+  func broadcast(_ message: Data, to recipient: Data?)
 }

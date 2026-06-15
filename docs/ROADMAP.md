@@ -1,10 +1,11 @@
 # Pigeon — Roadmap
 
-Pigeon is an open-source, privacy/security-first messenger that is **offline and
-serverless whenever peers are in local range** — messages travel end-to-end
-encrypted over a **Bluetooth Low Energy mesh**, no servers, no accounts. For
-peers out of local range on different networks, an **optional zero-knowledge
-relay** carries the same ciphertext over the internet (it never sees plaintext).
+Pigeon is an open-source messenger built for **extreme privacy and security**
+across offline-capable local transports and federated server transports.
+Messages can travel end-to-end encrypted over a **Bluetooth Low Energy mesh**,
+or over an **optional zero-knowledge relay** for peers out of local range on
+different networks. The relay carries the same ciphertext over the internet and
+never sees plaintext.
 See [SECURITY_MODEL.md](SECURITY_MODEL.md) for the security design (incl. §6 on
 why remote delivery needs a relay) and audit-readiness tracking.
 
@@ -16,12 +17,13 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 - **Platforms:** iOS-only target. On Apple Silicon Macs it runs unmodified via
   "Designed for iPad" (iOS apps on Mac) — no separate macOS/Catalyst target.
   visionOS dropped. Compile-check on the iOS Simulator.
-- **Topology:** BLE mesh relay — encrypted store-and-forward; relays forward
-  ciphertext they cannot read. Pluggable `Transport` abstraction lets the mesh
-  run over other links concurrently.
+- **Topology:** transport-flexible encrypted mesh — BLE today, relays in
+  progress, and other links later. Every transport forwards ciphertext it cannot
+  read.
 - **Remote delivery:** opt-in, self-hostable **zero-knowledge relay** (blind
-  ciphertext mailbox; federation-friendly) for peers out of local range. Serverless
-  remains the floor — relays are never trusted for confidentiality/auth/integrity.
+  ciphertext mailbox; federation-friendly) for peers out of local range. Relays
+  are a first-class transport option but are never trusted for confidentiality,
+  authentication, or integrity.
 - **Crypto:** Signal-grade — Noise handshake + Double Ratchet — implemented
   clean-room over CryptoKit in the standalone `PigeonCrypto` package (chosen over
   libsignal: AGPL/App-Store conflict, server-coupled design, auditability).
@@ -69,10 +71,13 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 
 - **UI polish** — ongoing refinement of chat/contacts.
 - **Relay transport (remote delivery)** — opt-in `RelayTransport` + a
-  self-hostable zero-knowledge mailbox server (target: homelab Kubernetes, then
-  federation). Carries the same E2E ciphertext to peers out of local range. See
-  [SECURITY_MODEL.md §6.1](SECURITY_MODEL.md). Pairs naturally with async first
-  contact (below) so a relayed message can reach a peer who was never in range.
+  self-hostable zero-knowledge mailbox server (Rust, Docker→GHCR, homelab
+  Kubernetes). Carries the same E2E ciphertext to peers out of local range. Done:
+  per-recipient **addressed** delivery (no fan-out) and **federation** — each
+  peer advertises their relays in the QR card and senders deposit only there.
+  Remaining: live two-device validation, relay unit tests, and the metadata
+  hardening below. Pairs naturally with async first contact (below). See
+  [SECURITY_MODEL.md §6.1](SECURITY_MODEL.md).
 
 ### ⬜ Next
 
@@ -81,15 +86,16 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
   constant-time compares, logging discipline.
 - **Relay metadata minimization** — sealed-sender addressing, padding, optional
   Tor routing so the relay sees as little as possible (audit items 12–16).
-- **Async first contact (X3DH-style prekeys)** — message a peer who's offline at
-  first contact (prekeys in the QR / gossiped over mesh). Unblocks long-distance
-  and offline group messaging. Has prekey-exhaustion/replay tradeoffs.
-- **Local Wi-Fi transport** — Network.framework/Multipeer for same-network reach,
-  still serverless; another `Transport` implementation.
+- **Async first contact (X3DH-style prekeys)** — message a peer who is not
+  currently reachable at first contact (prekeys in the QR / gossiped over mesh).
+  Unblocks long-distance and async group messaging. Has prekey-exhaustion/replay
+  tradeoffs.
+- **Local Wi-Fi transport** — Network.framework/Multipeer for same-network reach;
+  another offline-capable `Transport` implementation.
 
 ### 🔭 Horizon
 
-**Group chats** (serverless E2E; no central authority for ordering/membership):
+**Group chats** (E2E; no central authority for ordering/membership):
 - **A1 — Pairwise fan-out:** encrypt to each member over existing sessions, tagged
   with a `groupID`. Reuses everything; O(n) bandwidth; good for small groups.
 - **A2 — Sender keys (WhatsApp/Signal model):** each member distributes a sender
@@ -100,9 +106,10 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
   eventual consistency), per-group seen-tracking over the flood mesh.
 - *Path:* A1 → A2, defer A3.
 
-**Long-distance / non-Bluetooth transport** (same E2E ciphertext, servers optional):
+**Long-distance / non-Bluetooth transport** (same E2E ciphertext across local or
+federated paths):
 - **Extend local reach:** Multipeer Connectivity / Wi-Fi Aware (higher bandwidth,
-  still offline); **LoRa** for km-range off-grid text (needs hardware).
+  offline-capable); **LoRa** for km-range off-grid text (needs hardware).
 - **Delay-tolerant "data mules":** hold ciphertext addressed to a recipient and
   deliver when next encountered; physical movement bridges disconnected clusters.
 - **Internet (opt-in), in order of fit:** (1) **federated zero-knowledge relays**

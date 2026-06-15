@@ -6,20 +6,20 @@
 > audit report, and Pigeon should not yet be relied on against a real
 > adversary. See [Audit Readiness](#audit-readiness--pre-audit-notes).
 
-Pigeon is an open-source messenger that is **offline and serverless whenever
-peers can reach each other locally**. In-range, messages travel end-to-end
-encrypted over a local **Bluetooth Low Energy mesh** — no servers, no accounts,
-no internet, no Apple Push. Identity is a key pair on your device; there is
-nothing to register and no central party to trust.
+Pigeon is an open-source messenger built for **extreme privacy and security**
+across offline-capable local transports and federated server transports.
+In-range, messages can travel end-to-end encrypted over a local **Bluetooth Low
+Energy mesh**. For peers who are **out of local range and on different
+networks** (e.g. cellular), Pigeon can deliver the same end-to-end ciphertext
+over the internet through a **zero-knowledge relay** — a self-hostable mailbox
+that stores and forwards ciphertext addressed by public key and **never sees
+plaintext**.
 
-For peers who are **out of local range and on different networks** (e.g.
-cellular), Pigeon can *optionally* deliver the same end-to-end ciphertext over
-the internet through a **zero-knowledge relay** — a self-hostable mailbox that
-stores and forwards ciphertext addressed by public key and **never sees
-plaintext**. This is the one component that is not serverless; it is the price of
-remote delivery (see §6) and is **opt-in**. The relay learns connection metadata
-(endpoints, timing, who-exchanges-with-whom) but no content. The Bluetooth mesh
-remains the privacy floor: stay in range and no server is ever involved.
+Local mesh and federated relay delivery are transport options, not different
+trust models. Relays learn connection metadata (endpoints, timing,
+who-exchanges-with-whom) but no content, and they are never trusted for
+confidentiality, authentication, or integrity. Identity is a key pair on your
+device; there is nothing to register with a central Pigeon service.
 
 ---
 
@@ -35,10 +35,10 @@ remains the privacy floor: stay in range and no server is ever involved.
 - **Forward secrecy** (a compromised key does not expose past messages) and
   **post-compromise security** (the channel heals after a compromise) at the
   conversation layer.
-- **No cloud, server, or account dependency for local (in-range) messaging.**
-  Remote delivery may use a relay, but only as a **blind ciphertext mailbox** —
-  it is never trusted for confidentiality, authentication, or integrity, all of
-  which are enforced end-to-end below the transport.
+- **Transport flexibility without weakening trust.** Local and relay transports
+  carry the same end-to-end-protected bytes. Relays are blind ciphertext
+  mailboxes and are never trusted for confidentiality, authentication, or
+  integrity, all of which are enforced end-to-end below the transport.
 - **Auditability**: security-critical code is small, dependency-free, and
   readable.
 
@@ -156,7 +156,8 @@ code composes them into protocols; it **never implements primitive algorithms**.
 
 ### 5.5 Why clean-room instead of libsignal
 - **Fit:** libsignal is coupled to Signal's server-mediated model (registration,
-  prekey servers, sealed sender) — a poor match for serverless BLE mesh.
+  prekey servers, sealed sender) — a poor match for Pigeon's transport-flexible
+  mesh and federated relay architecture.
 - **Auditability:** a focused Swift package over CryptoKit is something
   contributors can actually read, unlike a vendored Rust/C blob.
 - **Risk boundary:** we implement *protocol composition*, not primitives, which
@@ -182,14 +183,15 @@ once.
 
 - **BLE transport:** CoreBluetooth, each device acting as both central and
   peripheral; a custom GATT service; message chunking/reassembly to fit BLE MTUs;
-  framing. Fully offline and serverless — the privacy floor.
+  framing. Offline-capable local delivery with no server involved.
 - **Mesh:** packet format with TTL, duplicate-suppression (seen-cache), and
   **store-and-forward** relaying so messages hop toward out-of-range peers.
   Relays handle ciphertext only.
 - **Session establishment is interactive for now:** two contacts must be in mesh
   contact to run the Noise handshake; thereafter ratchet messages relay
-  asynchronously. **Async first contact** (X3DH-style serverless prekeys) is a
-  planned later enhancement, with its own replay/exhaustion considerations.
+  asynchronously. **Async first contact** (X3DH-style prekeys shared through QR,
+  mesh gossip, or relays) is a planned later enhancement, with its own
+  replay/exhaustion considerations.
 
 ### 6.1 Relay transport (remote delivery) — opt-in
 
@@ -197,8 +199,8 @@ Two devices that are out of Bluetooth/local-Wi-Fi range and on different network
 (e.g. both on cellular) **cannot connect directly**: behind NAT/CGNAT a phone can
 dial out but cannot be dialed in, so there is no peer-to-peer path. Reaching them
 requires a mutually-reachable rendezvous — a **server**. This is a property of
-the internet, not a Pigeon limitation, and it is the single place Pigeon departs
-from "no servers."
+the internet, not a Pigeon limitation. Pigeon treats that rendezvous as an
+untrusted federated transport, not as part of the security boundary.
 
 Pigeon keeps the trust cost minimal:
 
@@ -209,9 +211,18 @@ Pigeon keeps the trust cost minimal:
   authentication, integrity, forward secrecy, and the safety-number trust check
   are all unchanged and enforced end-to-end below it.
 - It is **opt-in** and **self-hostable** (run your own; a homelab/Kubernetes or
-  small VPS deployment is sufficient). The design is **federation-friendly** —
-  multiple independent relays, chosen per user, like email or Nostr relays — so
-  there is no single central party.
+  small VPS deployment is sufficient). The design is **federated** — each user
+  advertises the relay(s) they can be reached at in their QR contact card, and a
+  sender deposits only on *that recipient's* relays. Independent relays, chosen
+  per user, like email or Nostr relays — no single central party, no
+  server-to-server protocol.
+- **Relay URLs in the card are unauthenticated delivery hints**, not signed
+  identity: only the 128-byte bundle is signed. They are exchanged over the
+  in-person QR channel, and a wrong/hostile relay can only observe that
+  ciphertext for a key exists, or drop it (a DoS) — it cannot read content or
+  affect trust, which live entirely in the bundle and the ratchet. Reading a
+  mailbox still requires proving ownership of its key (a signed challenge), so a
+  relay cannot hand your mailbox to anyone else.
 - **What the relay can see is metadata**, not content: client IP/endpoints,
   timing, message sizes, and that *some* sender is delivering to recipient key X.
   Mitigations (sealed-sender addressing, padding, and routing over **Tor** to hide
@@ -254,8 +265,8 @@ Pigeon keeps the trust cost minimal:
   routing reveal communication patterns. No padding/cover traffic yet.
 - **Relay metadata (if enabled).** An internet relay sees endpoints, timing,
   sizes, and sender→recipient-key mappings — never content. Sealed-sender,
-  padding, and Tor routing to blunt this are planned, not implemented. Stay in
-  Bluetooth range to avoid relays entirely.
+  padding, and Tor routing to blunt this are planned, not implemented. Local
+  transports avoid relay metadata; relay transports provide remote reach.
 - **Endpoint trust.** A compromised/unlocked device defeats all guarantees.
 - **No async first contact** (see §6).
 - **No audit** (see below).

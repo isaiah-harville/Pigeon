@@ -4,13 +4,13 @@ Effective date: June 16, 2026
 
 ## Short App Description
 
-Pigeon is an offline-first messaging app for iPhone. It lets users exchange
-messages with verified contacts over Bluetooth mesh transport, and optionally
-over user-configured relay servers when contacts are out of Bluetooth range.
-The app is designed for private, tactical, low-infrastructure communication:
-users pair by exchanging public identity information, verify peers with safety
-numbers, and send end-to-end encrypted messages without requiring a Pigeon
-account, phone number, or central messaging service.
+Pigeon is an offline-capable messaging app for iPhone. It lets users exchange
+messages with verified contacts over Bluetooth mesh transport and over
+user-configured federated relay servers when contacts are out of Bluetooth
+range. The app is designed for private, tactical, low-infrastructure
+communication: users pair by exchanging public identity information, verify
+peers with safety numbers, and send end-to-end encrypted messages without
+requiring a Pigeon account, phone number, or central messaging service.
 
 ## Purpose Of Encryption
 

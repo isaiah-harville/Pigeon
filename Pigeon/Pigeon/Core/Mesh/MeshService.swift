@@ -39,10 +39,12 @@ final class MeshService {
     }
   }
 
-  /// Sends `message` into the mesh.
-  func send(_ message: Data) {
+  /// Sends `message` into the mesh. `recipient` is the destination's identity
+  /// key, passed to the transport as a delivery hint (used by the relay to
+  /// address a mailbox; ignored by flood transports like BLE).
+  func send(_ message: Data, to recipient: Data?) {
     let packet = router.originate(message)
-    transport.broadcast(packet.encoded())
+    transport.broadcast(packet.encoded(), to: recipient)
   }
 
   private func handleInbound(_ data: Data) {
@@ -52,9 +54,11 @@ final class MeshService {
       onMessage?(payload)
     }
     // Forward toward peers we can reach that the sender may not (flood relay,
-    // bounded by the seen-cache and TTL).
+    // bounded by the seen-cache and TTL). This is address-less flooding — the
+    // internet relay deliberately ignores it and only carries our own directly
+    // addressed messages.
     if let relay = reception.relay {
-      transport.broadcast(relay.encoded())
+      transport.broadcast(relay.encoded(), to: nil)
     }
   }
 }

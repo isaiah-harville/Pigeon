@@ -2,9 +2,10 @@
 
 ## Project Mission
 
-Pigeon is a secure, offline Bluetooth mesh messaging application. It should keep
-messages private without relying on an internet service, while still making peer
-identity and verification understandable to ordinary users.
+Pigeon is a secure, offline-capable messaging application that can use local
+mesh transports and federated relays. It should keep messages private across all
+transports while still making peer identity and verification understandable to
+ordinary users.
 
 Security is a product requirement, not a later polish step. Favor boring,
 auditable code over clever abstractions.
@@ -89,8 +90,9 @@ recipient's advertised relay(s); the relay never sees plaintext and is never
 trusted for confidentiality, authentication, or integrity. The relay server
 lives in this repo (`relay/`), ships as a Docker image, and is federated from the
 start (many independent relays, chosen per user — no server-to-server protocol).
-Bluetooth/local delivery stays fully serverless; relays are off the path when
-peers are in range. See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) §6.1.
+Local delivery and relay delivery are both first-class transports carrying the
+same end-to-end ciphertext. See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md)
+§6.1.
 
 ## Do Not Do
 

@@ -97,7 +97,7 @@ struct AddContactView: View {
       return
     }
     let name = card.name.isEmpty ? "Unnamed" : card.name
-    if session.addContact(card.bundle, name: name) {
+    if session.addContact(card.bundle, name: name, relayURLs: card.relayURLs) {
       dismiss()
     } else {
       error = "Couldn't add this contact (invalid binding, or it's your own code)."

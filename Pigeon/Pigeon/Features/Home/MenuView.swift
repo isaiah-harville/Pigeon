@@ -54,6 +54,25 @@ struct MenuView: View {
           LabeledContent("Connected peers", value: "\(session.connectedPeerCount)")
         }
 
+        Section {
+          NavigationLink {
+            RelaySettingsView()
+          } label: {
+            HStack {
+              Label("Internet relays", systemImage: "antenna.radiowaves.left.and.right")
+              Spacer()
+              HStack(spacing: 6) {
+                Circle().fill(relayColor).frame(width: 8, height: 8)
+                Text(relayText).foregroundStyle(.secondary)
+              }
+            }
+          }
+        } footer: {
+          Text(
+            "Optional. Reach contacts who are out of Bluetooth range. Off by default — Pigeon stays serverless until you add one."
+          )
+        }
+
         if !session.log.isEmpty {
           Section("Activity") {
             ForEach(Array(session.log.suffix(12).enumerated()), id: \.offset) { _, line in
@@ -80,6 +99,24 @@ struct MenuView: View {
     case .scanning: return .orange
     case .idle: return .secondary
     case .unauthorized, .poweredOff: return .red
+    }
+  }
+
+  private var relayColor: Color {
+    switch session.relayLinkState {
+    case .online: return .green
+    case .connecting: return .orange
+    case .failed: return .red
+    case .disabled: return .secondary
+    }
+  }
+
+  private var relayText: String {
+    switch session.relayLinkState {
+    case .online: return "Connected"
+    case .connecting: return "Connecting…"
+    case .failed: return "Unreachable"
+    case .disabled: return "Off"
     }
   }
 }
