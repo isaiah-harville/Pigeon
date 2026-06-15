@@ -1,0 +1,31 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: .lock
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: forbid-submodules
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: local
+    hooks:
+      - id: swiftformat
+        name: SwiftFormat
+        language: system
+        entry: swiftformat .
+        pass_filenames: false
+        types: [swift]
+
+      - id: swiftlint
+        name: SwiftLint
+        language: system
+        entry: swiftlint lint --strict
+        pass_filenames: false
+        types: [swift]

@@ -1,0 +1,62 @@
+name: Swift
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: SwiftLint
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SwiftLint
+        run: brew install swiftlint
+
+      - name: Run SwiftLint
+        run: swiftlint lint --strict --reporter github-actions-logging
+
+  format:
+    name: SwiftFormat
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SwiftFormat
+        run: brew install swiftformat
+
+      - name: Check formatting
+        run: swiftformat --lint .
+
+  package-tests:
+    name: Swift Package Tests
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test PigeonCrypto
+        run: swift test --package-path PigeonCrypto
+
+      - name: Test PigeonMesh
+        run: swift test --package-path PigeonMesh
+
+  app-build:
+    name: iOS App Build
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Pigeon
+        run: |
+          xcodebuild build \
+            -project Pigeon/Pigeon.xcodeproj \
+            -scheme Pigeon \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO
