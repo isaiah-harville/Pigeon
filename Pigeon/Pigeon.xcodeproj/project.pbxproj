@@ -15,9 +15,22 @@
 		BFCCC6E52FE0108F000F4D70 /* Pigeon.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pigeon.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		BFCCC9A92FE0526F000F4D70 /* Exceptions for "Pigeon" folder in "Pigeon" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = BFCCC6E42FE0108F000F4D70 /* Pigeon */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		BFCCC6E72FE0108F000F4D70 /* Pigeon */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				BFCCC9A92FE0526F000F4D70 /* Exceptions for "Pigeon" folder in "Pigeon" target */,
+			);
 			path = Pigeon;
 			sourceTree = "<group>";
 		};
@@ -267,12 +280,12 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Pigeon/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Pigeon;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Pigeon uses Bluetooth to discover nearby devices and exchange end-to-end encrypted messages with no internet or servers.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Pigeon uses the camera to scan a contact's QR code so you can verify their identity in person.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Pigeon uses Face ID to unlock your locally stored, encrypted messages.";
-				INFOPLIST_KEY_UIBackgroundModes = "bluetooth-central bluetooth-peripheral";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -318,12 +331,12 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Pigeon/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Pigeon;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Pigeon uses Bluetooth to discover nearby devices and exchange end-to-end encrypted messages with no internet or servers.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Pigeon uses the camera to scan a contact's QR code so you can verify their identity in person.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Pigeon uses Face ID to unlock your locally stored, encrypted messages.";
-				INFOPLIST_KEY_UIBackgroundModes = "bluetooth-central bluetooth-peripheral";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;

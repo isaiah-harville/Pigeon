@@ -7,8 +7,9 @@ for the security design and audit-readiness tracking.
 
 ## Locked architecture decisions
 
-- **Platforms:** iOS-first; macOS kept buildable for fast dev/testing. visionOS
-  deferred.
+- **Platforms:** iOS-only target. On Apple Silicon Macs it runs unmodified via
+  "Designed for iPad" (iOS apps on Mac) — no separate macOS/Catalyst target.
+  visionOS dropped. Compile-check on the iOS Simulator.
 - **Topology:** BLE mesh relay — encrypted store-and-forward; relays forward
   ciphertext they cannot read.
 - **Crypto:** Signal-grade — Noise handshake + Double Ratchet — implemented
@@ -69,6 +70,11 @@ SECURITY_MODEL.md → Audit Readiness).
   content breach — the binding check still holds). Rate-limit / harden later.
 - **Store-and-forward:** queued messages have no age expiry yet; relay-level
   store-and-forward (holding *others'* packets for later) is still future work.
+- **Background notifications:** in-app/foreground local notifications work, but
+  receiving messages (and notifying) while the app is suspended needs a real
+  Info.plist with `UIBackgroundModes` (bluetooth-central) plus CoreBluetooth
+  state restoration. `INFOPLIST_KEY_UIBackgroundModes` is not a valid build
+  setting, so this requires an Info.plist file.
 
 ## Beyond these phases
 
