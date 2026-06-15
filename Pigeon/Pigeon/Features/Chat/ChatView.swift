@@ -89,6 +89,19 @@ struct ChatView: View {
 
     @ViewBuilder
     private func bubble(_ message: ChatMessage) -> some View {
+        if message.system {
+            Text("— \(message.text) —")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 2)
+        } else {
+            messageBubble(message)
+        }
+    }
+
+    @ViewBuilder
+    private func messageBubble(_ message: ChatMessage) -> some View {
         HStack(alignment: .bottom, spacing: 4) {
             if message.mine { Spacer(minLength: 40) }
             Text(message.text)

@@ -13,16 +13,19 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     let text: String
     var date: Date = Date()
     var pending: Bool = false
+    /// A centered notice (e.g. "Ephemeral enabled") rather than a chat bubble.
+    var system: Bool = false
 
-    init(mine: Bool, text: String, pending: Bool = false) {
+    init(mine: Bool, text: String, pending: Bool = false, system: Bool = false) {
         self.mine = mine
         self.text = text
         self.pending = pending
+        self.system = system
     }
 
     // Tolerant decoding: missing optional-ish fields default rather than fail,
     // so adding fields doesn't discard already-stored history.
-    private enum CodingKeys: String, CodingKey { case id, mine, text, date, pending }
+    private enum CodingKeys: String, CodingKey { case id, mine, text, date, pending, system }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -31,5 +34,6 @@ struct ChatMessage: Identifiable, Equatable, Codable {
         text = try container.decode(String.self, forKey: .text)
         date = (try? container.decode(Date.self, forKey: .date)) ?? Date()
         pending = (try? container.decode(Bool.self, forKey: .pending)) ?? false
+        system = (try? container.decode(Bool.self, forKey: .system)) ?? false
     }
 }

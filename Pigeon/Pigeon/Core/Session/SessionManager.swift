@@ -84,10 +84,38 @@ final class SessionManager {
     func isEphemeral(_ contact: Contact) -> Bool { ephemeralContactIDs.contains(contact.id) }
 
     /// Toggles ephemeral mode for one chat. Affects only future messages;
-    /// already-saved history is left on disk untouched.
+    /// already-saved history is left on disk untouched. The change is mirrored
+    /// to the peer so both sides of the chat go ephemeral together.
     func setEphemeral(_ on: Bool, for contact: Contact) {
-        if on { ephemeralContactIDs.insert(contact.id) } else { ephemeralContactIDs.remove(contact.id) }
+        applyEphemeral(on, for: contact.id, announce: true)
+        sendEphemeralState(to: contact)
+    }
+
+    /// Applies an ephemeral change locally and adds a system notice in the chat.
+    private func applyEphemeral(_ on: Bool, for contactID: Data, announce: Bool) {
+        let changed = ephemeralContactIDs.contains(contactID) != on
+        if on { ephemeralContactIDs.insert(contactID) } else { ephemeralContactIDs.remove(contactID) }
+        if changed && announce {
+            record(ChatMessage(mine: false, text: on ? "Ephemeral enabled" : "Ephemeral disabled", system: true),
+                   for: contactID)
+        }
         persist()
+    }
+
+    /// Sends our current ephemeral state for this chat to the peer (encrypted).
+    private func sendEphemeralState(to contact: Contact) {
+        guard let session = sessions[contact.id], establishedContactIDs.contains(contact.id) else { return }
+        let byte: UInt8 = ephemeralContactIDs.contains(contact.id) ? 1 : 0
+        guard let ciphertext = try? session.encrypt(Data([0x01, byte])) else { return } // 0x01 = ephemeral cmd
+        sendEnvelope(.control, payload: ciphertext, to: contact)
+    }
+
+    private func handleControl(_ payload: Data, from contact: Contact) {
+        guard let session = sessions[contact.id],
+              let plaintext = try? session.decrypt(payload),
+              plaintext.count == 2, plaintext.first == 0x01 else { return }
+        applyEphemeral(plaintext[plaintext.index(after: plaintext.startIndex)] == 1,
+                       for: contact.id, announce: true)
     }
 
     // MARK: - UI passthroughs
@@ -195,6 +223,7 @@ final class SessionManager {
         case .message: handleMessage(envelope.payload, from: contact)
         case .rehandshakeRequest: handleRehandshakeRequest(from: contact)
         case .ack: handleAck(envelope.payload, from: contact)
+        case .control: handleControl(envelope.payload, from: contact)
         }
     }
 
@@ -356,6 +385,7 @@ final class SessionManager {
         establishedContactIDs.insert(contact.id)
         note("Secure session established with \"\(contact.displayName)\"")
         sendPending(to: contact) // deliver anything queued while out of range
+        if ephemeralContactIDs.contains(contact.id) { sendEphemeralState(to: contact) } // re-sync ephemeral
     }
 
     private func sendEnvelope(_ type: EnvelopeType, payload: Data, to contact: Contact) {

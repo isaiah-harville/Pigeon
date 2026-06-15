@@ -28,6 +28,8 @@ public enum EnvelopeType: UInt8, Sendable {
     /// A delivery acknowledgement: the (encrypted) id of a received message,
     /// so the sender knows it landed and can stop retrying.
     case ack = 4
+    /// An (encrypted) control/state-sync message, e.g. toggling ephemeral mode.
+    case control = 5
 }
 
 /// An identity-addressed envelope. `sender`/`recipient` are 32-byte identity
