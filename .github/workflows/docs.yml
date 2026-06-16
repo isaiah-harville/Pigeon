@@ -1,0 +1,106 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "Pigeon/README.md"
+      - "Pigeon/CONTRIBUTING.md"
+      - "Pigeon/docs/**"
+      - "Pigeon/mkdocs.yml"
+      - "PigeonCrypto/README.md"
+      - "PigeonCrypto/CONTRIBUTING.md"
+      - "PigeonCrypto/docs/**"
+      - "PigeonCrypto/mkdocs.yml"
+      - "PigeonMesh/README.md"
+      - "PigeonMesh/CONTRIBUTING.md"
+      - "PigeonMesh/docs/**"
+      - "PigeonMesh/mkdocs.yml"
+      - "PigeonRelay/README.md"
+      - "PigeonRelay/CONTRIBUTING.md"
+      - "PigeonRelay/docs/**"
+      - "PigeonRelay/mkdocs.yml"
+      - "CONTRIBUTING.md"
+      - "README.md"
+      - "mkdocs.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "Pigeon/README.md"
+      - "Pigeon/CONTRIBUTING.md"
+      - "Pigeon/docs/**"
+      - "Pigeon/mkdocs.yml"
+      - "PigeonCrypto/README.md"
+      - "PigeonCrypto/CONTRIBUTING.md"
+      - "PigeonCrypto/docs/**"
+      - "PigeonCrypto/mkdocs.yml"
+      - "PigeonMesh/README.md"
+      - "PigeonMesh/CONTRIBUTING.md"
+      - "PigeonMesh/docs/**"
+      - "PigeonMesh/mkdocs.yml"
+      - "PigeonRelay/README.md"
+      - "PigeonRelay/CONTRIBUTING.md"
+      - "PigeonRelay/docs/**"
+      - "PigeonRelay/mkdocs.yml"
+      - "CONTRIBUTING.md"
+      - "README.md"
+      - "mkdocs.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build MkDocs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install docs dependencies
+        run: uv sync
+
+      - name: Build docs
+        run: uv run mkdocs build --strict
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    name: Deploy to GitHub Pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

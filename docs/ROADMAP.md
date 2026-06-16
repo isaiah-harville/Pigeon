@@ -75,15 +75,16 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
   Kubernetes). Carries the same E2E ciphertext to peers out of local range. Done:
   per-recipient **addressed** delivery (no fan-out) and **federation** — each
   peer advertises their relays in the QR card and senders deposit only there.
-  Remaining: live two-device validation, relay unit tests, and the metadata
-  hardening below. Pairs naturally with async first contact (below). See
+  Remaining: relay unit tests and the metadata hardening below. Live two-device
+  validation has been performed but still needs to be written up. Pairs
+  naturally with async first contact (below). See
   [SECURITY_MODEL.md §6.1](SECURITY_MODEL.md).
 
 ### ⬜ Next
 
-- **Hardening / audit prep (Phase 7)** — clear the audit blockers below;
+- **Security hardening / audit prep** — clear the audit blockers below:
   traffic-analysis resistance (padding/cover traffic), key zeroization,
-  constant-time compares, logging discipline.
+  constant-time compares, and logging discipline.
 - **Relay metadata minimization** — sealed-sender addressing, padding, optional
   Tor routing so the relay sees as little as possible (audit items 12–16).
 - **Async first contact (X3DH-style prekeys)** — message a peer who is not

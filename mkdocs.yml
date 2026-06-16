@@ -1,0 +1,35 @@
+site_name: Pigeon
+site_description: End-to-end encrypted mesh messenger with local transports and optional zero-knowledge relays.
+repo_url: https://github.com/isaiah-harville/Pigeon
+edit_uri: edit/main/
+docs_dir: docs
+site_dir: public
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - content.code.copy
+
+plugins:
+  - search
+  - monorepo
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+
+nav:
+  - Overview: index.md
+  - Security Model: SECURITY_MODEL.md
+  - Roadmap: ROADMAP.md
+  - Apple Export Compliance: APPLE_EXPORT_COMPLIANCE.md
+  - Source Map: SOURCE.md
+  - Contributing: CONTRIBUTING.md
+  - "!include ../Pigeon/mkdocs.yml"
+  - "!include ../PigeonCrypto/mkdocs.yml"
+  - "!include ../PigeonMesh/mkdocs.yml"
+  - "!include ../PigeonRelay/mkdocs.yml"

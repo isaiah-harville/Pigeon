@@ -58,12 +58,12 @@ device; there is nothing to register with a central Pigeon service.
 
 ```
 ┌──────────────────────────────────────────────┐
-│ App (SwiftUI, iOS-first; macOS for dev)        │
+│ App (SwiftUI, iOS target; iPad-on-Mac capable) │
 │  onboarding · contacts/QR verify · chat        │
 ├──────────────────────────────────────────────┤
-│ Storage (Phase 5)  encrypted-at-rest + ephemeral│
+│ Storage  encrypted-at-rest + ephemeral mode     │
 ├──────────────────────────────────────────────┤
-│ Mesh (Phase 4)  packet format · TTL · dedup ·   │
+│ Mesh  packet format · TTL · dedup ·             │
 │                 store-and-forward relay          │
 ├──────────────────────────────────────────────┤
 │ Transport (`Transport` protocol)  pluggable pipes│
@@ -216,11 +216,13 @@ Pigeon keeps the trust cost minimal:
   sender deposits only on *that recipient's* relays. Independent relays, chosen
   per user, like email or Nostr relays — no single central party, no
   server-to-server protocol.
-- **Relay URLs in the card are unauthenticated delivery hints**, not signed
-  identity: only the 128-byte bundle is signed. They are exchanged over the
-  in-person QR channel, and a wrong or malicious relay can only observe that
-  ciphertext for a key exists, or drop it (a DoS) — it cannot read content or
-  affect trust, which live entirely in the bundle and the ratchet. Reading a
+- **Relay URLs in the card are signed delivery hints.** The 128-byte identity
+  bundle signs the identity ↔ Noise-static binding; the relay URL list is signed
+  separately by the same Ed25519 identity key so old cards remain parseable and
+  `PigeonCrypto` stays identity-agnostic. A scanner only honors relay URLs if
+  that URL signature verifies. A wrong or malicious relay can observe that
+  ciphertext for a key exists, or drop it (a DoS), but it cannot read content or
+  affect trust, which live in the signed bundle and the ratchet. Reading a
   mailbox still requires proving ownership of its key (a signed challenge), so a
   relay cannot hand your mailbox to anyone else.
 - **What the relay can see is metadata**, not content: client IP/endpoints,
@@ -306,8 +308,8 @@ authoritative to-do list for reaching audit readiness.
    safety-relevant state reaches logs, crash reports, previews, or test output.
 8. **Keychain access control.** Consider biometric/passcode gating
    (`SecAccessControl`) for identity-key use.
-9. **At-rest storage (Phase 5).** Encryption key derivation, ephemeral-mode
-   guarantees, and secure deletion.
+9. **At-rest storage.** Encryption key derivation, ephemeral-mode guarantees,
+   and secure deletion.
 
 ### Metadata / traffic analysis (design-level)
 10. **Padding & cover traffic** to blunt size/timing analysis.
