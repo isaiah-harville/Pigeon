@@ -14,6 +14,13 @@ delivery, per-contact encrypted sessions, and the first relay transport all
 exist. The remaining work is mostly hardening, test depth, metadata reduction,
 and product polish.
 
+## Project sites
+
+- Main site: [pigeonwire.app](https://pigeonwire.app/)
+- Documentation: [docs.pigeonwire.app](https://docs.pigeonwire.app/)
+- Support: [pigeonwire.app/support](https://pigeonwire.app/support/)
+- Privacy policy: [pigeonwire.app/privacy-policy](https://pigeonwire.app/privacy-policy/)
+
 ## How devices reach each other
 
 Pigeon sends the *same* end-to-end-encrypted ciphertext over any available
@@ -43,7 +50,7 @@ concurrently):
 - `PigeonMesh/` - standalone Swift package for fragmentation, mesh packets,
   deduplication, TTL, and session envelopes.
 - `PigeonRelay/` - Rust zero-knowledge relay server.
-- `docs/` - MkDocs source for design, security, roadmap, and source maps.
+- `docs/` - MkDocs source for design, security, roadmap, and API docs.
 
 ## Common Commands
 

@@ -7,6 +7,8 @@ site_dir: public
 
 theme:
   name: material
+  logo: assets/pigeon-logo.png
+  favicon: assets/pigeon-logo.png
   icon:
     repo: fontawesome/brands/github
   palette:

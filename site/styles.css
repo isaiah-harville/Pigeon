@@ -94,6 +94,22 @@ footer a {
   text-decoration: none;
 }
 
+.icon-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(13, 26, 42, 0.42);
+}
+
+.icon-link svg {
+  flex: 0 0 auto;
+}
+
 nav a:hover,
 footer a:hover,
 .policy a:hover {
@@ -209,6 +225,7 @@ dd {
 
 .principles,
 .assurance,
+.open-source,
 .policy {
   width: min(1180px, calc(100% - 2rem));
   margin: 0 auto;
@@ -277,6 +294,48 @@ article p,
   font-weight: 750;
 }
 
+.open-source {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(280px, 0.72fr);
+  gap: clamp(2rem, 5vw, 5rem);
+  padding: clamp(4rem, 8vw, 7rem) 0;
+  border-top: 1px solid var(--line);
+}
+
+.open-source p {
+  color: var(--muted);
+  font-size: 1.05rem;
+  font-weight: 650;
+  line-height: 1.7;
+}
+
+.link-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  margin-top: 1.5rem;
+}
+
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  border: 1px solid rgba(91, 215, 255, 0.55);
+  border-radius: 8px;
+  padding: 0.65rem 1rem;
+  color: #04111f;
+  background: var(--blue);
+  font-size: 0.9rem;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.button-link.secondary {
+  color: var(--ink);
+  background: rgba(13, 26, 42, 0.76);
+}
+
 .policy {
   max-width: 860px;
   padding: clamp(3rem, 8vw, 6rem) 0;
@@ -330,7 +389,8 @@ footer span {
 @media (max-width: 780px) {
   .hero,
   .principles,
-  .assurance {
+  .assurance,
+  .open-source {
     grid-template-columns: 1fr;
   }
 
