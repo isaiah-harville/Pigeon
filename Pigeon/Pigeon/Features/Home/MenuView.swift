@@ -109,8 +109,8 @@ struct MenuView: View {
 
   private var relayFooter: String {
     """
-    Optional. Reach contacts who are out of Bluetooth range. Off by default — \
-    Pigeon stays serverless until you add one.
+    Reach contacts who are out of Bluetooth range. \
+    Relay servers are federated and open-sourced — we encourage you to host your own.
     """
   }
 
