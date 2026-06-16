@@ -1,6 +1,6 @@
 site_name: Pigeon App
-docs_dir: .
+docs_dir: docs
 nav:
-  - Overview: README.md
+  - Overview: index.md
   - Contributing: CONTRIBUTING.md
-  - Source Map: docs/SOURCE.md
+  - Source Map: SOURCE.md
