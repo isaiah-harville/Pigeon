@@ -12,14 +12,52 @@ auditable code over clever abstractions.
 
 ## Current Architecture
 
-- `Pigeon/` contains the SwiftUI app and Xcode project.
-- `Pigeon/Pigeon/Core/Identity/` owns long-term Ed25519 identity keys, Keychain
-  persistence, public-key fingerprints, and safety-number generation.
-- `PigeonCrypto/` is a standalone Swift package for cryptographic protocol code.
-  Keep it dependency-free unless there is a strong security reason.
-- `PigeonCrypto/Sources/PigeonCrypto/Primitives.swift` wraps CryptoKit primitives.
-- `PigeonCrypto/Sources/PigeonCrypto/DoubleRatchet.swift` implements ratchet
-  state and message encryption/decryption.
+The repo has four components: the **app** (`Pigeon/`), and three packages —
+`PigeonCrypto/` (Swift), `PigeonMesh/` (Swift), and `PigeonRelay/` (Rust).
+
+- `Pigeon/` contains the SwiftUI app and Xcode project (`Pigeon/Pigeon.xcodeproj`,
+  scheme `Pigeon`). Source lives under `Pigeon/Pigeon/`, split into `Core/`
+  (model/logic) and `Features/` (SwiftUI views).
+- `PigeonCrypto/` is a standalone, dependency-free Swift package for cryptographic
+  protocol code. Keep it dependency-free unless there is a strong security reason.
+- `PigeonMesh/` is a dependency-free, platform-agnostic Swift package for
+  transport/mesh logic (packet framing, fragmentation/reassembly over small BLE
+  MTUs, store-and-forward routing). The CoreBluetooth driver lives in the app and
+  feeds bytes through this package — `PigeonMesh` itself has no radio dependency.
+- `PigeonRelay/` is the Rust (axum/tokio) zero-knowledge relay server; ships as a
+  Docker image. See the Remote Delivery section below.
+
+### Repository map (where things live)
+
+App `Core/`:
+- `Core/Identity/` — long-term Ed25519 identity keys (`IdentityKey`), Keychain
+  persistence (`KeychainStore`), `IdentityManager`, fingerprints, and
+  `SafetyNumber` generation.
+- `Core/Session/` — `SessionManager` (`@MainActor @Observable`) is the central
+  coordinator: owns one `SecureSession` per contact, drives Noise handshakes,
+  contacts, conversations, and bridges to transports. It is split across
+  `SessionManager.swift`, `+Messaging.swift`, and `+UI.swift` (UI passthroughs).
+- `Core/Contacts/` — `Contact` and `ContactCard` (the QR/scan payload: identity
+  bundle + display name + advertised relay URLs + relay signature).
+- `Core/Transport/` — `Transport` protocol, `CompositeTransport` (mesh + relay),
+  `RelayTransport`, `RelaySettings`, `PeerTransport`, `BluetoothConstants`.
+- `Core/Mesh/` — `MeshService` (CoreBluetooth driver feeding `PigeonMesh`).
+- `Core/Storage/` — `Vault` and `EncryptedStore` (encrypted local persistence).
+- `Core/Notifications/` — `MessageNotifier`.
+
+App `Features/`: `Onboarding/` (`UnlockView`, `OnboardingNameView`), `Home/`
+(`ChatsListView`, `MenuView`, `RelaySettingsView`), `Chat/` (`ChatView`),
+`Contacts/` (`AddContactView` = scan/paste flow, `IdentityQRView` = show my QR,
+`QRScanner`, `QRCode`), `Components/`.
+
+`PigeonCrypto/Sources/PigeonCrypto/`: `Primitives.swift` (CryptoKit wrappers),
+`DoubleRatchet.swift` (ratchet state + message encrypt/decrypt), `NoiseHandshake`,
+`SecretBox`, `SecureSession`, `IdentityBundle`.
+
+`PigeonMesh/Sources/PigeonMesh/`: `MeshPacket`, `SessionEnvelope`, `Fragmentation`.
+
+Tests live in `PigeonCrypto/Tests/` and `PigeonMesh/Tests/` (the app target has no
+unit tests). Docs of note: `docs/SECURITY_MODEL.md`, `docs/ROADMAP.md`.
 
 ## Security Invariants
 
@@ -55,7 +93,9 @@ shared behavior:
 
 ```sh
 swift test --package-path PigeonCrypto
+swift test --package-path PigeonMesh
 xcodebuild build -project Pigeon/Pigeon.xcodeproj -scheme Pigeon -destination 'generic/platform=iOS'
+cargo test --manifest-path PigeonRelay/Cargo.toml   # relay (Rust)
 ```
 
 Useful discovery command:
