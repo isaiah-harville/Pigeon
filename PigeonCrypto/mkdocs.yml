@@ -1,0 +1,6 @@
+site_name: PigeonCrypto
+docs_dir: .
+nav:
+  - Overview: README.md
+  - Contributing: CONTRIBUTING.md
+  - Source Map: docs/SOURCE.md
