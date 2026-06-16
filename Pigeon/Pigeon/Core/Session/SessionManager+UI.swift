@@ -17,14 +17,6 @@ extension SessionManager {
 
   /// Relay (internet) link state for the UI; `.disabled` when none configured.
   var relayLinkState: RelayTransport.LinkState { relay?.linkState ?? .disabled }
-  /// The configured relay endpoints.
-  var relayURLs: [URL] { RelaySettings.urls() }
-
-  /// Persists and applies a new set of relay endpoints.
-  func setRelayURLs(_ urls: [URL]) {
-    RelaySettings.setURLs(urls)
-    relay?.reconfigure(urls)
-  }
 
   /// Our own shareable identity bundle (for display as a QR code).
   var myBundle: IdentityBundle { identity.identityBundle }

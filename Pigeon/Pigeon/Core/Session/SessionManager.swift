@@ -79,6 +79,11 @@ final class SessionManager {
   private(set) var isUnlocked = false
   var store: EncryptedStore?
 
+  /// Configured relay endpoints, mirrored here so the value is observable —
+  /// changing it refreshes anything that depends on it (e.g. the QR card, which
+  /// advertises these relays). Persisted via `RelaySettings`.
+  private(set) var relayURLs: [URL] = RelaySettings.urls()
+
   convenience init(identity: IdentityManager) {
     self.init(identity: identity, mesh: nil)
   }
@@ -142,6 +147,14 @@ final class SessionManager {
   /// Recomputes the relay connection pool (our relays plus every contact's).
   func refreshRelay() {
     relay?.reconfigure(RelaySettings.urls())
+  }
+
+  /// Persists and applies a new set of our relay endpoints. Updates the
+  /// observable `relayURLs` so dependent UI (the QR card) refreshes live.
+  func setRelayURLs(_ urls: [URL]) {
+    RelaySettings.setURLs(urls)
+    relayURLs = urls
+    relay?.reconfigure(urls)
   }
 
   /// Whether `contact`'s chat is in ephemeral (don't-persist-new-messages) mode.
