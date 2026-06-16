@@ -149,12 +149,13 @@ final class SessionManager {
     relay?.reconfigure(RelaySettings.urls())
   }
 
-  /// Persists and applies a new set of our relay endpoints. Updates the
-  /// observable `relayURLs` so dependent UI (the QR card) refreshes live.
-  func setRelayURLs(_ urls: [URL]) {
-    RelaySettings.setURLs(urls)
-    relayURLs = urls
-    relay?.reconfigure(urls)
+  /// Persists and applies the full relay list (endpoints + enabled flags).
+  /// Updates the observable `relayURLs` (the *enabled* subset we advertise) so
+  /// dependent UI (the QR card) refreshes live.
+  func setRelayEntries(_ entries: [RelayEntry]) {
+    RelaySettings.setEntries(entries)
+    relayURLs = RelaySettings.urls()
+    relay?.reconfigure(relayURLs)
   }
 
   /// Whether `contact`'s chat is in ephemeral (don't-persist-new-messages) mode.

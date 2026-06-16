@@ -4,32 +4,54 @@
 //
 //  Persistence for the user's configured relay endpoints. A relay URL is a
 //  connection endpoint, not a secret (no key material), so it lives in
-//  UserDefaults rather than the encrypted store. Relays are opt-in: with none
-//  configured, Pigeon is fully serverless and only reaches peers over Bluetooth.
+//  UserDefaults rather than the encrypted store. The recommended relay is always
+//  present; any relay (including it) can be enabled or disabled. Only *enabled*
+//  relays are advertised in our QR card and used for delivery.
 //
 
 import Foundation
 
+/// One configured relay: its endpoint and whether it's currently in use.
+struct RelayEntry: Equatable, Hashable {
+  var url: URL
+  var enabled: Bool
+}
+
 enum RelaySettings {
   private static let key = "pigeon.relay.urls"
+  private static let disabledKey = "pigeon.relay.disabled"
+
   static var recommendedURL: URL {
     guard let url = URL(string: "wss://relay.pigeonwire.app/ws") else {
       preconditionFailure("Invalid built-in relay URL")
     }
     return url
   }
-  static var recommendedURLs: [URL] { [recommendedURL] }
 
-  /// The configured relay endpoints (expected to be `wss://…`).
-  static func urls() -> [URL] {
-    guard let stored = UserDefaults.standard.stringArray(forKey: key) else {
-      return recommendedURLs
-    }
-    return stored.compactMap(URL.init(string:))
+  /// Every configured relay, in stored order. The recommended relay is always
+  /// included (prepended if the user hasn't added it explicitly) and enabled
+  /// unless the user has turned it off.
+  static func entries() -> [RelayEntry] {
+    let stored = (UserDefaults.standard.stringArray(forKey: key) ?? []).compactMap(
+      URL.init(string:))
+    let disabled = Set(UserDefaults.standard.stringArray(forKey: disabledKey) ?? [])
+    var urls = stored
+    if !urls.contains(recommendedURL) { urls.insert(recommendedURL, at: 0) }
+    return urls.map { RelayEntry(url: $0, enabled: !disabled.contains($0.absoluteString)) }
   }
 
-  static func setURLs(_ urls: [URL]) {
-    UserDefaults.standard.set(urls.map(\.absoluteString), forKey: key)
+  /// The enabled relay endpoints — what we advertise and actually use. Falls back
+  /// to the recommended relay when the user has disabled everything else but left
+  /// it on (the recommended relay is always present in `entries()`).
+  static func urls() -> [URL] {
+    entries().filter(\.enabled).map(\.url)
+  }
+
+  /// Persists the full relay list (order + enabled flags).
+  static func setEntries(_ entries: [RelayEntry]) {
+    UserDefaults.standard.set(entries.map(\.url.absoluteString), forKey: key)
+    let disabled = entries.filter { !$0.enabled }.map(\.url.absoluteString)
+    UserDefaults.standard.set(disabled, forKey: disabledKey)
   }
 
   /// Whether `string` is a usable relay endpoint (a `ws`/`wss` URL with a host).

@@ -18,6 +18,9 @@ extension SessionManager {
   /// Relay (internet) link state for the UI; `.disabled` when none configured.
   var relayLinkState: RelayTransport.LinkState { relay?.linkState ?? .disabled }
 
+  /// The full configured relay list (endpoints + enabled flags) for the settings UI.
+  var relayEntries: [RelayEntry] { RelaySettings.entries() }
+
   /// Our own shareable identity bundle (for display as a QR code).
   var myBundle: IdentityBundle { identity.identityBundle }
 
