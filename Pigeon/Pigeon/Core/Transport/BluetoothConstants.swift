@@ -23,7 +23,7 @@ enum BluetoothConstants {
 
   /// Conservative per-fragment payload budget (bytes). Kept well under the
   /// minimum negotiated BLE ATT payload so a fragment always fits in one
-  /// write/notification regardless of the peer's MTU. Phase 3 follow-up:
-  /// raise this per-connection using the negotiated MTU.
+  /// write/notification regardless of the peer's MTU. Future work: raise this
+  /// per connection using the negotiated MTU.
   static let maxFragmentPayload = 150
 }

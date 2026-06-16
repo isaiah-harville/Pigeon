@@ -11,10 +11,10 @@
 //  PigeonMesh and reassembled per source. Encryption (SecureSession) and mesh
 //  relaying layer on top of this.
 //
-//  v1 limitations (tracked): uses write-with-response (reliable but slower)
+//  Current limitations (tracked): uses write-with-response (reliable but slower)
 //  and a conservative fixed fragment size; if two devices connect to each other
 //  in both roles, a message may be delivered twice — the mesh dedup layer
-//  (Phase 4) will absorb duplicates.
+//  absorbs duplicates.
 //
 
 import CoreBluetooth
@@ -31,7 +31,7 @@ final class PeerTransport: NSObject, Transport {
   private(set) var status: TransportStatus = .idle
   /// Number of peers we are currently connected to (as central).
   private(set) var connectedPeerCount = 0
-  /// Recent activity, newest last — purely for the Phase 3 test UI.
+  /// Recent activity, newest last, surfaced by the app's diagnostics UI.
   private(set) var log: [String] = []
 
   /// Invoked with each fully reassembled inbound message and its source id.

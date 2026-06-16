@@ -34,9 +34,9 @@ jobs:
 
       - name: Check formatting
         run: |
-          swift-format lint --recursive --parallel SwingThoughts/
+          swift-format lint --recursive --parallel Pigeon PigeonCrypto PigeonMesh
           if [ $? -ne 0 ]; then
-            echo "Run 'swift-format format --recursive --in-place SwingThoughts/' locally to fix."
+            echo "Run 'swift-format format --recursive --in-place Pigeon PigeonCrypto PigeonMesh' locally to fix."
             exit 1
           fi
 

@@ -1,0 +1,52 @@
+site_name: Pigeon
+site_description: End-to-end encrypted mesh messenger with local transports and optional zero-knowledge relays.
+repo_url: https://github.com/isaiah-harville/Pigeon
+edit_uri: edit/main/
+docs_dir: docs
+site_dir: public
+
+theme:
+  name: material
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - scheme: slate
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+    - scheme: default
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - content.code.copy
+    - content.action.edit
+    - navigation.top
+
+plugins:
+  - search
+  - monorepo
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+
+nav:
+  - Overview: index.md
+  - Security Model: SECURITY_MODEL.md
+  - Roadmap: ROADMAP.md
+  - Apple Export Compliance: APPLE_EXPORT_COMPLIANCE.md
+  - API Reference: API.md
+  - Contributing: CONTRIBUTING.md
+  - Pigeon App: "!include Pigeon/mkdocs.yml"
+  - PigeonCrypto: "!include PigeonCrypto/mkdocs.yml"
+  - PigeonMesh: "!include PigeonMesh/mkdocs.yml"
+  - PigeonRelay: "!include PigeonRelay/mkdocs.yml"

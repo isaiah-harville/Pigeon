@@ -1,0 +1,154 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "PigeonCrypto/Package.swift"
+      - "PigeonCrypto/Package.resolved"
+      - "PigeonMesh/Package.swift"
+      - "PigeonMesh/Package.resolved"
+      - "PigeonRelay/Cargo.toml"
+      - "PigeonRelay/Cargo.lock"
+      - "Pigeon/README.md"
+      - "Pigeon/CONTRIBUTING.md"
+      - "Pigeon/docs/**"
+      - "Pigeon/mkdocs.yml"
+      - "PigeonCrypto/README.md"
+      - "PigeonCrypto/CONTRIBUTING.md"
+      - "PigeonCrypto/docs/**"
+      - "PigeonCrypto/mkdocs.yml"
+      - "PigeonMesh/README.md"
+      - "PigeonMesh/CONTRIBUTING.md"
+      - "PigeonMesh/docs/**"
+      - "PigeonMesh/mkdocs.yml"
+      - "PigeonRelay/README.md"
+      - "PigeonRelay/CONTRIBUTING.md"
+      - "PigeonRelay/docs/**"
+      - "PigeonRelay/mkdocs.yml"
+      - "CONTRIBUTING.md"
+      - "README.md"
+      - "mkdocs.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "PigeonCrypto/Package.swift"
+      - "PigeonCrypto/Package.resolved"
+      - "PigeonMesh/Package.swift"
+      - "PigeonMesh/Package.resolved"
+      - "PigeonRelay/Cargo.toml"
+      - "PigeonRelay/Cargo.lock"
+      - "Pigeon/README.md"
+      - "Pigeon/CONTRIBUTING.md"
+      - "Pigeon/docs/**"
+      - "Pigeon/mkdocs.yml"
+      - "PigeonCrypto/README.md"
+      - "PigeonCrypto/CONTRIBUTING.md"
+      - "PigeonCrypto/docs/**"
+      - "PigeonCrypto/mkdocs.yml"
+      - "PigeonMesh/README.md"
+      - "PigeonMesh/CONTRIBUTING.md"
+      - "PigeonMesh/docs/**"
+      - "PigeonMesh/mkdocs.yml"
+      - "PigeonRelay/README.md"
+      - "PigeonRelay/CONTRIBUTING.md"
+      - "PigeonRelay/docs/**"
+      - "PigeonRelay/mkdocs.yml"
+      - "CONTRIBUTING.md"
+      - "README.md"
+      - "mkdocs.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOCC_HOSTING_BASE_PATH: ${{ github.event.repository.name }}/api
+
+jobs:
+  build:
+    name: Build Docs
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install docs dependencies
+        run: uv sync --locked --group docs
+
+      - name: Build docs
+        run: uv run --group docs mkdocs build --strict
+
+      - name: Build Swift API docs
+        run: |
+          mkdir -p "$PWD/public/api/PigeonCrypto" "$PWD/public/api/PigeonMesh"
+
+          swift package \
+            --package-path PigeonCrypto \
+            --allow-writing-to-directory "$PWD/public/api/PigeonCrypto" \
+            generate-documentation \
+            --target PigeonCrypto \
+            --output-path "$PWD/public/api/PigeonCrypto" \
+            --transform-for-static-hosting \
+            --hosting-base-path "$DOCC_HOSTING_BASE_PATH/PigeonCrypto"
+
+          swift package \
+            --package-path PigeonMesh \
+            --allow-writing-to-directory "$PWD/public/api/PigeonMesh" \
+            generate-documentation \
+            --target PigeonMesh \
+            --output-path "$PWD/public/api/PigeonMesh" \
+            --transform-for-static-hosting \
+            --hosting-base-path "$DOCC_HOSTING_BASE_PATH/PigeonMesh"
+
+      - name: Build relay API docs
+        run: |
+          rm -rf "$RUNNER_TEMP/pigeon-relay-docs" "$PWD/public/api/PigeonRelay"
+          cargo doc \
+            --manifest-path PigeonRelay/Cargo.toml \
+            --no-deps \
+            --document-private-items \
+            --target-dir "$RUNNER_TEMP/pigeon-relay-docs"
+          mkdir -p "$PWD/public/api/PigeonRelay"
+          cp -R "$RUNNER_TEMP/pigeon-relay-docs/doc" "$PWD/public/api/PigeonRelay/doc"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    name: Deploy to GitHub Pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

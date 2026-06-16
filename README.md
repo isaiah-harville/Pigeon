@@ -8,9 +8,11 @@ Wi-Fi planned), or use federated zero-knowledge relays when they are out of
 local range. Messages are end-to-end encrypted regardless of how they travel; no
 transport, relay, or mesh hop can read them.
 
-The project is early-stage: identity persistence and cryptographic
-building blocks exist, while transport, pairing, persistence, and production UI
-are still under construction.
+The project is early-stage and pre-audit, but the main architecture is in
+place: on-device identity, QR trust exchange, encrypted local storage, BLE mesh
+delivery, per-contact encrypted sessions, and the first relay transport all
+exist. The remaining work is mostly hardening, test depth, metadata reduction,
+and product polish.
 
 ## How devices reach each other
 
@@ -36,17 +38,26 @@ concurrently):
 - `Pigeon/` - SwiftUI app and Xcode project.
 - `Pigeon/Pigeon/Core/Identity/` - long-term device identity, Keychain storage,
   public key fingerprints, and safety-number derivation.
-- `PigeonCrypto/` - standalone Swift package for protocol primitives and Double
-  Ratchet work.
-- `docs/` - design and security notes for humans and coding agents.
+- `PigeonCrypto/` - standalone Swift package for Noise, Double Ratchet, and
+  protocol primitives.
+- `PigeonMesh/` - standalone Swift package for fragmentation, mesh packets,
+  deduplication, TTL, and session envelopes.
+- `PigeonRelay/` - Rust zero-knowledge relay server.
+- `docs/` - MkDocs source for design, security, roadmap, and source maps.
 
 ## Common Commands
 
 ```sh
 swift test --package-path PigeonCrypto
+swift test --package-path PigeonMesh
 xcodebuild -list -project Pigeon/Pigeon.xcodeproj
 xcodebuild build -project Pigeon/Pigeon.xcodeproj -scheme Pigeon -destination 'generic/platform=iOS'
+cargo test --manifest-path PigeonRelay/Cargo.toml
+uv run --group docs mkdocs build --strict
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for review expectations, local tooling,
+and the project policy for LLM/agent-assisted work.
 
 ## Security Status
 

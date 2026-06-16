@@ -1,0 +1,6 @@
+site_name: Pigeon App
+docs_dir: docs
+nav:
+  - Overview: index.md
+  - API Reference: API.md
+  - Contributing: CONTRIBUTING.md

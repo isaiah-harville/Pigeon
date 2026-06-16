@@ -12,7 +12,7 @@ are all enforced end-to-end by Pigeon clients, *below* this layer. A compromised
 relay yields metadata (who connects, when) and the ability to drop/delay
 ciphertext — never plaintext or a forged session.
 
-See [`../docs/SECURITY_MODEL.md`](../docs/SECURITY_MODEL.md) §6.1 for the full
+See [`SECURITY_MODEL.md`](../SECURITY_MODEL.md) §6.1 for the full
 threat model and why remote delivery cannot be serverless.
 
 ## Run it
