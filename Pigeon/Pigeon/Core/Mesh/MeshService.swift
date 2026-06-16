@@ -11,9 +11,9 @@
 import Foundation
 import PigeonMesh
 
-/// The app-facing messaging surface for Phase 3b/4: send a message to the mesh,
-/// receive each message exactly once. Wraps any `Transport` and a `MeshRouter`,
-/// so the mesh runs unchanged over BLE today or other transports later.
+/// The app-facing messaging surface: send a message to the mesh, receive each
+/// message exactly once. Wraps any `Transport` and a `MeshRouter`, so the mesh
+/// runs unchanged over BLE, relay, or future transports.
 @MainActor
 @Observable
 final class MeshService {
