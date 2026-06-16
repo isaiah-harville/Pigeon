@@ -3,6 +3,13 @@
 Pigeon is security-sensitive software. Contributions should be small, reviewable,
 and honest about what is implemented versus what is only designed.
 
+## Project sites
+
+- Main site: [pigeonwire.app](https://pigeonwire.app/)
+- Documentation: [docs.pigeonwire.app](https://docs.pigeonwire.app/)
+- Support: [pigeonwire.app/support](https://pigeonwire.app/support/)
+- Privacy policy: [pigeonwire.app/privacy-policy](https://pigeonwire.app/privacy-policy/)
+
 ## Before changing code
 
 Read these first:
