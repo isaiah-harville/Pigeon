@@ -22,6 +22,7 @@ struct IdentityQRView: View {
       .navigationTitle("My Identity")
       .onAppear { regenerateQR() }
       .onChange(of: session.myName) { regenerateQR() }
+      .onChange(of: session.relayURLs) { regenerateQR() }  // advertised relays changed
       .overlay(alignment: .bottom) { copiedToast }
       .alert("Your Name", isPresented: $showRename) {
         TextField("Name", text: $editedName)
