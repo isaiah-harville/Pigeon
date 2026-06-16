@@ -32,13 +32,12 @@ The app's `Info.plist` includes:
 
 ```xml
 <key>ITSAppUsesNonExemptEncryption</key>
-<true/>
+<false/>
 ```
 
-This is set to `true` because Pigeon uses encryption as a core feature of a
-private messaging product, including standard cryptographic protocols composed
-by the app in addition to direct use of Apple's operating-system cryptographic
-APIs.
+This is set to `false` because Pigeon's use of standard, publicly documented
+encryption is treated as exempt from Apple's export compliance documentation
+requirement for the app's current distribution configuration.
 
 ## Algorithms And Standards
 
