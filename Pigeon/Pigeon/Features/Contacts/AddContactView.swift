@@ -17,6 +17,7 @@ struct AddContactView: View {
   @State private var showManualEntry = false
   @State private var showingMyQR = false
   @State private var showingMyFingerprint = false
+  @State private var addedName: String?
 
   var body: some View {
     NavigationStack {
@@ -25,7 +26,7 @@ struct AddContactView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
           ToolbarItem(placement: .cancellationAction) {
-            Button("Cancel") { dismiss() }
+            Button(addedName == nil ? "Cancel" : "Done") { dismiss() }
           }
         }
     }
@@ -52,7 +53,10 @@ struct AddContactView: View {
   }
 
   private var scannerHintText: String {
-    showingMyQR
+    if let addedName {
+      return "Added \(addedName). Now have them scan your QR code to add you back."
+    }
+    return showingMyQR
       ? "Have the other person scan this QR code to add you."
       : "Point your camera at the other person's Pigeon QR code."
   }
@@ -181,7 +185,15 @@ struct AddContactView: View {
     }
     let name = card.name.isEmpty ? "Unnamed" : card.name
     if session.addContact(card.bundle, name: name, relayURLs: card.relayURLs) {
-      dismiss()
+      error = nil
+      pasted = ""
+      // Mutual exchange: once we've added them, flip to our own QR so the
+      // other person can scan us back without leaving this screen.
+      withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+        addedName = name
+        showingMyFingerprint = false
+        showingMyQR = true
+      }
     } else {
       error = "Couldn't add this contact (invalid binding, or it's your own code)."
     }
