@@ -1,8 +1,8 @@
 # Pigeon App
 
 The app docs here mirror the package README at `Pigeon/README.md`, but only
-curated Markdown is published to GitHub Pages. Source paths are listed in the
-source map instead of publishing the Xcode project or build artifacts.
+curated Markdown is published to GitHub Pages. The site does not publish the
+Xcode project, build artifacts, user state, or app assets.
 
 ## Key areas
 

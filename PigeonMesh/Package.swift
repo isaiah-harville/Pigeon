@@ -17,6 +17,11 @@ let package = Package(
   products: [
     .library(name: "PigeonMesh", targets: ["PigeonMesh"])
   ],
+  // Documentation-only plugin. It is not a target dependency, so it is not
+  // linked into PigeonMesh or bundled with the app.
+  dependencies: [
+    .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.4.0")
+  ],
   targets: [
     .target(
       name: "PigeonMesh",

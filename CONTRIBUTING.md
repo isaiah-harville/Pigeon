@@ -23,7 +23,7 @@ swift test --package-path PigeonCrypto
 swift test --package-path PigeonMesh
 xcodebuild build -project Pigeon/Pigeon.xcodeproj -scheme Pigeon -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO
 cargo test --manifest-path PigeonRelay/Cargo.toml
-uv run mkdocs build --strict
+uv run --group docs mkdocs build --strict
 ```
 
 Formatting and linting:
@@ -61,10 +61,18 @@ same PR as behavior changes when any of these change:
 Build the docs locally with:
 
 ```sh
-uv run mkdocs build --strict
+uv run --group docs mkdocs build --strict
 ```
 
-The published documentation is built from MkDocs and deployed to GitHub Pages.
+Bring up the curated MkDocs site locally with:
+
+```sh
+uv run --group docs mkdocs serve
+```
+
+The published documentation is built from MkDocs, then Swift DocC and rustdoc
+are generated under `public/api/`, and the combined output is deployed to GitHub
+Pages.
 
 ## LLM and agent-assisted work
 

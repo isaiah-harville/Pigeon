@@ -53,7 +53,7 @@ swift test --package-path PigeonMesh
 xcodebuild -list -project Pigeon/Pigeon.xcodeproj
 xcodebuild build -project Pigeon/Pigeon.xcodeproj -scheme Pigeon -destination 'generic/platform=iOS'
 cargo test --manifest-path PigeonRelay/Cargo.toml
-uv run mkdocs build --strict
+uv run --group docs mkdocs build --strict
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for review expectations, local tooling,

@@ -24,5 +24,4 @@ certification.
 
 - [Security Model](SECURITY_MODEL.md) for the threat model and audit blockers.
 - [Roadmap](ROADMAP.md) for shipped, active, planned, and horizon work.
-- [Source Map](SOURCE.md) for component ownership and important source paths.
 - [Contributing](CONTRIBUTING.md) for local checks and review expectations.

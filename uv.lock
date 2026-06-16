@@ -354,14 +354,18 @@ wheels = [
 name = "pigeon-docs"
 version = "0.1.0"
 source = { virtual = "." }
-dependencies = [
+
+[package.dev-dependencies]
+docs = [
     { name = "mkdocs" },
     { name = "mkdocs-material" },
     { name = "mkdocs-monorepo-plugin" },
 ]
 
 [package.metadata]
-requires-dist = [
+
+[package.metadata.requires-dev]
+docs = [
     { name = "mkdocs", specifier = ">=1.6.1,<2" },
     { name = "mkdocs-material", specifier = ">=9.6.0" },
     { name = "mkdocs-monorepo-plugin", specifier = ">=1.1.0" },

@@ -27,7 +27,7 @@ nav:
   - Security Model: SECURITY_MODEL.md
   - Roadmap: ROADMAP.md
   - Apple Export Compliance: APPLE_EXPORT_COMPLIANCE.md
-  - Source Map: SOURCE.md
+  - API Reference: API.md
   - Contributing: CONTRIBUTING.md
   - Pigeon App: "!include Pigeon/mkdocs.yml"
   - PigeonCrypto: "!include PigeonCrypto/mkdocs.yml"
