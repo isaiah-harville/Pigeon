@@ -362,7 +362,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "mkdocs", specifier = ">=1.6.1" },
+    { name = "mkdocs", specifier = ">=1.6.1,<2" },
     { name = "mkdocs-material", specifier = ">=9.6.0" },
     { name = "mkdocs-monorepo-plugin", specifier = ">=1.1.0" },
 ]

@@ -29,7 +29,7 @@ nav:
   - Apple Export Compliance: APPLE_EXPORT_COMPLIANCE.md
   - Source Map: SOURCE.md
   - Contributing: CONTRIBUTING.md
-  - "!include ../Pigeon/mkdocs.yml"
-  - "!include ../PigeonCrypto/mkdocs.yml"
-  - "!include ../PigeonMesh/mkdocs.yml"
-  - "!include ../PigeonRelay/mkdocs.yml"
+  - Pigeon App: "!include Pigeon/mkdocs.yml"
+  - PigeonCrypto: "!include PigeonCrypto/mkdocs.yml"
+  - PigeonMesh: "!include PigeonMesh/mkdocs.yml"
+  - PigeonRelay: "!include PigeonRelay/mkdocs.yml"

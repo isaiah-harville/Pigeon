@@ -4,7 +4,7 @@
 > This document describes the design and current implementation of Pigeon's
 > security. It is a working model for implementation and review, **not** an
 > audit report, and Pigeon should not yet be relied on against a real
-> adversary. See [Audit Readiness](#audit-readiness--pre-audit-notes).
+> adversary. See [Audit Readiness](#audit-readiness-pre-audit-notes).
 
 Pigeon is an open-source messenger built for **extreme privacy and security**
 across offline-capable local transports and federated server transports.
@@ -108,7 +108,7 @@ End-to-end encryption is performed by the two conversation endpoints
 > the signed bundle is the QR payload. At session establishment, the handshake's
 > `remoteStaticKey` is checked against the verified bundle, so comparing safety
 > numbers authenticates the encrypted channel. (Still in scope for the overall
-> audit.) See [Audit Readiness](#audit-readiness--pre-audit-notes).
+> audit.) See [Audit Readiness](#audit-readiness-pre-audit-notes).
 
 ---
 

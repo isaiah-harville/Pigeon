@@ -82,7 +82,7 @@ jobs:
           enable-cache: true
 
       - name: Install docs dependencies
-        run: uv sync
+        run: uv sync --locked
 
       - name: Build docs
         run: uv run mkdocs build --strict

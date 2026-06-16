@@ -1,8 +1,7 @@
 # Contributing
 
-The canonical contributor guide lives at the repository root:
+The canonical contributor guide is maintained at the repository root and mirrored
+in the published docs as this page.
 
-[../CONTRIBUTING.md](../CONTRIBUTING.md)
-
-This page is included so the published MkDocs site has a stable contributor
-entry point.
+Use it as the stable entry point for local checks, review expectations, and the
+project policy for LLM/agent-assisted work.
