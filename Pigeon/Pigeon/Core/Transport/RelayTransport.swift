@@ -53,6 +53,12 @@ final class RelayTransport: Transport {
   /// Resolves a recipient's advertised relay endpoints (from their QR bundle).
   var relaysForRecipient: (Data) -> [URL] = { _ in [] }
 
+  /// Whether we can durably take responsibility for a delivered envelope right
+  /// now. When false (app locked — we can't decrypt or persist), we still
+  /// surface the envelope for notification but do NOT ack it, so the relay
+  /// retains its copy until we can process it after unlock. Set by the owner.
+  var canConsume: () -> Bool = { true }
+
   /// Our own relays — where we subscribe to receive. We advertise these to
   /// contacts so they can deposit to us.
   private var myRelays: [URL] = []
@@ -183,7 +189,12 @@ final class RelayTransport: Transport {
           let data = Data(base64Encoded: ciphertextB64)
         {
           onMessage?(data, "relay:\(host(url))")
-          send(socket, ["type": "ack", "id": id])  // delete once handed to the mesh
+          // Ack (and so delete from the mailbox) only once we can durably handle
+          // it. While locked we skip the ack, leaving the relay to retain and
+          // re-deliver the envelope after the user unlocks.
+          if canConsume() {
+            send(socket, ["type": "ack", "id": id])
+          }
         }
       case "error":
         note("Relay \(host(url)): \(message["message"] as? String ?? "error")")

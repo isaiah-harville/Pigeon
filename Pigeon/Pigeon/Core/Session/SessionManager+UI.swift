@@ -21,6 +21,26 @@ extension SessionManager {
   /// The full configured relay list (endpoints + enabled flags) for the settings UI.
   var relayEntries: [RelayEntry] { RelaySettings.entries() }
 
+  /// Whether Pigeon may receive messages while the device is locked. On by
+  /// default; backed by the identity keys' keychain accessibility.
+  var backgroundDeliveryEnabled: Bool { BackgroundDelivery.isEnabled }
+
+  /// Applies a new background-delivery preference: rewrites the identity keys'
+  /// keychain accessibility (must be unlocked) and persists the choice. Returns
+  /// `false` and leaves the preference unchanged if the keychain update fails.
+  @discardableResult
+  func setBackgroundDeliveryEnabled(_ enabled: Bool) -> Bool {
+    let accessibility: KeychainAccessibility = enabled ? .afterFirstUnlock : .whenUnlocked
+    do {
+      try identity.applyKeychainAccessibility(accessibility)
+      BackgroundDelivery.isEnabled = enabled
+      return true
+    } catch {
+      note("Couldn't update background-delivery setting")
+      return false
+    }
+  }
+
   /// Our own shareable identity bundle (for display as a QR code).
   var myBundle: IdentityBundle { identity.identityBundle }
 

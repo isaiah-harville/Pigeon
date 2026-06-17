@@ -15,12 +15,32 @@ enum KeychainError: Error, Equatable {
   case dataConversionFailed
 }
 
+/// How readable a stored secret is relative to the device lock state. Both
+/// options are `ThisDeviceOnly` — never synced to iCloud, never restored onto a
+/// different device — and differ only in the lock-state window:
+enum KeychainAccessibility {
+  /// Readable only while the device is unlocked (strictest). Blocks access from
+  /// a locked background launch.
+  case whenUnlocked
+  /// Readable after the first unlock following boot, including while later
+  /// locked (until reboot). Needed for background work while the device is
+  /// locked; a wider window for forensic extraction of a powered-on device.
+  case afterFirstUnlock
+
+  var secValue: CFString {
+    switch self {
+    case .whenUnlocked: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+    case .afterFirstUnlock: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+    }
+  }
+}
+
 /// Stores small secrets (key material) in the Keychain as generic passwords.
 ///
-/// Items are written with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`:
-/// they never leave the device, are not included in backups, and are only
-/// readable while the device is unlocked. Identity keys are the root of the
-/// app's security, so they must not sync to iCloud or migrate to new devices.
+/// Items are always `…ThisDeviceOnly`: they never leave the device, are not
+/// included in backups, and never sync to iCloud. The caller chooses the
+/// lock-state accessibility (`KeychainAccessibility`) per write. Identity keys
+/// are the root of the app's security, so they must not migrate to new devices.
 struct KeychainStore {
 
   /// The keychain service namespace for all Pigeon items.
@@ -40,19 +60,27 @@ struct KeychainStore {
     ]
   }
 
-  /// Stores `data`, replacing any existing value for this account.
-  func set(_ data: Data) throws {
+  /// Stores `data` with the given accessibility, replacing any existing value
+  /// for this account.
+  func set(_ data: Data, accessibility: KeychainAccessibility) throws {
     // Delete first so we don't have to branch on add-vs-update.
     SecItemDelete(baseQuery as CFDictionary)
 
     var query = baseQuery
     query[kSecValueData as String] = data
-    query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+    query[kSecAttrAccessible as String] = accessibility.secValue
 
     let status = SecItemAdd(query as CFDictionary, nil)
     guard status == errSecSuccess else {
       throw KeychainError.unexpectedStatus(status)
     }
+  }
+
+  /// Rewrites the stored item under a new accessibility class. Requires the item
+  /// to be readable now (i.e. the device unlocked); a no-op if nothing is stored.
+  func setAccessibility(_ accessibility: KeychainAccessibility) throws {
+    guard let data = try get() else { return }
+    try set(data, accessibility: accessibility)
   }
 
   /// Returns the stored bytes, or `nil` if no item exists.

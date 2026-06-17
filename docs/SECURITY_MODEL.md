@@ -90,9 +90,22 @@ End-to-end encryption is performed by the two conversation endpoints
 
 - Each device generates a long-term **Ed25519** identity key pair on first
   launch (`Curve25519.Signing` via CryptoKit).
-- The private key is stored in the **Keychain** with
-  `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`: device-only, excluded from
-  iCloud and backups, readable only while unlocked.
+- The private key is stored in the **Keychain**, always `…ThisDeviceOnly`:
+  device-only, excluded from iCloud and backups. Its lock-state accessibility
+  follows the **background-delivery** preference (see below).
+- **Background delivery (opt-out, on by default).** To notify the user of new
+  messages while the device is locked, a background relaunch must read the
+  identity key to authenticate to the relay. When background delivery is
+  enabled, the identity and Noise-static keys use
+  `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` (readable while locked after
+  the first unlock since boot); when disabled, they use the stricter
+  `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` (readable only while unlocked).
+  The trade-off is a wider window for forensic key extraction from a powered-on,
+  already-unlocked device — a hard, narrow attack vector — versus background
+  notifications. The message itself is never decrypted while locked: inbound
+  envelopes are held in memory (and retained on the relay, unacked) and processed
+  only after the vault is unlocked. Plaintext and history stay behind the
+  biometric-gated vault regardless of this setting.
 - **Secure Enclave is deliberately not used**: it supports only P-256, which is
   incompatible with the X25519/Ed25519 stack the protocols require.
 - The public key's **SHA-256 fingerprint** is the device's address/handle.

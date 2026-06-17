@@ -14,17 +14,17 @@ extension SessionManager {
   func handleInbound(_ data: Data) {
     guard let envelope = try? SessionEnvelope(decoding: data) else { return }
     guard envelope.recipient == myID else { return }  // not addressed to us
-    guard let contact = contacts.first(where: { $0.id == envelope.sender }) else {
-      // No matching contact. If we're locked (e.g. relaunched in the
-      // background — no Face ID prompt possible), we can't decrypt or even
-      // load contacts, but a message *is* for us: prompt the user to open
-      // the app. Once, until unlocked, to avoid notification spam.
-      if !isUnlocked && !notifiedWhileLocked {
-        notifiedWhileLocked = true
-        onIncomingNotification?()
-      }
+
+    // Locked (e.g. relaunched in the background — no Face ID prompt possible):
+    // we can't decrypt or persist yet. Hold the envelope in memory and prompt
+    // the user to unlock; the relay retains its copy too (we don't ack while
+    // locked), so nothing is lost if we're killed before unlock.
+    guard isUnlocked else {
+      bufferWhileLocked(data)
       return
     }
+
+    guard let contact = contacts.first(where: { $0.id == envelope.sender }) else { return }
     switch envelope.type {
     case .handshake: handleHandshake(envelope.payload, from: contact)
     case .message: handleMessage(envelope.payload, from: contact)
@@ -260,6 +260,34 @@ extension SessionManager {
     } else if let contact = contacts.first(where: { $0.id == contactID }) {
       sendEnvelope(.rehandshakeRequest, payload: Data(), to: contact)
     }
+  }
+
+  // MARK: - Locked receipt
+
+  /// Upper bound on envelopes buffered while locked (memory only).
+  private static let maxLockedInbox = 256
+
+  /// Buffers an envelope received while locked and prompts the user to unlock.
+  /// The notification is content-free and fires once per locked session
+  /// (coalesced) so a flood of deposits can't spam notifications.
+  func bufferWhileLocked(_ data: Data) {
+    lockedInbox.append(data)
+    if lockedInbox.count > Self.maxLockedInbox {
+      lockedInbox.removeFirst(lockedInbox.count - Self.maxLockedInbox)
+    }
+    if !notifiedWhileLocked {
+      notifiedWhileLocked = true
+      onIncomingNotification?()
+    }
+  }
+
+  /// Replays envelopes buffered while locked, now that we can decrypt and
+  /// persist. Called from `attachStore` once the vault is open.
+  func drainLockedInbox() {
+    guard !lockedInbox.isEmpty else { return }
+    let buffered = lockedInbox
+    lockedInbox.removeAll()
+    for data in buffered { handleInbound(data) }
   }
 
   // MARK: - Store-and-forward
