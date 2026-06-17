@@ -109,14 +109,7 @@ struct IdentityQRView: View {
   @ViewBuilder
   private var copiedToast: some View {
     if showCopied {
-      Label("Copied to clipboard", systemImage: "checkmark.circle.fill")
-        .font(.subheadline.weight(.medium))
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
-        .background(.green, in: Capsule())
-        .foregroundStyle(.white)
-        .padding(.bottom, 24)
-        .transition(.move(edge: .bottom).combined(with: .opacity))
+      CopiedToast()
     }
   }
 
