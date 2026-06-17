@@ -66,11 +66,15 @@ final class IdentityManager {
     self.store = store
     self.staticStore = staticStore
 
+    // New keys adopt the accessibility implied by the background-delivery
+    // preference (default: readable in a locked background launch).
+    let accessibility = BackgroundDelivery.accessibility
+
     if let existing = try store.get() {
       self.privateKey = try Curve25519.Signing.PrivateKey(rawRepresentation: existing)
     } else {
       let fresh = Curve25519.Signing.PrivateKey()
-      try store.set(fresh.rawRepresentation)
+      try store.set(fresh.rawRepresentation, accessibility: accessibility)
       self.privateKey = fresh
     }
 
@@ -79,9 +83,17 @@ final class IdentityManager {
       self.staticKeyPair = DHKeyPair(privateKey: key)
     } else {
       let fresh = DHKeyPair()
-      try staticStore.set(fresh.privateKey.rawRepresentation)
+      try staticStore.set(fresh.privateKey.rawRepresentation, accessibility: accessibility)
       self.staticKeyPair = fresh
     }
+  }
+
+  /// Rewrites both long-term keys under a new keychain accessibility class.
+  /// Must be called while the device is unlocked (the keys have to be readable
+  /// to rewrite them). Used when the user toggles background delivery.
+  func applyKeychainAccessibility(_ accessibility: KeychainAccessibility) throws {
+    try store.setAccessibility(accessibility)
+    try staticStore.setAccessibility(accessibility)
   }
 
   /// Signs `data` with the identity key.
@@ -92,12 +104,13 @@ final class IdentityManager {
   /// Destroys the current identity and static key and generates fresh ones.
   /// Irreversible: all existing trust relationships become invalid.
   func resetIdentity() throws {
+    let accessibility = BackgroundDelivery.accessibility
     let fresh = Curve25519.Signing.PrivateKey()
-    try store.set(fresh.rawRepresentation)
+    try store.set(fresh.rawRepresentation, accessibility: accessibility)
     self.privateKey = fresh
 
     let freshStatic = DHKeyPair()
-    try staticStore.set(freshStatic.privateKey.rawRepresentation)
+    try staticStore.set(freshStatic.privateKey.rawRepresentation, accessibility: accessibility)
     self.staticKeyPair = freshStatic
   }
 }

@@ -73,6 +73,12 @@ final class SessionManager {
   var persistedConversations: [Data: [ChatMessage]] = [:]
   var retryTimer: Timer?
 
+  /// Envelopes received while locked (we can't decrypt or persist yet). Held in
+  /// memory only — never written to disk — and replayed once unlocked. The relay
+  /// also retains its copies (we don't ack while locked), so nothing is lost if
+  /// we're killed before unlock. Bounded to blunt flooding.
+  var lockedInbox: [Data] = []
+
   var myID: Data { identity.publicKey.rawRepresentation }
 
   /// Locked until the vault is unlocked with Face ID / Touch ID.
@@ -110,6 +116,9 @@ final class SessionManager {
       relay.relaysForRecipient = { [weak self] key in
         self?.contacts.first { $0.id == key }?.relayURLs ?? []
       }
+      // Only ack relay envelopes once unlocked; while locked we buffer and let
+      // the relay retain its copy (see `handleInbound`).
+      relay.canConsume = { [weak self] in self?.isUnlocked ?? false }
       relay.reconfigure(RelaySettings.urls())
     }
     // Contacts/history load after the vault is unlocked; BLE runs regardless.
@@ -142,6 +151,7 @@ final class SessionManager {
     notifiedWhileLocked = false
     refreshRelay()  // pick up loaded contacts' relays
     for contact in contacts { ensureEstablishing(contactID: contact.id) }
+    drainLockedInbox()  // process anything that arrived while locked
   }
 
   /// Recomputes the relay connection pool (our relays plus every contact's).
