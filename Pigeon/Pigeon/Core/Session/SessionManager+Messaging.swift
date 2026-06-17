@@ -361,7 +361,8 @@ extension SessionManager {
     let persistedContacts = contacts.map { contact in
       PersistedContact(
         name: contact.displayName, bundle: contact.bundle.encoded(),
-        relayURLs: contact.relayURLs.map(\.absoluteString))
+        relayURLs: contact.relayURLs.map(\.absoluteString),
+        preferredRelayURL: contact.preferredRelayURL?.absoluteString)
     }
     var conversationsByKey: [String: [ChatMessage]] = [:]
     for (id, messages) in persistedConversations {

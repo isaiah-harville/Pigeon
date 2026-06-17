@@ -35,6 +35,45 @@ final class RelayRoutingTests: XCTestCase {
     XCTAssertTrue(RelayTransport.deliveryTargets(advertised: [], myRelays: []).isEmpty)
   }
 
+  // MARK: - Per-conversation preferred relay (#18)
+
+  func testPreferredRelayIsOrderedFirstWithOthersAsFallback() {
+    let a = url("wss://a.example/ws")
+    let b = url("wss://b.example/ws")
+    let c = url("wss://c.example/ws")
+    // Preferred relay leads; the rest follow in order so a dead preferred
+    // falls through to them.
+    XCTAssertEqual(
+      RelayTransport.deliveryTargets(preferred: b, advertised: [a, b, c], myRelays: []),
+      [b, a, c])
+  }
+
+  func testPreferredNotAdvertisedIsIgnored() {
+    let a = url("wss://a.example/ws")
+    let stray = url("wss://stray.example/ws")
+    // A preference the recipient doesn't advertise can't be honored — fall back
+    // to their advertised relays unchanged.
+    XCTAssertEqual(
+      RelayTransport.deliveryTargets(preferred: stray, advertised: [a], myRelays: []),
+      [a])
+  }
+
+  func testPreferredIgnoredWhenAdvertisesNoneFallsBackToOwn() {
+    let mine = [url("wss://mine.example/ws")]
+    let stray = url("wss://stray.example/ws")
+    XCTAssertEqual(
+      RelayTransport.deliveryTargets(preferred: stray, advertised: [], myRelays: mine),
+      mine)
+  }
+
+  func testNilPreferredMatchesPlainDelivery() {
+    let a = url("wss://a.example/ws")
+    let b = url("wss://b.example/ws")
+    XCTAssertEqual(
+      RelayTransport.deliveryTargets(preferred: nil, advertised: [a, b], myRelays: []),
+      [a, b])
+  }
+
   // MARK: - Connection set (reconfigure union)
 
   func testWantedConnectionsUnionsAndDeduplicatesPreservingOrder() {

@@ -102,6 +102,7 @@ struct ChatView: View {
         Label("Send via relay", systemImage: "network")
       }
     }
+    RelayPicker(contact: contact)
     Button {
       newName = contact.displayName
       showRename = true
@@ -238,6 +239,32 @@ private struct ConnectionSummary: View {
     if peers > 0 { parts.append("Bluetooth · \(peers) peer\(peers == 1 ? "" : "s")") }
     if let host = relayHosts.first { parts.append("Relay · \(host)") }
     return parts.isEmpty ? "Offline" : parts.joined(separator: "   ")
+  }
+}
+
+/// Lets the user pin a conversation to one of the contact's advertised relays,
+/// or leave it automatic; hidden when the contact advertises none (#18).
+private struct RelayPicker: View {
+  @Environment(SessionManager.self) private var session
+  let contact: Contact
+
+  var body: some View {
+    let relays = session.advertisedRelays(for: contact)
+    if !relays.isEmpty {
+      Picker("Relay for this chat", selection: selection) {
+        Text("Automatic").tag(URL?.none)
+        ForEach(relays, id: \.self) { url in
+          Text(url.host ?? url.absoluteString).tag(URL?.some(url))
+        }
+      }
+    }
+  }
+
+  private var selection: Binding<URL?> {
+    Binding(
+      get: { session.preferredRelay(for: contact) },
+      set: { session.setPreferredRelay($0, for: contact) }
+    )
   }
 }
 
