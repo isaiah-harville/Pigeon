@@ -15,6 +15,7 @@ struct ChatView: View {
   @State private var showSafetyNumber = false
   @State private var showRename = false
   @State private var newName = ""
+  @State private var replyTarget: ChatMessage?
 
   private var isSecure: Bool { session.establishedContactIDs.contains(contact.id) }
   private var messages: [ChatMessage] { session.messages(with: contact) }
@@ -61,6 +62,7 @@ struct ChatView: View {
         }
         .padding()
       }
+      .scrollDismissesKeyboard(.interactively)
       .onChange(of: messages.count) {
         if let last = messages.last {
           withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
@@ -73,26 +75,9 @@ struct ChatView: View {
   }
 
   private var composer: some View {
-    HStack(spacing: 8) {
-      TextField("Message", text: $draft)
-        .textFieldStyle(.plain)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Capsule().fill(.fill.tertiary))
-      Button {
-        session.send(draft, to: contact)
-        draft = ""
-      } label: {
-        Image(systemName: "paperplane.fill")
-          .font(.system(size: 15, weight: .semibold))
-          .foregroundStyle(.white)
-          .frame(width: 38, height: 38)
-          .background(Capsule().fill(Color.accentColor))
-      }
-      .disabled(draft.isEmpty)
-      .opacity(draft.isEmpty ? 0.45 : 1)
+    ChatComposer(draft: $draft, replyTarget: $replyTarget) { text, reply in
+      session.send(text, replySnippet: reply?.replySnippetText, to: contact)
     }
-    .padding()
   }
 
   @ToolbarContentBuilder
@@ -156,7 +141,7 @@ struct ChatView: View {
   @ViewBuilder
   private func bubble(_ message: ChatMessage) -> some View {
     if message.system {
-      ChatTimelineMarker(text: message.text, systemImage: systemMarkerImage(for: message.text))
+      ChatTimelineMarker(text: message.text, systemImage: ChatTimelineIcon.name(for: message.text))
     } else {
       messageBubble(message)
     }
@@ -176,28 +161,12 @@ struct ChatView: View {
     return date.formatted(date: .abbreviated, time: .omitted)
   }
 
-  private func systemMarkerImage(for text: String) -> String? {
-    if text.hasPrefix("Switched to Bluetooth") { return "dot.radiowaves.left.and.right" }
-    if text.hasPrefix("Switched to relay") { return "globe" }
-    if text.hasPrefix("Ephemeral") { return "clock.arrow.circlepath" }
-    return nil
-  }
-
   @ViewBuilder
   private func messageBubble(_ message: ChatMessage) -> some View {
     VStack(alignment: message.mine ? .trailing : .leading, spacing: 2) {
       HStack(alignment: .bottom, spacing: 4) {
         if message.mine { Spacer(minLength: 48) }
-        Text(message.text)
-          .foregroundStyle(message.mine ? .white : .primary)
-          .padding(.horizontal, 13)
-          .padding(.vertical, 9)
-          .background(
-            message.mine ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.fill.tertiary),
-            in: BubbleShape(mine: message.mine)
-          )
-          .opacity(message.pending ? 0.6 : 1)
-          .contextMenu { MessageDetailMenu(message: message) }
+        messageText(message)
         if message.mine {
           if message.pending {
             Image(systemName: "clock")
@@ -208,8 +177,30 @@ struct ChatView: View {
           Spacer(minLength: 48)
         }
       }
+      MessageReactions(message: message)
       MessageFooter(message: message)
     }
     .frame(maxWidth: .infinity, alignment: message.mine ? .trailing : .leading)
+  }
+
+  private func messageText(_ message: ChatMessage) -> some View {
+    MessageBubbleContent(message: message)
+      .padding(.horizontal, 13)
+      .padding(.vertical, 9)
+      .background(
+        message.mine ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.fill.tertiary),
+        in: BubbleShape(mine: message.mine)
+      )
+      .opacity(message.pending ? 0.6 : 1)
+      .contextMenu {
+        MessageContextMenu(
+          message: message,
+          onReact: { session.toggleReaction($0, for: message, in: contact) },
+          onReply: { reply(to: message) })
+      }
+  }
+
+  private func reply(to message: ChatMessage) {
+    replyTarget = message
   }
 }

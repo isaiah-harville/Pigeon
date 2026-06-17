@@ -40,7 +40,7 @@ jobs:
             exit 1
           fi
 
-  package-tests:
+  crypto-tests:
     name: Swift Package Tests
     runs-on: macos-26
     steps:
@@ -49,8 +49,15 @@ jobs:
       - name: Test PigeonCrypto
         run: swift test --package-path PigeonCrypto
 
+  mesh-tests:
+    name: Swift Package Tests
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Test PigeonMesh
         run: swift test --package-path PigeonMesh
+
 
   app-build:
     name: iOS App Build
@@ -64,4 +71,18 @@ jobs:
             -project Pigeon/Pigeon.xcodeproj \
             -scheme Pigeon \
             -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO
+
+  app-tests:
+    name: iOS App Tests
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test Pigeon (PigeonTests)
+        run: |
+          xcodebuild test \
+            -project Pigeon/Pigeon.xcodeproj \
+            -scheme Pigeon \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
             CODE_SIGNING_ALLOWED=NO

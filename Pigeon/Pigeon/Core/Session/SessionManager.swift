@@ -264,7 +264,12 @@ final class SessionManager {
   /// acknowledges it; it is (re)sent on each tick while a session exists and
   /// queued otherwise, so it is never silently dropped on a disconnect.
   func send(_ text: String, to contact: Contact) {
+    send(text, replySnippet: nil, to: contact)
+  }
+
+  func send(_ text: String, replySnippet: String?, to contact: Contact) {
     var message = ChatMessage(mine: true, text: text, pending: true)
+    message.replySnippet = replySnippet
     message.transport = outboundChannel(for: contact)
     record(message, for: contact.id)
     if establishedContactIDs.contains(contact.id) {
@@ -280,27 +285,14 @@ final class SessionManager {
   /// after a transport switch reflects reality in its long-press detail.
   func transmit(_ message: ChatMessage, to contact: Contact) {
     guard let session = sessions[contact.id],
-      let ciphertext = try? session.encrypt(Self.encodeMessage(id: message.id, text: message.text))
+      let payload = Self.encodeMessage(message),
+      let ciphertext = try? session.encrypt(payload)
     else { return }
     let channel = outboundChannel(for: contact)
     if message.transport != channel {
       setTransport(channel, messageID: message.id, contactID: contact.id)
     }
     sendEnvelope(.message, payload: ciphertext, to: contact)
-  }
-
-  /// App message wire form (inside the ratchet): UUID string (36 bytes) ‖ text.
-  static func encodeMessage(id: UUID, text: String) -> Data {
-    Data(id.uuidString.utf8) + Data(text.utf8)
-  }
-
-  static func decodeMessage(_ data: Data) -> (id: UUID, text: String)? {
-    guard data.count >= 36,
-      let idString = String(bytes: data.prefix(36), encoding: .utf8),
-      let id = UUID(uuidString: idString),
-      let text = String(bytes: data.dropFirst(36), encoding: .utf8)
-    else { return nil }
-    return (id, text)
   }
 
 }

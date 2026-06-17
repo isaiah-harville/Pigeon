@@ -82,25 +82,23 @@ extension SessionManager {
       return
     }
     guard let plaintext = try? session.decrypt(payload),
-      let (id, text) = Self.decodeMessage(plaintext)
+      var received = Self.decodeMessage(plaintext)
     else {
       note("Decrypt failed from \"\(contact.displayName)\" — re-establishing")
       requestRehandshake(with: contact)
       return
     }
     // Acknowledge every delivery (even duplicates) so the sender stops retrying.
-    sendAck(messageID: id, to: contact)
+    sendAck(messageID: received.id, to: contact)
     // Deduplicate by the sender's message id (a retried message arrives twice).
-    if conversations[contact.id]?.contains(where: { $0.id == id }) == true { return }
-    var received = ChatMessage(mine: false, text: text)
-    received.id = id
+    if conversations[contact.id]?.contains(where: { $0.id == received.id }) == true { return }
     received.transport = channel
     record(received, for: contact.id)
 
     // Surface a notification unless the user is actively viewing this chat.
     guard !(isAppActive && activeChatID == contact.id) else { return }
     if isAppActive {
-      showBanner(title: contact.displayName, body: text)
+      showBanner(title: contact.displayName, body: received.text)
     } else {
       onIncomingNotification?()  // local notification while backgrounded
     }
@@ -180,12 +178,20 @@ extension SessionManager {
   func handleControl(_ payload: Data, from contact: Contact) {
     guard let session = sessions[contact.id],
       let plaintext = try? session.decrypt(payload),
-      plaintext.count == 2
+      let command = plaintext.first
     else { return }
-    let value = plaintext[plaintext.index(after: plaintext.startIndex)] == 1
-    switch plaintext.first {
-    case 0x01: applyEphemeral(value, for: contact.id, announce: true)
-    case 0x02: applyTransport(useBluetooth: value, for: contact.id, announce: true)
+    switch command {
+    case 0x01, 0x02:
+      guard plaintext.count == 2 else { return }
+      let value = plaintext[plaintext.index(after: plaintext.startIndex)] == 1
+      if command == 0x01 {
+        applyEphemeral(value, for: contact.id, announce: true)
+      } else {
+        applyTransport(useBluetooth: value, for: contact.id, announce: true)
+      }
+    case 0x03:
+      guard let reaction = Self.decodeReaction(plaintext) else { return }
+      applyReaction(reaction.emoji, messageID: reaction.messageID, from: contact)
     default: break
     }
   }

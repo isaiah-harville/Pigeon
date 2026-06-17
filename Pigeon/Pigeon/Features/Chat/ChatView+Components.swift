@@ -30,6 +30,15 @@ struct ChatTimelineMarker: View {
   }
 }
 
+enum ChatTimelineIcon {
+  static func name(for text: String) -> String? {
+    if text.hasPrefix("Switched to Bluetooth") { return "dot.radiowaves.left.and.right" }
+    if text.hasPrefix("Switched to relay") { return "globe" }
+    if text.hasPrefix("Ephemeral") { return "clock.arrow.circlepath" }
+    return nil
+  }
+}
+
 /// A chat's current reachability: local Bluetooth peers and/or the relay (with
 /// its host), so users can see the path messages take (#15).
 struct ConnectionSummary: View {
@@ -139,6 +148,122 @@ struct MessageFooter: View {
     Text(message.date.formatted(date: .omitted, time: .shortened))
       .font(.caption2)
       .foregroundStyle(.secondary)
+  }
+}
+
+struct MessageBubbleContent: View {
+  let message: ChatMessage
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      if let replySnippet = message.replySnippet {
+        ReplyBubblePreview(text: replySnippet, mine: message.mine)
+      }
+      Text(message.text)
+        .foregroundStyle(message.mine ? .white : .primary)
+    }
+  }
+}
+
+struct ReplyBubblePreview: View {
+  let text: String
+  let mine: Bool
+
+  var body: some View {
+    HStack(spacing: 5) {
+      RoundedRectangle(cornerRadius: 2, style: .continuous)
+        .fill(mine ? .white.opacity(0.75) : Color.accentColor)
+        .frame(width: 3, height: 14)
+      Text(text)
+        .font(.caption2)
+        .lineLimit(2)
+        .foregroundStyle(mine ? .white.opacity(0.9) : .secondary)
+    }
+    .padding(.horizontal, 7)
+    .padding(.vertical, 3)
+    .background(
+      mine ? AnyShapeStyle(.white.opacity(0.14)) : AnyShapeStyle(.fill.quaternary),
+      in: RoundedRectangle(cornerRadius: 6)
+    )
+  }
+}
+
+struct MessageReactions: View {
+  let message: ChatMessage
+
+  var body: some View {
+    if message.personalReaction != nil || !message.otherReactions.isEmpty {
+      HStack(spacing: 4) {
+        if let personalReaction = message.personalReaction {
+          ReactionChip(reaction: personalReaction, personal: true)
+        }
+        ForEach(Array(message.otherReactions.enumerated()), id: \.offset) { _, reaction in
+          ReactionChip(reaction: reaction, personal: false)
+        }
+      }
+    }
+  }
+}
+
+struct ReactionChip: View {
+  let reaction: String
+  let personal: Bool
+
+  var body: some View {
+    Text(reaction)
+      .font(.caption)
+      .lineLimit(1)
+      .padding(.horizontal, 7)
+      .padding(.vertical, 3)
+      .background(
+        personal ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.fill.tertiary),
+        in: Capsule()
+      )
+      .foregroundStyle(personal ? .white : .primary)
+  }
+}
+
+struct MessageContextMenu: View {
+  let message: ChatMessage
+  let onReact: (String) -> Void
+  let onReply: () -> Void
+
+  private let quickReactions = ["👍", "❤️", "😂"]
+
+  var body: some View {
+    if !message.pending {
+      ControlGroup {
+        ForEach(quickReactions, id: \.self) { reaction in
+          reactionButton(reaction)
+        }
+      }
+    }
+    Button {
+      onReply()
+    } label: {
+      Label("Reply", systemImage: "arrowshape.turn.up.left")
+    }
+    Menu {
+      MessageDetailMenu(message: message)
+    } label: {
+      Label("Details", systemImage: "info.circle")
+    }
+  }
+
+  private func reactionButton(_ reaction: String) -> some View {
+    Button {
+      onReact(reaction)
+    } label: {
+      Text(reaction)
+        .font(.title3)
+    }
+  }
+}
+
+extension ChatMessage {
+  var replySnippetText: String {
+    let text = self.text.replacingOccurrences(of: "\n", with: " ")
+    return text.count > 72 ? String(text.prefix(72)) + "..." : text
   }
 }
 

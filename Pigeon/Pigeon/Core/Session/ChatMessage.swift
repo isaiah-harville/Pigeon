@@ -18,6 +18,11 @@ struct ChatMessage: Identifiable, Equatable, Codable {
   /// Which link this message travelled over (locally observed), shown in the UI.
   /// `nil` for older history or messages not yet dispatched.
   var transport: TransportChannel?
+  /// One reaction from the local user and reactions from other chat members.
+  var personalReaction: String?
+  var otherReactions: [String] = []
+  /// Short preview of the message this one replies to.
+  var replySnippet: String?
 
   init(mine: Bool, text: String) {
     self.init(mine: mine, text: text, pending: false, system: false)
@@ -42,6 +47,7 @@ struct ChatMessage: Identifiable, Equatable, Codable {
   // so adding fields doesn't discard already-stored history.
   private enum CodingKeys: String, CodingKey {
     case id, mine, text, date, pending, system, transport
+    case personalReaction, otherReactions, replySnippet
   }
 
   init(from decoder: Decoder) throws {
@@ -53,5 +59,8 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     pending = (try? container.decode(Bool.self, forKey: .pending)) ?? false
     system = (try? container.decode(Bool.self, forKey: .system)) ?? false
     transport = try? container.decode(TransportChannel.self, forKey: .transport)
+    personalReaction = try? container.decode(String.self, forKey: .personalReaction)
+    otherReactions = (try? container.decode([String].self, forKey: .otherReactions)) ?? []
+    replySnippet = try? container.decode(String.self, forKey: .replySnippet)
   }
 }
