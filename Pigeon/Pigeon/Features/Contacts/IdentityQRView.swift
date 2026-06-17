@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct IdentityQRView: View {
   @Environment(SessionManager.self) private var session
@@ -16,11 +17,17 @@ struct IdentityQRView: View {
   @State private var editedName = ""
   @State private var showCopied = false
   @State private var qrImage: CGImage?
+  @State private var priorBrightness: CGFloat = UIScreen.main.brightness
 
   var body: some View {
     content
       .navigationTitle("My Identity")
-      .onAppear { regenerateQR() }
+      .onAppear {
+        priorBrightness = UIScreen.main.brightness
+        UIScreen.main.brightness = 1.0
+        regenerateQR()
+      }
+      .onDisappear { UIScreen.main.brightness = priorBrightness }
       .onChange(of: session.myName) { regenerateQR() }
       .onChange(of: session.relayURLs) { regenerateQR() }  // advertised relays changed
       .overlay(alignment: .bottom) { copiedToast }

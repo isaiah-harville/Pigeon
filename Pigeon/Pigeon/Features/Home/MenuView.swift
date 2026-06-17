@@ -13,7 +13,9 @@ struct MenuView: View {
   @Environment(IdentityManager.self) private var identity
   @Environment(\.dismiss) private var dismiss
 
+  @AppStorage("pigeon.appearance") private var appearanceValue = AppAppearance.system.rawValue
   @State private var receiveWhileLocked = true
+  @State private var showCopied = false
 
   var body: some View {
     NavigationStack {
@@ -28,11 +30,23 @@ struct MenuView: View {
   private var menuList: some View {
     List {
       identityCardSection
-      // fingerprintSection
+      fingerprintSection
       bluetoothSection
       relaySection
+      appearanceSection
       privacySection
       activitySection
+    }
+  }
+
+  private var appearanceSection: some View {
+    Section("Appearance") {
+      Picker("Appearance", selection: $appearanceValue) {
+        ForEach(AppAppearance.allCases) { appearance in
+          Text(appearance.label).tag(appearance.rawValue)
+        }
+      }
+      .pickerStyle(.segmented)
     }
   }
 
@@ -90,12 +104,29 @@ struct MenuView: View {
     .padding(.vertical, 4)
   }
 
-  // private var fingerprintSection: some View {
-  //   Section("Identity") {
-  //     LabeledContent("Fingerprint", value: identity.publicKey.shortFingerprint)
-  //       .font(.callout.monospaced())
-  //   }
-  // }
+  private var fingerprintSection: some View {
+    Section("Identity") {
+      Button {
+        copyFingerprint()
+      } label: {
+        LabeledContent {
+          HStack(spacing: 6) {
+            Text(identity.publicKey.shortFingerprint)
+              .font(.callout.monospaced())
+            if showCopied {
+              Label("Copied", systemImage: "checkmark.circle.fill")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.green)
+            }
+          }
+        } label: {
+          Text("Fingerprint")
+            .font(.callout.monospaced())
+        }
+      }
+      .buttonStyle(.plain)
+    }
+  }
 
   private var bluetoothSection: some View {
     Section("Bluetooth") {
@@ -189,6 +220,15 @@ struct MenuView: View {
     case .connecting: return "Connecting…"
     case .failed: return "Unreachable"
     case .disabled: return "Off"
+    }
+  }
+
+  private func copyFingerprint() {
+    Clipboard.copy(identity.publicKey.fingerprint)
+    withAnimation { showCopied = true }
+    Task {
+      try? await Task.sleep(for: .seconds(1.5))
+      withAnimation { showCopied = false }
     }
   }
 }
