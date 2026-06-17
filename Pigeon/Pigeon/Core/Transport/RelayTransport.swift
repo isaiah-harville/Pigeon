@@ -36,6 +36,15 @@ final class RelayTransport: Transport {
   private(set) var linkState: LinkState = .disabled
   private(set) var log: [String] = []
 
+  /// Hosts of our own relays we're currently authenticated to (can receive on),
+  /// for display in the UI. Empty when offline.
+  var onlineRelayHosts: [String] {
+    myRelays.compactMap { url in
+      guard connections[url]?.ready == true else { return nil }
+      return host(url)
+    }
+  }
+
   // Relays are not "peers"; the headline status/peer-count stay BLE's.
   var status: TransportStatus { .idle }
   var connectedPeerCount: Int { 0 }

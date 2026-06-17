@@ -77,7 +77,7 @@ final class SessionManager {
   /// memory only — never written to disk — and replayed once unlocked. The relay
   /// also retains its copies (we don't ack while locked), so nothing is lost if
   /// we're killed before unlock. Bounded to blunt flooding.
-  var lockedInbox: [Data] = []
+  var lockedInbox: [(data: Data, channel: TransportChannel)] = []
 
   var myID: Data { identity.publicKey.rawRepresentation }
 
@@ -122,7 +122,9 @@ final class SessionManager {
       relay.reconfigure(RelaySettings.urls())
     }
     // Contacts/history load after the vault is unlocked; BLE runs regardless.
-    self.mesh.onMessage = { [weak self] data in self?.handleInbound(data) }
+    self.mesh.onMessage = { [weak self] data, channel in
+      self?.handleInbound(data, channel: channel)
+    }
     startRetryLoop()
   }
 
@@ -262,7 +264,8 @@ final class SessionManager {
   /// acknowledges it; it is (re)sent on each tick while a session exists and
   /// queued otherwise, so it is never silently dropped on a disconnect.
   func send(_ text: String, to contact: Contact) {
-    let message = ChatMessage(mine: true, text: text, pending: true)
+    var message = ChatMessage(mine: true, text: text, pending: true)
+    message.transport = currentOutboundChannel
     record(message, for: contact.id)
     if establishedContactIDs.contains(contact.id) {
       transmit(message, to: contact)
