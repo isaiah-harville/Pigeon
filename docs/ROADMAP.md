@@ -91,6 +91,19 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
   currently reachable at first contact (prekeys in the QR / gossiped over mesh).
   Unblocks long-distance and async group messaging. Has prekey-exhaustion/replay
   tradeoffs.
+- **Push wake-up (APNs via the official relay)** — iOS suspends backgrounded
+  apps, so without a push the device may not notice a relay-delivered message
+  until the user opens Pigeon. Only the app publisher can hold the APNs signing
+  key, so this can't be federated; the **official Pigeon relay** also runs a thin
+  **APNs push gateway**. Opt-in clients register their APNs device token with
+  their official relay; when ciphertext is deposited for them, the gateway sends
+  a **content-free** "you may have messages" push that wakes the app to drain its
+  mailbox (decrypt still happens on unlock — today's pipeline). Self-hosted and
+  third-party relays simply don't push (best-effort, as now). Tradeoff: this
+  centralizes the *wake signal* and exposes wake metadata (device token ↔ "has
+  mail at time T") to the gateway and to Apple; **confidentiality is untouched**
+  because the payload is empty. A deliberate, documented exception to "no new
+  network services beyond the relay." See [SECURITY_MODEL.md §6.1](SECURITY_MODEL.md).
 - **Local Wi-Fi transport** — Network.framework/Multipeer for same-network reach;
   another offline-capable `Transport` implementation.
 
@@ -140,12 +153,15 @@ Several are audit blockers (see [SECURITY_MODEL.md](SECURITY_MODEL.md) → Audit
 - **Connection topology** — dedupe the two-way central/peripheral link per pair.
 - **Store-and-forward** — queued messages have no age expiry; relay-level
   store-and-forward (holding *others'* packets) is future work (see data mules).
-- **Background reception** — works while backgrounded-alive, and CoreBluetooth
-  state restoration relaunches the app on a BLE event after termination. But
-  biometric-gated storage can't be unlocked in the background, so a relaunched
-  app can't decrypt — it posts a generic "open Pigeon" notification and processes
-  the message once the user unlocks. (Decrypting in the background would require
-  weakening the at-rest key's protection — deliberately not done.)
+- **Background reception** — a locked background relaunch no longer crashes, and
+  with opt-out **background delivery** (on by default) the identity key is
+  readable after first unlock, so a relaunched app can authenticate to the relay
+  and receive. Inbound envelopes are buffered in memory (and left unacked on the
+  relay) and a single content-free notification is posted; they decrypt once the
+  user unlocks (the message vault stays biometric-gated — no background
+  decryption, deliberately). Remaining limit: iOS *suspends* a backgrounded app,
+  so reliable "phone in pocket for hours" delivery still needs a push wake-up
+  (see **Push wake-up** under Next).
 - **Lint/format debt** — SwiftLint/SwiftFormat pre-commit hooks fail; commits use
   `--no-verify` for now. Do a cleanup pass.
 
