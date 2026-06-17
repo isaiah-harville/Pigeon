@@ -48,7 +48,10 @@ struct ChatView: View {
     ScrollViewReader { proxy in
       ScrollView {
         LazyVStack(alignment: .leading, spacing: 6) {
-          ForEach(messages) { message in
+          ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
+            if showsDaySeparator(before: index) {
+              daySeparator(for: message.date)
+            }
             bubble(message).id(message.id)
           }
         }
@@ -143,6 +146,24 @@ struct ChatView: View {
     } else {
       messageBubble(message)
     }
+  }
+
+  private func showsDaySeparator(before index: Int) -> Bool {
+    guard index > 0 else { return true }
+    return !Calendar.current.isDate(messages[index].date, inSameDayAs: messages[index - 1].date)
+  }
+
+  private func daySeparator(for date: Date) -> some View {
+    Text(dayLabel(for: date))
+      .font(.caption2.weight(.semibold))
+      .foregroundStyle(.secondary)
+      .frame(maxWidth: .infinity, alignment: .center)
+      .padding(.vertical, 6)
+  }
+
+  private func dayLabel(for date: Date) -> String {
+    if Calendar.current.isDateInToday(date) { return "Today" }
+    return date.formatted(date: .abbreviated, time: .omitted)
   }
 
   @ViewBuilder
