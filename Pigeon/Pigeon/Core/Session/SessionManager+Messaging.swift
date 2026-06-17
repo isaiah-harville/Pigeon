@@ -143,7 +143,8 @@ extension SessionManager {
   }
 
   /// Applies a transport-mode change locally and adds a centered notice in the
-  /// chat (matching how ephemeral announces itself).
+  /// chat (matching how ephemeral announces itself). The relay notice names the
+  /// host this side will actually use, so each end shows its own relay (#24).
   func applyTransport(useBluetooth: Bool, for contactID: Data, announce: Bool) {
     let changed = bluetoothChatIDs.contains(contactID) != useBluetooth
     if useBluetooth {
@@ -152,11 +153,15 @@ extension SessionManager {
       bluetoothChatIDs.remove(contactID)
     }
     if changed && announce {
-      record(
-        ChatMessage(
-          mine: false, text: useBluetooth ? "Switched to Bluetooth" : "Switched to relay",
-          system: true),
-        for: contactID)
+      let text: String
+      if useBluetooth {
+        text = "Switched to Bluetooth"
+      } else if let host = relayHost(for: contactID) {
+        text = "Switched to relay · \(host)"
+      } else {
+        text = "Switched to relay"
+      }
+      record(ChatMessage(mine: false, text: text, system: true), for: contactID)
     }
     persist()
   }
@@ -373,6 +378,18 @@ extension SessionManager {
     }
     if let index = persistedConversations[contactID]?.firstIndex(where: { $0.id == messageID }) {
       persistedConversations[contactID]?[index].pending = pending
+    }
+  }
+
+  /// Records the link a message is being dispatched over, in both the in-memory
+  /// view and the disk mirror, so a pending message resent after a transport
+  /// switch reflects the link it actually went out on (shown on long-press).
+  func setTransport(_ channel: TransportChannel?, messageID: UUID, contactID: Data) {
+    if let index = conversations[contactID]?.firstIndex(where: { $0.id == messageID }) {
+      conversations[contactID]?[index].transport = channel
+    }
+    if let index = persistedConversations[contactID]?.firstIndex(where: { $0.id == messageID }) {
+      persistedConversations[contactID]?[index].transport = channel
     }
   }
 

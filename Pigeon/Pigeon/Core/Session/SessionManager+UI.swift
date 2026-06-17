@@ -38,11 +38,20 @@ extension SessionManager {
     usesBluetooth(contact) ? [.bluetooth] : [.relay]
   }
 
-  /// The link to tag an outbound message with, for the per-message via-label.
+  /// The relay host this chat will use: its chosen relay if set, otherwise
+  /// the first online relay, otherwise the first configured one. For the switch
+  /// notice and the long-press message detail.
+  func relayHost(for contactID: Data) -> String? {
+    if let preferred = contacts.first(where: { $0.id == contactID })?.preferredRelayURL?.host {
+      return preferred
+    }
+    return relayHosts.first ?? RelaySettings.urls().first?.host
+  }
+
+  /// The link to record on an outbound message, shown in its long-press detail.
   func outboundChannel(for contact: Contact) -> TransportChannel? {
     if usesBluetooth(contact) { return .bluetooth }
-    let host = relayHosts.first ?? RelaySettings.urls().first?.host
-    return host.map { .relay(host: $0) }
+    return relayHost(for: contact.id).map { .relay(host: $0) }
   }
 
   /// The full configured relay list (endpoints + enabled flags) for the settings UI.

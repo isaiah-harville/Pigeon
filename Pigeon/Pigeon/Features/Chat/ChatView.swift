@@ -188,6 +188,7 @@ struct ChatView: View {
             in: BubbleShape(mine: message.mine)
           )
           .opacity(message.pending ? 0.6 : 1)
+          .contextMenu { MessageDetailMenu(message: message) }
         if message.mine {
           if message.pending {
             Image(systemName: "clock")
@@ -253,6 +254,7 @@ private struct TransportPill: View {
     }
     .padding(3)
     .background(Capsule().fill(.fill.tertiary))
+    .padding(.horizontal)
     .gesture(
       DragGesture(minimumDistance: 24).onEnded { value in
         session.setChatUsesBluetooth(value.translation.width > 0, for: contact)
@@ -267,8 +269,8 @@ private struct TransportPill: View {
     Button(action: action) {
       Label(title, systemImage: symbol)
         .font(.caption2.weight(.medium))
+        .frame(maxWidth: .infinity)
         .padding(.vertical, 5)
-        .padding(.horizontal, 12)
         .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
         .background(
           selected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.clear), in: Capsule())
@@ -303,27 +305,36 @@ private struct RelayPicker: View {
   }
 }
 
-/// A message's timestamp plus, when known, the link it travelled over (#15).
+/// A message's timestamp under its bubble. The link it travelled over is kept
+/// off the bubble and surfaced on long-press instead (see `MessageDetailMenu`).
 private struct MessageFooter: View {
   let message: ChatMessage
 
   var body: some View {
-    HStack(spacing: 4) {
-      Text(message.date.formatted(date: .omitted, time: .shortened))
-      if let transport = message.transport {
-        Text("·")
-        Label(label(transport), systemImage: symbol(transport))
-          .labelStyle(.titleAndIcon)
-      }
+    Text(message.date.formatted(date: .omitted, time: .shortened))
+      .font(.caption2)
+      .foregroundStyle(.secondary)
+  }
+}
+
+/// Long-press detail for a message: the link it travelled over plus the full
+/// timestamp. The link is the genuinely-observed arrival transport for received
+/// messages, and the link it was last sent over for sent ones (#24).
+private struct MessageDetailMenu: View {
+  let message: ChatMessage
+
+  var body: some View {
+    if let transport = message.transport {
+      Label(linkText(transport), systemImage: symbol(transport))
     }
-    .font(.caption2)
-    .foregroundStyle(.secondary)
+    Text(message.date.formatted(date: .abbreviated, time: .standard))
   }
 
-  private func label(_ channel: TransportChannel) -> String {
+  private func linkText(_ channel: TransportChannel) -> String {
+    let verb = message.mine ? "Sent via" : "Received via"
     switch channel {
-    case .bluetooth: return "Bluetooth"
-    case .relay(let host): return "relay · \(host)"
+    case .bluetooth: return "\(verb) Bluetooth"
+    case .relay(let host): return "\(verb) relay · \(host)"
     }
   }
 

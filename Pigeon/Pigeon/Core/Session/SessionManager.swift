@@ -275,11 +275,17 @@ final class SessionManager {
     }
   }
 
-  /// Encrypts and sends one app message (id + text) over the session.
+  /// Encrypts and sends one app message (id + text) over the session. Re-tags the
+  /// message with the link it's going out on now, so a pending message resent
+  /// after a transport switch reflects reality in its long-press detail.
   func transmit(_ message: ChatMessage, to contact: Contact) {
     guard let session = sessions[contact.id],
       let ciphertext = try? session.encrypt(Self.encodeMessage(id: message.id, text: message.text))
     else { return }
+    let channel = outboundChannel(for: contact)
+    if message.transport != channel {
+      setTransport(channel, messageID: message.id, contactID: contact.id)
+    }
     sendEnvelope(.message, payload: ciphertext, to: contact)
   }
 
