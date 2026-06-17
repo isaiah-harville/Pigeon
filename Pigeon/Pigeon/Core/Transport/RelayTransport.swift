@@ -154,6 +154,20 @@ final class RelayTransport: Transport {
     }
   }
 
+  func refreshConnections() {
+    guard !connections.isEmpty || !myRelays.isEmpty else { return }
+    let configuredRelays = myRelays
+    // Pull-to-refresh intentionally tears down every relay socket, including
+    // healthy publish-only contact relays, so reconfigure starts fresh.
+    for connection in connections.values {
+      connection.task?.cancel()
+      connection.socket?.cancel(with: .goingAway, reason: nil)
+    }
+    connections.removeAll()
+    note("Relay refresh requested")
+    reconfigure(configuredRelays)
+  }
+
   // MARK: - Connection lifecycle
 
   /// Keeps one relay connected, reconnecting with capped backoff until the

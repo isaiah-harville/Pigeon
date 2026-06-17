@@ -148,6 +148,17 @@ final class PeerTransport: NSObject, Transport {
     note("\(summary)\(notifyText)\(pathText)")
   }
 
+  func refreshConnections() {
+    guard central.state == .poweredOn else { return }
+    central.stopScan()
+    startScanningIfReady()
+    sweep()
+    for peripheral in peripherals.values where peripheral.state == .connected {
+      peripheral.discoverServices([BluetoothConstants.service])
+    }
+    note("Bluetooth refresh requested")
+  }
+
   // MARK: - Helpers
 
   private func note(_ message: String) {
