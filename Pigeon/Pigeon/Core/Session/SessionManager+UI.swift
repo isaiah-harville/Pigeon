@@ -30,6 +30,28 @@ extension SessionManager {
     return nil
   }
 
+  /// The link an outbound message to `contact` would travel over, honoring a
+  /// relay-only switch for that chat (#24).
+  func outboundChannel(for contact: Contact) -> TransportChannel? {
+    if relayOnlyContactIDs.contains(contact.id) {
+      return relayHosts.first.map { .relay(host: $0) }
+    }
+    return currentOutboundChannel
+  }
+
+  /// Whether this chat is pinned to the relay (Bluetooth skipped) — #24.
+  func isRelayOnly(_ contact: Contact) -> Bool { relayOnlyContactIDs.contains(contact.id) }
+
+  /// Whether a relay is configured at all, so the UI can hide the relay-only
+  /// switch when there's nothing to switch to.
+  var hasRelay: Bool { relayLinkState != .disabled }
+
+  /// Pins/unpins a chat to the relay. Affects only how future messages for this
+  /// contact are dispatched; nothing already sent changes.
+  func setRelayOnly(_ on: Bool, for contact: Contact) {
+    if on { relayOnlyContactIDs.insert(contact.id) } else { relayOnlyContactIDs.remove(contact.id) }
+  }
+
   /// The full configured relay list (endpoints + enabled flags) for the settings UI.
   var relayEntries: [RelayEntry] { RelaySettings.entries() }
 

@@ -97,6 +97,11 @@ struct ChatView: View {
     Toggle(isOn: ephemeralBinding) {
       Label("Ephemeral chat", systemImage: "clock.arrow.circlepath")
     }
+    if session.hasRelay {
+      Toggle(isOn: relayOnlyBinding) {
+        Label("Send via relay", systemImage: "network")
+      }
+    }
     Button {
       newName = contact.displayName
       showRename = true
@@ -114,6 +119,13 @@ struct ChatView: View {
     Binding(
       get: { session.isEphemeral(contact) },
       set: { session.setEphemeral($0, for: contact) }
+    )
+  }
+
+  private var relayOnlyBinding: Binding<Bool> {
+    Binding(
+      get: { session.isRelayOnly(contact) },
+      set: { session.setRelayOnly($0, for: contact) }
     )
   }
 

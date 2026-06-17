@@ -35,6 +35,13 @@ final class SessionManager {
   var conversations: [Data: [ChatMessage]] = [:]
   /// Contacts whose chat is ephemeral — new messages are kept in memory only.
   var ephemeralContactIDs: Set<Data> = []
+  /// Contacts whose chat the user has switched to relay-only (skip Bluetooth).
+  /// In-memory and session-scoped: this is a transient "use the internet for
+  /// this chat" choice, not a persisted setting (#24).
+  var relayOnlyContactIDs: Set<Data> = []
+  /// The link the last outbound message for a contact travelled over, so we can
+  /// post a one-time notice when a chat hands off between Bluetooth and relay.
+  var lastSendChannel: [Data: TransportChannel] = [:]
   /// The local user's own display name, shared in their QR card.
   var myName: String = ""
   var log: [String] = []
@@ -264,8 +271,10 @@ final class SessionManager {
   /// acknowledges it; it is (re)sent on each tick while a session exists and
   /// queued otherwise, so it is never silently dropped on a disconnect.
   func send(_ text: String, to contact: Contact) {
+    let channel = outboundChannel(for: contact)
+    noteTransportHandoff(for: contact, to: channel)
     var message = ChatMessage(mine: true, text: text, pending: true)
-    message.transport = currentOutboundChannel
+    message.transport = channel
     record(message, for: contact.id)
     if establishedContactIDs.contains(contact.id) {
       transmit(message, to: contact)

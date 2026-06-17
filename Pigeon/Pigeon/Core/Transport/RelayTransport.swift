@@ -33,6 +33,7 @@ final class RelayTransport: Transport {
     case failed  // configured but currently unreachable
   }
 
+  let kind: TransportKind? = .relay
   private(set) var linkState: LinkState = .disabled
   private(set) var log: [String] = []
 

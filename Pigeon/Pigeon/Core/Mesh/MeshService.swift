@@ -45,10 +45,12 @@ final class MeshService {
 
   /// Sends `message` into the mesh. `recipient` is the destination's identity
   /// key, passed to the transport as a delivery hint (used by the relay to
-  /// address a mailbox; ignored by flood transports like BLE).
-  func send(_ message: Data, to recipient: Data?) {
+  /// address a mailbox; ignored by flood transports like BLE). `over` restricts
+  /// the send to specific links (pass `TransportKind.all` for every link), e.g.
+  /// relay-only for a chat the user switched off Bluetooth (#24).
+  func send(_ message: Data, to recipient: Data?, over channels: Set<TransportKind>) {
     let packet = router.originate(message)
-    transport.broadcast(packet.encoded(), to: recipient)
+    transport.broadcast(packet.encoded(), to: recipient, over: channels)
   }
 
   private func handleInbound(_ data: Data, channel: TransportChannel) {

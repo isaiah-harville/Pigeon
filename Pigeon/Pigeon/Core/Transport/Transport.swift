@@ -45,6 +45,17 @@ enum TransportChannel: Codable, Equatable, Hashable {
   }
 }
 
+/// Identifies which kind of link a concrete transport is, so callers can
+/// restrict a send to a subset of links (e.g. force a message over the relay
+/// when the user switches an in-range chat to the internet — #24).
+enum TransportKind: CaseIterable {
+  case bluetooth
+  case relay
+
+  /// Every link — the unrestricted set, used as the "send everywhere" default.
+  static var all: Set<TransportKind> { Set(allCases) }
+}
+
 /// A peer-to-peer byte pipe. Implementations handle their own discovery,
 /// connection management, and fragmentation; callers see only whole messages.
 ///
@@ -52,6 +63,10 @@ enum TransportChannel: Codable, Equatable, Hashable {
 /// actor, and existing implementations deliver their callbacks there.
 @MainActor
 protocol Transport: AnyObject {
+
+  /// The link this transport drives, or `nil` for an aggregate (e.g.
+  /// `CompositeTransport`) that owns several. Used to honor a channel filter.
+  var kind: TransportKind? { get }
   /// Human-readable link state for the UI.
   var status: TransportStatus { get }
 
@@ -74,4 +89,21 @@ protocol Transport: AnyObject {
   /// peers, while a point-to-point transport (the relay) uses it to address the
   /// recipient's mailbox and skips `nil` (it does not flood the internet).
   func broadcast(_ message: Data, to recipient: Data?)
+
+  /// Sends restricted to `channels` (pass `TransportKind.all` for every link).
+  /// Lets the session force a message onto a specific link, e.g. relay-only when
+  /// a chat is switched off Bluetooth (#24).
+  func broadcast(_ message: Data, to recipient: Data?, over channels: Set<TransportKind>)
+}
+
+extension Transport {
+  var kind: TransportKind? { nil }
+
+  /// Default filtering for a single-link transport: send when the filter
+  /// includes this transport's kind, otherwise stay silent. `CompositeTransport`
+  /// overrides this to fan the filter out to its children.
+  func broadcast(_ message: Data, to recipient: Data?, over channels: Set<TransportKind>) {
+    if let kind, !channels.contains(kind) { return }
+    broadcast(message, to: recipient)
+  }
 }

@@ -225,8 +225,11 @@ extension SessionManager {
     let envelope = SessionEnvelope(
       type: type, sender: myID, recipient: contact.id, payload: payload)
     // The recipient hint lets the relay address this contact's mailbox directly;
-    // BLE ignores it and floods.
-    mesh.send(envelope.encoded(), to: contact.id)
+    // BLE ignores it and floods. When the chat is switched to relay-only, skip
+    // Bluetooth entirely (#24).
+    let channels: Set<TransportKind> =
+      relayOnlyContactIDs.contains(contact.id) ? [.relay] : TransportKind.all
+    mesh.send(envelope.encoded(), to: contact.id, over: channels)
   }
 
   func sessionRejectedMessage(for contact: Contact) -> String {
@@ -322,6 +325,23 @@ extension SessionManager {
   func note(_ message: String) {
     log.append(message)
     if log.count > 200 { log.removeFirst(log.count - 200) }
+  }
+
+  /// Records a one-time, centered notice when a chat's outbound link changes —
+  /// e.g. Bluetooth drops and messages start riding the relay, or the user
+  /// switches the chat to relay-only (#24). The first send for a contact sets
+  /// the baseline silently; only subsequent changes are announced.
+  func noteTransportHandoff(for contact: Contact, to channel: TransportChannel?) {
+    guard let channel else { return }  // no link available yet — nothing to note
+    let previous = lastSendChannel[contact.id]
+    lastSendChannel[contact.id] = channel
+    guard let previous, previous != channel else { return }
+    let text: String
+    switch channel {
+    case .bluetooth: text = "Switched to Bluetooth"
+    case .relay(let host): text = "Switched to relay · \(host)"
+    }
+    record(ChatMessage(mine: false, text: text, system: true), for: contact.id)
   }
 
   /// Appends a message to the in-memory view, and to the on-disk mirror unless
