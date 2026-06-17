@@ -156,11 +156,7 @@ struct ChatView: View {
   @ViewBuilder
   private func bubble(_ message: ChatMessage) -> some View {
     if message.system {
-      Text("— \(message.text) —")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.vertical, 2)
+      ChatTimelineMarker(text: message.text, systemImage: systemMarkerImage(for: message.text))
     } else {
       messageBubble(message)
     }
@@ -172,16 +168,19 @@ struct ChatView: View {
   }
 
   private func daySeparator(for date: Date) -> some View {
-    Text(dayLabel(for: date))
-      .font(.caption2.weight(.semibold))
-      .foregroundStyle(.secondary)
-      .frame(maxWidth: .infinity, alignment: .center)
-      .padding(.vertical, 6)
+    ChatTimelineMarker(text: dayLabel(for: date))
   }
 
   private func dayLabel(for date: Date) -> String {
     if Calendar.current.isDateInToday(date) { return "Today" }
     return date.formatted(date: .abbreviated, time: .omitted)
+  }
+
+  private func systemMarkerImage(for text: String) -> String? {
+    if text.hasPrefix("Switched to Bluetooth") { return "dot.radiowaves.left.and.right" }
+    if text.hasPrefix("Switched to relay") { return "globe" }
+    if text.hasPrefix("Ephemeral") { return "clock.arrow.circlepath" }
+    return nil
   }
 
   @ViewBuilder

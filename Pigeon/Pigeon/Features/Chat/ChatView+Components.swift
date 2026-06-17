@@ -7,6 +7,29 @@
 
 import SwiftUI
 
+/// Centered timeline chrome for day separators and low-importance system events.
+struct ChatTimelineMarker: View {
+  let text: String
+  var systemImage: String?
+
+  var body: some View {
+    HStack(spacing: 5) {
+      if let systemImage {
+        Image(systemName: systemImage)
+          .font(.caption2.weight(.semibold))
+      }
+      Text(text)
+        .font(.caption2.weight(.semibold))
+    }
+    .foregroundStyle(.secondary)
+    .padding(.horizontal, 10)
+    .padding(.vertical, 5)
+    .background(.fill.quaternary, in: Capsule())
+    .frame(maxWidth: .infinity, alignment: .center)
+    .padding(.vertical, 4)
+  }
+}
+
 /// A chat's current reachability: local Bluetooth peers and/or the relay (with
 /// its host), so users can see the path messages take (#15).
 struct ConnectionSummary: View {
@@ -25,7 +48,7 @@ struct ConnectionSummary: View {
 
   private var icon: String {
     if peers > 0 { return "dot.radiowaves.left.and.right" }
-    if !relayHosts.isEmpty { return "network" }
+    if !relayHosts.isEmpty { return "globe" }
     return "wifi.slash"
   }
 
@@ -47,7 +70,7 @@ struct TransportPill: View {
   var body: some View {
     let bluetooth = session.usesBluetooth(contact)
     HStack(spacing: 2) {
-      segment("Relay", "network", selected: !bluetooth) {
+      segment("Relay", "globe", selected: !bluetooth) {
         session.setChatUsesBluetooth(false, for: contact)
       }
       segment("Bluetooth", "dot.radiowaves.left.and.right", selected: bluetooth) {
@@ -143,7 +166,7 @@ struct MessageDetailMenu: View {
   private func symbol(_ channel: TransportChannel) -> String {
     switch channel {
     case .bluetooth: return "dot.radiowaves.left.and.right"
-    case .relay: return "network"
+    case .relay: return "globe"
     }
   }
 }
