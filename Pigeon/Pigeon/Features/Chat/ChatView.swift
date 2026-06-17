@@ -147,26 +147,31 @@ struct ChatView: View {
 
   @ViewBuilder
   private func messageBubble(_ message: ChatMessage) -> some View {
-    HStack(alignment: .bottom, spacing: 4) {
-      if message.mine { Spacer(minLength: 48) }
-      Text(message.text)
-        .foregroundStyle(message.mine ? .white : .primary)
-        .padding(.horizontal, 13)
-        .padding(.vertical, 9)
-        .background(
-          message.mine ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.fill.tertiary),
-          in: BubbleShape(mine: message.mine)
-        )
-        .opacity(message.pending ? 0.6 : 1)
-      if message.mine {
-        if message.pending {
-          Image(systemName: "clock")
-            .font(.caption2)
-            .foregroundStyle(.secondary)
+    VStack(alignment: message.mine ? .trailing : .leading, spacing: 2) {
+      HStack(alignment: .bottom, spacing: 4) {
+        if message.mine { Spacer(minLength: 48) }
+        Text(message.text)
+          .foregroundStyle(message.mine ? .white : .primary)
+          .padding(.horizontal, 13)
+          .padding(.vertical, 9)
+          .background(
+            message.mine ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.fill.tertiary),
+            in: BubbleShape(mine: message.mine)
+          )
+          .opacity(message.pending ? 0.6 : 1)
+        if message.mine {
+          if message.pending {
+            Image(systemName: "clock")
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+          }
+        } else {
+          Spacer(minLength: 48)
         }
-      } else {
-        Spacer(minLength: 48)
       }
+      Text(message.date.formatted(date: .omitted, time: .shortened))
+        .font(.caption2)
+        .foregroundStyle(.secondary)
     }
     .frame(maxWidth: .infinity, alignment: message.mine ? .trailing : .leading)
   }
