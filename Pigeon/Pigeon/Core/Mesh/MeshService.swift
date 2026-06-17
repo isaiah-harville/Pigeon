@@ -21,8 +21,9 @@ final class MeshService {
   private let transport: any Transport
   private let router = MeshRouter()
 
-  /// Delivered once per unique message that reaches this device.
-  var onMessage: ((Data) -> Void)?
+  /// Delivered once per unique message that reaches this device, along with the
+  /// transport it arrived on (so the UI can show how a message travelled).
+  var onMessage: ((Data, TransportChannel) -> Void)?
 
   // UI passthroughs so views don't need to know about the transport.
   var status: TransportStatus { transport.status }
@@ -37,8 +38,8 @@ final class MeshService {
 
   init(transport: any Transport) {
     self.transport = transport
-    transport.onMessage = { [weak self] data, _ in
-      self?.handleInbound(data)
+    transport.onMessage = { [weak self] data, peerID in
+      self?.handleInbound(data, channel: TransportChannel(peerID: peerID))
     }
   }
 
@@ -50,11 +51,11 @@ final class MeshService {
     transport.broadcast(packet.encoded(), to: recipient)
   }
 
-  private func handleInbound(_ data: Data) {
+  private func handleInbound(_ data: Data, channel: TransportChannel) {
     guard let packet = try? MeshPacket(decoding: data) else { return }
     let reception = router.ingest(packet)
     if let payload = reception.deliver {
-      onMessage?(payload)
+      onMessage?(payload, channel)
     }
     // Forward toward peers we can reach that the sender may not (flood relay,
     // bounded by the seen-cache and TTL). This is address-less flooding — the

@@ -18,6 +18,18 @@ extension SessionManager {
   /// Relay (internet) link state for the UI; `.disabled` when none configured.
   var relayLinkState: RelayTransport.LinkState { relay?.linkState ?? .disabled }
 
+  /// Hosts of our own relays we can currently receive on, for the chat header.
+  var relayHosts: [String] { relay?.onlineRelayHosts ?? [] }
+
+  /// The link an outbound message would currently travel over: local Bluetooth
+  /// when peers are connected, otherwise the relay when it is online. `nil` when
+  /// neither is available (the message is queued until a link comes up).
+  var currentOutboundChannel: TransportChannel? {
+    if connectedPeerCount > 0 { return .bluetooth }
+    if let host = relayHosts.first { return .relay(host: host) }
+    return nil
+  }
+
   /// The full configured relay list (endpoints + enabled flags) for the settings UI.
   var relayEntries: [RelayEntry] { RelaySettings.entries() }
 

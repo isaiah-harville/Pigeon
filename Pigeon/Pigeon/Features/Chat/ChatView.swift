@@ -119,17 +119,20 @@ struct ChatView: View {
 
   @ViewBuilder
   private var statusBanner: some View {
-    HStack(spacing: 6) {
-      Image(systemName: isSecure ? "lock.fill" : "lock.open")
-      Text(isSecure ? "End-to-end encrypted" : "Establishing secure session…")
-      Spacer()
-      if session.isEphemeral(contact) {
-        Label("Ephemeral", systemImage: "clock.arrow.circlepath")
-          .foregroundStyle(.orange)
+    VStack(spacing: 2) {
+      HStack(spacing: 6) {
+        Image(systemName: isSecure ? "lock.fill" : "lock.open")
+        Text(isSecure ? "End-to-end encrypted" : "Establishing secure session…")
+        Spacer()
+        if session.isEphemeral(contact) {
+          Label("Ephemeral", systemImage: "clock.arrow.circlepath")
+            .foregroundStyle(.orange)
+        }
       }
+      .foregroundStyle(isSecure ? .green : .secondary)
+      ConnectionSummary(peers: session.connectedPeerCount, relayHosts: session.relayHosts)
     }
     .font(.footnote)
-    .foregroundStyle(isSecure ? .green : .secondary)
     .padding(.horizontal)
     .padding(.vertical, 6)
     .background(.bar)
@@ -190,11 +193,71 @@ struct ChatView: View {
           Spacer(minLength: 48)
         }
       }
-      Text(message.date.formatted(date: .omitted, time: .shortened))
-        .font(.caption2)
-        .foregroundStyle(.secondary)
+      MessageFooter(message: message)
     }
     .frame(maxWidth: .infinity, alignment: message.mine ? .trailing : .leading)
+  }
+}
+
+/// A chat's current reachability: local Bluetooth peers and/or the relay (with
+/// its host), so users can see the path messages take (#15).
+private struct ConnectionSummary: View {
+  let peers: Int
+  let relayHosts: [String]
+
+  var body: some View {
+    HStack(spacing: 6) {
+      Image(systemName: icon)
+      Text(text)
+      Spacer()
+    }
+    .font(.caption2)
+    .foregroundStyle(.secondary)
+  }
+
+  private var icon: String {
+    if peers > 0 { return "dot.radiowaves.left.and.right" }
+    if !relayHosts.isEmpty { return "network" }
+    return "wifi.slash"
+  }
+
+  private var text: String {
+    var parts: [String] = []
+    if peers > 0 { parts.append("Bluetooth · \(peers) peer\(peers == 1 ? "" : "s")") }
+    if let host = relayHosts.first { parts.append("Relay · \(host)") }
+    return parts.isEmpty ? "Offline" : parts.joined(separator: "   ")
+  }
+}
+
+/// A message's timestamp plus, when known, the link it travelled over (#15).
+private struct MessageFooter: View {
+  let message: ChatMessage
+
+  var body: some View {
+    HStack(spacing: 4) {
+      Text(message.date.formatted(date: .omitted, time: .shortened))
+      if let transport = message.transport {
+        Text("·")
+        Label(label(transport), systemImage: symbol(transport))
+          .labelStyle(.titleAndIcon)
+      }
+    }
+    .font(.caption2)
+    .foregroundStyle(.secondary)
+  }
+
+  private func label(_ channel: TransportChannel) -> String {
+    switch channel {
+    case .bluetooth: return "Bluetooth"
+    case .relay(let host): return "relay · \(host)"
+    }
+  }
+
+  private func symbol(_ channel: TransportChannel) -> String {
+    switch channel {
+    case .bluetooth: return "dot.radiowaves.left.and.right"
+    case .relay: return "network"
+    }
   }
 }
 

@@ -15,6 +15,9 @@ struct ChatMessage: Identifiable, Equatable, Codable {
   var pending: Bool = false
   /// A centered notice (e.g. "Ephemeral enabled") rather than a chat bubble.
   var system: Bool = false
+  /// Which link this message travelled over (locally observed), shown in the UI.
+  /// `nil` for older history or messages not yet dispatched.
+  var transport: TransportChannel?
 
   init(mine: Bool, text: String) {
     self.init(mine: mine, text: text, pending: false, system: false)
@@ -37,7 +40,9 @@ struct ChatMessage: Identifiable, Equatable, Codable {
 
   // Tolerant decoding: missing optional-ish fields default rather than fail,
   // so adding fields doesn't discard already-stored history.
-  private enum CodingKeys: String, CodingKey { case id, mine, text, date, pending, system }
+  private enum CodingKeys: String, CodingKey {
+    case id, mine, text, date, pending, system, transport
+  }
 
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -47,5 +52,6 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     date = (try? container.decode(Date.self, forKey: .date)) ?? Date()
     pending = (try? container.decode(Bool.self, forKey: .pending)) ?? false
     system = (try? container.decode(Bool.self, forKey: .system)) ?? false
+    transport = try? container.decode(TransportChannel.self, forKey: .transport)
   }
 }
