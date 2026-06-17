@@ -21,35 +21,37 @@ extension SessionManager {
   /// Hosts of our own relays we can currently receive on, for the chat header.
   var relayHosts: [String] { relay?.onlineRelayHosts ?? [] }
 
-  /// The link an outbound message would currently travel over: local Bluetooth
-  /// when peers are connected, otherwise the relay when it is online. `nil` when
-  /// neither is available (the message is queued until a link comes up).
-  var currentOutboundChannel: TransportChannel? {
-    if connectedPeerCount > 0 { return .bluetooth }
-    if let host = relayHosts.first { return .relay(host: host) }
-    return nil
-  }
-
-  /// The link an outbound message to `contact` would travel over, honoring a
-  /// relay-only switch for that chat (#24).
-  func outboundChannel(for contact: Contact) -> TransportChannel? {
-    if relayOnlyContactIDs.contains(contact.id) {
-      return relayHosts.first.map { .relay(host: $0) }
-    }
-    return currentOutboundChannel
-  }
-
-  /// Whether this chat is pinned to the relay (Bluetooth skipped) — #24.
-  func isRelayOnly(_ contact: Contact) -> Bool { relayOnlyContactIDs.contains(contact.id) }
-
-  /// Whether a relay is configured at all, so the UI can hide the relay-only
-  /// switch when there's nothing to switch to.
+  /// Whether a relay is configured at all, so the UI can offer the relay option.
   var hasRelay: Bool { relayLinkState != .disabled }
 
-  /// Pins/unpins a chat to the relay. Affects only how future messages for this
-  /// contact are dispatched; nothing already sent changes.
-  func setRelayOnly(_ on: Bool, for contact: Contact) {
-    if on { relayOnlyContactIDs.insert(contact.id) } else { relayOnlyContactIDs.remove(contact.id) }
+  /// Whether `contact`'s chat sends over Bluetooth. Relay is the default for
+  /// every chat (we encourage relays); Bluetooth is the opt-in second option.
+  /// A chat falls back to Bluetooth when no relay is configured at all (#24).
+  func usesBluetooth(_ contact: Contact) -> Bool {
+    bluetoothChatIDs.contains(contact.id) || !hasRelay
+  }
+
+  /// The links an outbound app message to `contact` is dispatched over: just the
+  /// chat's chosen link (relay by default, Bluetooth when opted in or when no
+  /// relay is configured) — #24.
+  func chatChannels(for contact: Contact) -> Set<TransportKind> {
+    usesBluetooth(contact) ? [.bluetooth] : [.relay]
+  }
+
+  /// The relay host this chat will use: its chosen relay if set, otherwise
+  /// the first online relay, otherwise the first configured one. For the switch
+  /// notice and the long-press message detail.
+  func relayHost(for contactID: Data) -> String? {
+    if let preferred = contacts.first(where: { $0.id == contactID })?.preferredRelayURL?.host {
+      return preferred
+    }
+    return relayHosts.first ?? RelaySettings.urls().first?.host
+  }
+
+  /// The link to record on an outbound message, shown in its long-press detail.
+  func outboundChannel(for contact: Contact) -> TransportChannel? {
+    if usesBluetooth(contact) { return .bluetooth }
+    return relayHost(for: contact.id).map { .relay(host: $0) }
   }
 
   /// The full configured relay list (endpoints + enabled flags) for the settings UI.

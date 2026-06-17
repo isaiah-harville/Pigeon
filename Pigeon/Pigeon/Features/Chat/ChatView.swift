@@ -15,6 +15,7 @@ struct ChatView: View {
   @State private var showSafetyNumber = false
   @State private var showRename = false
   @State private var newName = ""
+  @State private var replyTarget: ChatMessage?
 
   private var isSecure: Bool { session.establishedContactIDs.contains(contact.id) }
   private var messages: [ChatMessage] { session.messages(with: contact) }
@@ -41,6 +42,10 @@ struct ChatView: View {
       statusBanner
       messagesScroll
       composer
+      if session.hasRelay {
+        TransportPill(contact: contact)
+          .padding(.bottom, 6)
+      }
     }
   }
 
@@ -57,6 +62,7 @@ struct ChatView: View {
         }
         .padding()
       }
+      .scrollDismissesKeyboard(.interactively)
       .onChange(of: messages.count) {
         if let last = messages.last {
           withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
@@ -69,16 +75,9 @@ struct ChatView: View {
   }
 
   private var composer: some View {
-    HStack {
-      TextField("Message", text: $draft)
-        .textFieldStyle(.roundedBorder)
-      Button("Send") {
-        session.send(draft, to: contact)
-        draft = ""
-      }
-      .disabled(draft.isEmpty)
+    ChatComposer(draft: $draft, replyTarget: $replyTarget) { text, reply in
+      session.send(text, replySnippet: reply?.replySnippetText, to: contact)
     }
-    .padding()
   }
 
   @ToolbarContentBuilder
@@ -96,11 +95,6 @@ struct ChatView: View {
   private var chatMenuContent: some View {
     Toggle(isOn: ephemeralBinding) {
       Label("Ephemeral chat", systemImage: "clock.arrow.circlepath")
-    }
-    if session.hasRelay {
-      Toggle(isOn: relayOnlyBinding) {
-        Label("Send via relay", systemImage: "network")
-      }
     }
     RelayPicker(contact: contact)
     Button {
@@ -120,13 +114,6 @@ struct ChatView: View {
     Binding(
       get: { session.isEphemeral(contact) },
       set: { session.setEphemeral($0, for: contact) }
-    )
-  }
-
-  private var relayOnlyBinding: Binding<Bool> {
-    Binding(
-      get: { session.isRelayOnly(contact) },
-      set: { session.setRelayOnly($0, for: contact) }
     )
   }
 
@@ -154,11 +141,7 @@ struct ChatView: View {
   @ViewBuilder
   private func bubble(_ message: ChatMessage) -> some View {
     if message.system {
-      Text("— \(message.text) —")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.vertical, 2)
+      ChatTimelineMarker(text: message.text, systemImage: ChatTimelineIcon.name(for: message.text))
     } else {
       messageBubble(message)
     }
@@ -170,11 +153,7 @@ struct ChatView: View {
   }
 
   private func daySeparator(for date: Date) -> some View {
-    Text(dayLabel(for: date))
-      .font(.caption2.weight(.semibold))
-      .foregroundStyle(.secondary)
-      .frame(maxWidth: .infinity, alignment: .center)
-      .padding(.vertical, 6)
+    ChatTimelineMarker(text: dayLabel(for: date))
   }
 
   private func dayLabel(for date: Date) -> String {
@@ -187,15 +166,7 @@ struct ChatView: View {
     VStack(alignment: message.mine ? .trailing : .leading, spacing: 2) {
       HStack(alignment: .bottom, spacing: 4) {
         if message.mine { Spacer(minLength: 48) }
-        Text(message.text)
-          .foregroundStyle(message.mine ? .white : .primary)
-          .padding(.horizontal, 13)
-          .padding(.vertical, 9)
-          .background(
-            message.mine ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.fill.tertiary),
-            in: BubbleShape(mine: message.mine)
-          )
-          .opacity(message.pending ? 0.6 : 1)
+        messageText(message)
         if message.mine {
           if message.pending {
             Image(systemName: "clock")
@@ -206,152 +177,30 @@ struct ChatView: View {
           Spacer(minLength: 48)
         }
       }
+      MessageReactions(message: message)
       MessageFooter(message: message)
     }
     .frame(maxWidth: .infinity, alignment: message.mine ? .trailing : .leading)
   }
-}
 
-/// A chat's current reachability: local Bluetooth peers and/or the relay (with
-/// its host), so users can see the path messages take (#15).
-private struct ConnectionSummary: View {
-  let peers: Int
-  let relayHosts: [String]
-
-  var body: some View {
-    HStack(spacing: 6) {
-      Image(systemName: icon)
-      Text(text)
-      Spacer()
-    }
-    .font(.caption2)
-    .foregroundStyle(.secondary)
-  }
-
-  private var icon: String {
-    if peers > 0 { return "dot.radiowaves.left.and.right" }
-    if !relayHosts.isEmpty { return "network" }
-    return "wifi.slash"
-  }
-
-  private var text: String {
-    var parts: [String] = []
-    if peers > 0 { parts.append("Bluetooth · \(peers) peer\(peers == 1 ? "" : "s")") }
-    if let host = relayHosts.first { parts.append("Relay · \(host)") }
-    return parts.isEmpty ? "Offline" : parts.joined(separator: "   ")
-  }
-}
-
-/// Lets the user pin a conversation to one of the contact's advertised relays,
-/// or leave it automatic; hidden when the contact advertises none (#18).
-private struct RelayPicker: View {
-  @Environment(SessionManager.self) private var session
-  let contact: Contact
-
-  var body: some View {
-    let relays = session.advertisedRelays(for: contact)
-    if !relays.isEmpty {
-      Picker("Relay for this chat", selection: selection) {
-        Text("Automatic").tag(URL?.none)
-        ForEach(relays, id: \.self) { url in
-          Text(url.host ?? url.absoluteString).tag(URL?.some(url))
-        }
+  private func messageText(_ message: ChatMessage) -> some View {
+    MessageBubbleContent(message: message)
+      .padding(.horizontal, 13)
+      .padding(.vertical, 9)
+      .background(
+        message.mine ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.fill.tertiary),
+        in: BubbleShape(mine: message.mine)
+      )
+      .opacity(message.pending ? 0.6 : 1)
+      .contextMenu {
+        MessageContextMenu(
+          message: message,
+          onReact: { session.toggleReaction($0, for: message, in: contact) },
+          onReply: { reply(to: message) })
       }
-    }
   }
 
-  private var selection: Binding<URL?> {
-    Binding(
-      get: { session.preferredRelay(for: contact) },
-      set: { session.setPreferredRelay($0, for: contact) }
-    )
-  }
-}
-
-/// A message's timestamp plus, when known, the link it travelled over (#15).
-private struct MessageFooter: View {
-  let message: ChatMessage
-
-  var body: some View {
-    HStack(spacing: 4) {
-      Text(message.date.formatted(date: .omitted, time: .shortened))
-      if let transport = message.transport {
-        Text("·")
-        Label(label(transport), systemImage: symbol(transport))
-          .labelStyle(.titleAndIcon)
-      }
-    }
-    .font(.caption2)
-    .foregroundStyle(.secondary)
-  }
-
-  private func label(_ channel: TransportChannel) -> String {
-    switch channel {
-    case .bluetooth: return "Bluetooth"
-    case .relay(let host): return "relay · \(host)"
-    }
-  }
-
-  private func symbol(_ channel: TransportChannel) -> String {
-    switch channel {
-    case .bluetooth: return "dot.radiowaves.left.and.right"
-    case .relay: return "network"
-    }
-  }
-}
-
-/// A chat bubble with a softened tail corner on the sender's side, the way
-/// modern messengers shape them.
-private struct BubbleShape: Shape {
-  let mine: Bool
-
-  func path(in rect: CGRect) -> Path {
-    let radius: CGFloat = 18
-    let tail: CGFloat = 5
-    return Path(
-      roundedRect: rect,
-      cornerRadii: RectangleCornerRadii(
-        topLeading: radius,
-        bottomLeading: mine ? radius : tail,
-        bottomTrailing: mine ? tail : radius,
-        topTrailing: radius
-      ))
-  }
-}
-
-/// Shows the safety number two people compare in person to confirm no MITM.
-private struct SafetyNumberSheet: View {
-  let number: String
-  let name: String
-  @Environment(\.dismiss) private var dismiss
-
-  var body: some View {
-    NavigationStack {
-      ScrollView {
-        VStack(spacing: 16) {
-          Text(explanation)
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-          Text(number)
-            .font(.title3.monospaced())
-            .multilineTextAlignment(.center)
-        }
-        .padding()
-      }
-      .navigationTitle("Safety Number")
-      .toolbar {
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Done") { dismiss() }
-        }
-      }
-    }
-  }
-
-  private var explanation: String {
-    """
-    Compare this with \(name) in person. If the numbers match on both devices, \
-    no one is intercepting your conversation.
-    """
+  private func reply(to message: ChatMessage) {
+    replyTarget = message
   }
 }

@@ -35,13 +35,11 @@ final class SessionManager {
   var conversations: [Data: [ChatMessage]] = [:]
   /// Contacts whose chat is ephemeral — new messages are kept in memory only.
   var ephemeralContactIDs: Set<Data> = []
-  /// Contacts whose chat the user has switched to relay-only (skip Bluetooth).
-  /// In-memory and session-scoped: this is a transient "use the internet for
-  /// this chat" choice, not a persisted setting (#24).
-  var relayOnlyContactIDs: Set<Data> = []
-  /// The link the last outbound message for a contact travelled over, so we can
-  /// post a one-time notice when a chat hands off between Bluetooth and relay.
-  var lastSendChannel: [Data: TransportChannel] = [:]
+  /// Contacts whose chat uses Bluetooth instead of the relay. Relay is the
+  /// default for every chat; Bluetooth is the opt-in "second option". Mirrored
+  /// to the peer (like ephemeral) so both ends of a chat agree on the link, and
+  /// persisted so the choice survives relaunch.
+  var bluetoothChatIDs: Set<Data> = []
   /// The local user's own display name, shared in their QR card.
   var myName: String = ""
   var log: [String] = []
@@ -159,6 +157,7 @@ final class SessionManager {
     persistedConversations = loaded
     conversations = loaded  // start the in-memory view from what's on disk
     ephemeralContactIDs = Set(state.ephemeralContactIDs.compactMap { Data(base64Encoded: $0) })
+    bluetoothChatIDs = Set(state.bluetoothContactIDs.compactMap { Data(base64Encoded: $0) })
     myName = state.myName
     isUnlocked = true
     notifiedWhileLocked = false
@@ -216,16 +215,6 @@ final class SessionManager {
     sendEnvelope(.control, payload: ciphertext, to: contact)
   }
 
-  func handleControl(_ payload: Data, from contact: Contact) {
-    guard let session = sessions[contact.id],
-      let plaintext = try? session.decrypt(payload),
-      plaintext.count == 2, plaintext.first == 0x01
-    else { return }
-    applyEphemeral(
-      plaintext[plaintext.index(after: plaintext.startIndex)] == 1,
-      for: contact.id, announce: true)
-  }
-
   // MARK: - Contacts
 
   /// Verifies and stores a scanned contact bundle, then begins establishing a
@@ -275,10 +264,13 @@ final class SessionManager {
   /// acknowledges it; it is (re)sent on each tick while a session exists and
   /// queued otherwise, so it is never silently dropped on a disconnect.
   func send(_ text: String, to contact: Contact) {
-    let channel = outboundChannel(for: contact)
-    noteTransportHandoff(for: contact, to: channel)
+    send(text, replySnippet: nil, to: contact)
+  }
+
+  func send(_ text: String, replySnippet: String?, to contact: Contact) {
     var message = ChatMessage(mine: true, text: text, pending: true)
-    message.transport = channel
+    message.replySnippet = replySnippet
+    message.transport = outboundChannel(for: contact)
     record(message, for: contact.id)
     if establishedContactIDs.contains(contact.id) {
       transmit(message, to: contact)
@@ -288,26 +280,19 @@ final class SessionManager {
     }
   }
 
-  /// Encrypts and sends one app message (id + text) over the session.
+  /// Encrypts and sends one app message (id + text) over the session. Re-tags the
+  /// message with the link it's going out on now, so a pending message resent
+  /// after a transport switch reflects reality in its long-press detail.
   func transmit(_ message: ChatMessage, to contact: Contact) {
     guard let session = sessions[contact.id],
-      let ciphertext = try? session.encrypt(Self.encodeMessage(id: message.id, text: message.text))
+      let payload = Self.encodeMessage(message),
+      let ciphertext = try? session.encrypt(payload)
     else { return }
+    let channel = outboundChannel(for: contact)
+    if message.transport != channel {
+      setTransport(channel, messageID: message.id, contactID: contact.id)
+    }
     sendEnvelope(.message, payload: ciphertext, to: contact)
-  }
-
-  /// App message wire form (inside the ratchet): UUID string (36 bytes) ‖ text.
-  static func encodeMessage(id: UUID, text: String) -> Data {
-    Data(id.uuidString.utf8) + Data(text.utf8)
-  }
-
-  static func decodeMessage(_ data: Data) -> (id: UUID, text: String)? {
-    guard data.count >= 36,
-      let idString = String(bytes: data.prefix(36), encoding: .utf8),
-      let id = UUID(uuidString: idString),
-      let text = String(bytes: data.dropFirst(36), encoding: .utf8)
-    else { return nil }
-    return (id, text)
   }
 
 }
