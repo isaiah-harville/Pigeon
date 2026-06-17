@@ -94,6 +94,10 @@ protocol Transport: AnyObject {
   /// Lets the session force a message onto a specific link, e.g. relay-only when
   /// a chat is switched off Bluetooth (#24).
   func broadcast(_ message: Data, to recipient: Data?, over channels: Set<TransportKind>)
+
+  /// User-initiated recovery nudge. Transports should restart discovery or
+  /// reconnect their sockets without changing app/session state.
+  func refreshConnections()
 }
 
 extension Transport {
@@ -106,4 +110,6 @@ extension Transport {
     if let kind, !channels.contains(kind) { return }
     broadcast(message, to: recipient)
   }
+
+  func refreshConnections() {}
 }

@@ -33,6 +33,7 @@ struct ChatsListView: View {
     .navigationTitle("Pigeon")
     .navigationBarTitleDisplayMode(.inline)
     .safeAreaInset(edge: .bottom) { statusStrip }
+    .refreshable { await session.refreshChats() }
     .toolbar { toolbarContent }
     .sheet(isPresented: $showAddContact) { AddContactView() }
     .sheet(isPresented: $showMenu) { MenuView() }

@@ -40,6 +40,12 @@ final class CompositeTransport: Transport {
     }
   }
 
+  func refreshConnections() {
+    for transport in transports {
+      transport.refreshConnections()
+    }
+  }
+
   var status: TransportStatus { transports.first?.status ?? .idle }
 
   /// Connected *peers* — relays aren't peers and report 0, so this stays the

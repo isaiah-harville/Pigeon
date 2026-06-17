@@ -21,6 +21,17 @@ extension SessionManager {
   /// Hosts of our own relays we can currently receive on, for the chat header.
   var relayHosts: [String] { relay?.onlineRelayHosts ?? [] }
 
+  /// Pull-to-refresh recovery for the chats screen: restart link discovery /
+  /// relay sockets, then immediately drive handshakes and pending sends instead
+  /// of waiting for the retry timer's next tick.
+  func refreshChats() async {
+    note("Refreshing chats")
+    mesh.refreshConnections()
+    tick()
+    try? await Task.sleep(for: .milliseconds(350))
+    tick()
+  }
+
   /// Whether a relay is configured at all, so the UI can offer the relay option.
   var hasRelay: Bool { relayLinkState != .disabled }
 

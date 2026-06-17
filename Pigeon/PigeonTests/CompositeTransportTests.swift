@@ -23,9 +23,11 @@ final class CompositeTransportTests: XCTestCase {
     var log: [String] = []
     var onMessage: ((Data, String) -> Void)?
     private(set) var sent: [Data] = []
+    private(set) var refreshCount = 0
 
     init(kind: TransportKind?) { self.kind = kind }
     func broadcast(_ message: Data, to _: Data?) { sent.append(message) }
+    func refreshConnections() { refreshCount += 1 }
   }
 
   func testAllFilterReachesEveryLink() {
@@ -70,5 +72,16 @@ final class CompositeTransportTests: XCTestCase {
 
     XCTAssertEqual(ble.sent, [Data([0x04])])
     XCTAssertEqual(relay.sent, [Data([0x04])])
+  }
+
+  func testRefreshReachesEveryLink() {
+    let ble = FakeTransport(kind: .bluetooth)
+    let relay = FakeTransport(kind: .relay)
+    let composite = CompositeTransport([ble, relay])
+
+    composite.refreshConnections()
+
+    XCTAssertEqual(ble.refreshCount, 1)
+    XCTAssertEqual(relay.refreshCount, 1)
   }
 }

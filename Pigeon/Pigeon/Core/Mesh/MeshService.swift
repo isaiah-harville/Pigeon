@@ -53,6 +53,12 @@ final class MeshService {
     transport.broadcast(packet.encoded(), to: recipient, over: channels)
   }
 
+  /// Lets UI pull-to-refresh nudge the underlying links without exposing the
+  /// concrete transports above the mesh layer.
+  func refreshConnections() {
+    transport.refreshConnections()
+  }
+
   private func handleInbound(_ data: Data, channel: TransportChannel) {
     guard let packet = try? MeshPacket(decoding: data) else { return }
     let reception = router.ingest(packet)
