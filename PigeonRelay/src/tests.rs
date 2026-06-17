@@ -8,7 +8,10 @@ use ed25519_dalek::{Signer, SigningKey};
 fn state(ttl_secs: u64, max_queue: usize) -> AppState {
     AppState {
         mailboxes: Arc::new(Mutex::new(HashMap::new())),
-        cfg: Config { ttl_secs, max_queue },
+        cfg: Config {
+            ttl_secs,
+            max_queue,
+        },
         counter: Arc::new(AtomicU64::new(1)),
     }
 }
@@ -76,7 +79,10 @@ fn publish_is_addressed_to_one_mailbox() {
     let st = state(3600, 100);
     let (tx, mut rx) = channel();
     publish(&st, &tx, addr(1), "Y2lwaGVy".into());
-    assert!(matches!(rx.try_recv().unwrap(), ServerMsg::Published { .. }));
+    assert!(matches!(
+        rx.try_recv().unwrap(),
+        ServerMsg::Published { .. }
+    ));
     assert_eq!(queue_len(&st, &addr(1)), 1);
     assert_eq!(queue_len(&st, &addr(2)), 0); // never lands in another mailbox
 }
@@ -88,7 +94,10 @@ fn publish_fans_out_live_and_still_queues() {
     let (stx, mut srx) = channel();
     register_subscriber(&st, &addr(1), 7, stx);
     publish(&st, &ptx, addr(1), "Y2lwaGVy".into());
-    assert!(matches!(srx.try_recv().unwrap(), ServerMsg::Envelope { .. }));
+    assert!(matches!(
+        srx.try_recv().unwrap(),
+        ServerMsg::Envelope { .. }
+    ));
     assert_eq!(queue_len(&st, &addr(1)), 1); // retained until acked
 }
 
@@ -138,7 +147,13 @@ fn expire_drops_old_envelopes_and_reclaims_empty_mailboxes() {
     let st = state(3600, 100);
     let (tx, _rx) = channel();
     publish(&st, &tx, addr(1), "b25l".into());
-    st.mailboxes.lock().unwrap().get_mut(&addr(1)).unwrap().queue[0].ts = 0;
+    st.mailboxes
+        .lock()
+        .unwrap()
+        .get_mut(&addr(1))
+        .unwrap()
+        .queue[0]
+        .ts = 0;
     expire_mailboxes(&st, 100); // cutoff 100 > ts 0 -> dropped
     assert_eq!(st.mailboxes.lock().unwrap().len(), 0);
 }
@@ -152,7 +167,11 @@ fn verify_ownership_accepts_valid_and_rejects_forgery() {
 
     assert!(verify_ownership(&mailbox, &nonce, &sig_b64));
     assert!(!verify_ownership(&mailbox, &[0u8; 32], &sig_b64)); // wrong nonce
-    let other = hex::encode(SigningKey::from_bytes(&[8u8; 32]).verifying_key().to_bytes());
+    let other = hex::encode(
+        SigningKey::from_bytes(&[8u8; 32])
+            .verifying_key()
+            .to_bytes(),
+    );
     assert!(!verify_ownership(&other, &nonce, &sig_b64)); // wrong key
     assert!(!verify_ownership(&mailbox, &nonce, "not base64!!")); // malformed sig
     assert!(!verify_ownership("xyz", &nonce, &sig_b64)); // malformed address
