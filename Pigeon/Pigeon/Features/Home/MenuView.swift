@@ -24,6 +24,7 @@ struct MenuView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { doneToolbar }
         .onAppear { receiveWhileLocked = session.backgroundDeliveryEnabled }
+        .overlay(alignment: .bottom) { copiedToast }
     }
   }
 
@@ -110,15 +111,8 @@ struct MenuView: View {
         copyFingerprint()
       } label: {
         LabeledContent {
-          HStack(spacing: 6) {
-            Text(identity.publicKey.shortFingerprint)
-              .font(.callout.monospaced())
-            if showCopied {
-              Label("Copied", systemImage: "checkmark.circle.fill")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.green)
-            }
-          }
+          Text(identity.publicKey.shortFingerprint)
+            .font(.callout.monospaced())
         } label: {
           Text("Fingerprint")
             .font(.callout.monospaced())
@@ -193,6 +187,13 @@ struct MenuView: View {
   private var doneToolbar: some ToolbarContent {
     ToolbarItem(placement: .confirmationAction) {
       Button("Done") { dismiss() }
+    }
+  }
+
+  @ViewBuilder
+  private var copiedToast: some View {
+    if showCopied {
+      CopiedToast()
     }
   }
 
