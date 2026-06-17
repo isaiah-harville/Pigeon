@@ -14,6 +14,10 @@ delivery, per-contact encrypted sessions, and the first relay transport all
 exist. The remaining work is mostly hardening, test depth, metadata reduction,
 and product polish.
 
+> **New here?** [**How Pigeon Works**](docs/HOW_IT_WORKS.md) is an illustrated,
+> plain-language walkthrough of the whole system — keys, trust, the handshake,
+> the ratchet, and every transport
+
 ## Project sites
 
 - Main site: [pigeonwire.app](https://pigeonwire.app/)
