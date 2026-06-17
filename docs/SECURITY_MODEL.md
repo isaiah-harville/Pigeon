@@ -190,6 +190,34 @@ code composes them into protocols; it **never implements primitive algorithms**.
   (VLC precedent) — so license is now a reason the clean-room packages stay MIT,
   alongside fit, auditability, and the risk boundary above.
 
+### 5.6 Constant-time comparisons & key zeroization
+
+**Constant-time comparisons.** All secret/authentication comparisons that matter
+go through CryptoKit and are already constant-time: AEAD tag verification
+(`AES.GCM.open`, `ChaChaPoly.open`) and Ed25519 signature checks. The one
+authentication decision Pigeon makes over raw bytes in its own code — the
+**binding check** that the handshake's static key equals the verified contact
+bundle's static key — uses `ConstantTime.equals` (`ConstantTime.swift`), a
+length-checked XOR-accumulate with no early exit. Both operands there are
+*public* keys, so this is defense-in-depth (it avoids leaking how many leading
+bytes a forged key matched), not a confidentiality fix. Remaining `==`
+comparisons in the crypto/session paths are over **public** values — DH ratchet
+public keys, handshake transcript bytes, identity public keys, and field lengths
+— and are intentionally left as ordinary comparisons.
+
+**Key zeroization.** Secret byte buffers that Pigeon uniquely owns are wiped
+after use on a best-effort basis via `SecureMemory.zero` (`SecureMemory.swift`,
+`memset_s` where available): per-message keys in the ratchet (after encrypt /
+decrypt / skipped-key use) and the HKDF intermediate buffers in `Primitives`.
+Limitations are documented in `SecureMemory.swift` and are real: Swift
+`Data`/`[UInt8]` are copy-on-write value types, so wiping only works while the
+buffer is uniquely referenced, and the runtime/OS may retain copies we cannot
+reach. Long-lived chain/root keys are held as `Data` for the protocol's shape
+and are **not** explicitly zeroed today (they are released to ARC); CryptoKit's
+own `SymmetricKey`, `SharedSecret`, and private-key types do zero their storage
+on deallocation. Fuller zeroization would mean keeping all ratchet state inside
+CryptoKit secure containers — a larger refactor tracked for audit prep.
+
 ---
 
 ## 6. Transport & Mesh
@@ -293,8 +321,10 @@ Pigeon keeps the trust cost minimal:
 - **Endpoint trust.** A compromised/unlocked device defeats all guarantees.
 - **No async first contact** (see §6).
 - **No audit** (see below).
-- **Key zeroization is limited** by CryptoKit/Swift value semantics; secret
-  lifetimes are not yet minimized or wiped on a best-effort basis.
+- **Key zeroization is limited** by CryptoKit/Swift value semantics. Per-message
+  keys and HKDF intermediates are now wiped best-effort (`SecureMemory`), but
+  long-lived chain/root keys are released to ARC rather than explicitly zeroed
+  (§5.6).
 
 ---
 
@@ -321,10 +351,15 @@ authoritative to-do list for reaching audit readiness.
 ### Should-address
 4. **Skipped-key DoS bound.** Review `maxSkip` (currently 1000) and the memory
    cost of stored skipped message keys under adversarial gaps.
-5. **Key lifetime & zeroization.** Best-effort wiping of private keys, shared
-   secrets, and message keys; minimize copies.
-6. **Constant-time comparisons** for fingerprints/safety numbers and any
-   identity-equality checks performed in app code.
+5. **Key lifetime & zeroization.** ⚠️ **Partially addressed** (§5.6):
+   per-message keys and HKDF intermediates are wiped best-effort via
+   `SecureMemory`. Still open: long-lived chain/root keys are released to ARC
+   rather than zeroed; minimizing copies / moving ratchet state into CryptoKit
+   secure containers remains.
+6. **Constant-time comparisons.** ⚠️ **Partially addressed** (§5.6): the binding
+   check uses `ConstantTime.equals`; AEAD/signature checks are constant-time via
+   CryptoKit. Remaining identity/public-key equality checks are over public
+   values and left as ordinary comparisons (documented).
 7. **Logging discipline.** Guarantee no key material, plaintext, or
    safety-relevant state reaches logs, crash reports, previews, or test output.
 8. **Keychain access control.** Consider biometric/passcode gating

@@ -203,8 +203,11 @@ extension SessionManager {
   /// verified contact bundle before trusting the channel.
   func finalize(_ session: SecureSession, with contact: Contact) {
     guard session.isEstablished, !establishedContactIDs.contains(contact.id) else { return }
+    // The binding check is an authentication decision over key bytes, so compare
+    // in constant time (both keys are public, but this avoids leaking how many
+    // leading bytes match a forged static key).
     guard let remoteStatic = session.remoteStaticKey,
-      remoteStatic == contact.bundle.staticKey,
+      ConstantTime.equals(remoteStatic, contact.bundle.staticKey),
       contact.bundle.isValid()
     else {
       sessions[contact.id] = nil
