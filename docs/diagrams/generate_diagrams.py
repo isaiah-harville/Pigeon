@@ -165,7 +165,9 @@ def _draw_note(ax, cx, cy, wrapped, half, edge, width):
             zorder=4,
         )
     )
-    ax.text(cx, cy, wrapped, ha="center", va="center", fontsize=8, zorder=5, color="#17202A")
+    ax.text(
+        cx, cy, wrapped, ha="center", va="center", fontsize=8, zorder=5, color="#17202A"
+    )
 
 
 def render(title, actors, steps, caption, outfile):
@@ -173,10 +175,14 @@ def render(title, actors, steps, caption, outfile):
     x_min, x_max = -1.85, (len(actors) - 1) * LANE + 1.85
 
     # Reserve a band under the headers for the vault badges (tallest one wins).
-    band = max((_vault_height(a["vault"]) for a in actors if a.get("vault")), default=0.0)
+    band = max(
+        (_vault_height(a["vault"]) for a in actors if a.get("vault")), default=0.0
+    )
     extra = band + 0.35 if band else 0.0
 
-    fig, ax = plt.subplots(figsize=(2.15 * len(actors) + 2.6, 0.66 * len(steps) + 3.0 + extra))
+    fig, ax = plt.subplots(
+        figsize=(2.15 * len(actors) + 2.6, 0.66 * len(steps) + 3.0 + extra)
+    )
     ax.axis("off")
 
     header_top, header_bot = 0.55, -0.35
@@ -197,9 +203,27 @@ def render(title, actors, steps, caption, outfile):
                 zorder=4,
             )
         )
-        ax.text(x, 0.30, a["name"], ha="center", va="center", fontsize=10.5, fontweight="bold", zorder=5)
+        ax.text(
+            x,
+            0.30,
+            a["name"],
+            ha="center",
+            va="center",
+            fontsize=10.5,
+            fontweight="bold",
+            zorder=5,
+        )
         if a.get("sub"):
-            ax.text(x, -0.02, a["sub"], ha="center", va="center", fontsize=7.5, color="#566573", zorder=5)
+            ax.text(
+                x,
+                -0.02,
+                a["sub"],
+                ha="center",
+                va="center",
+                fontsize=7.5,
+                color="#566573",
+                zorder=5,
+            )
         if a.get("vault"):
             _draw_vault(ax, x, vault_top, a["vault"])
 
@@ -230,7 +254,14 @@ def render(title, actors, steps, caption, outfile):
                 zorder=3,
             )
             ax.text(
-                (x0 + x1) / 2, arrow_y + 0.11, label, ha="center", va="bottom", fontsize=8.3, color="#17202A", zorder=3
+                (x0 + x1) / 2,
+                arrow_y + 0.11,
+                label,
+                ha="center",
+                va="bottom",
+                fontsize=8.3,
+                color="#17202A",
+                zorder=3,
             )
             y = arrow_y - 0.12
         elif kind == "note":
@@ -252,23 +283,51 @@ def render(title, actors, steps, caption, outfile):
             band = 0.5
             cy = y - GAP - band / 2
             ax.add_patch(
-                Rectangle((x_min, cy - band / 2), x_max - x_min, band, facecolor="#F4F6F7", edgecolor="none", zorder=1)
+                Rectangle(
+                    (x_min, cy - band / 2),
+                    x_max - x_min,
+                    band,
+                    facecolor="#F4F6F7",
+                    edgecolor="none",
+                    zorder=1,
+                )
             )
             ax.text(
-                (x_min + x_max) / 2, cy, text, ha="center", va="center", style="italic", fontsize=9, color="#566573", zorder=2
+                (x_min + x_max) / 2,
+                cy,
+                text,
+                ha="center",
+                va="center",
+                style="italic",
+                fontsize=9,
+                color="#566573",
+                zorder=2,
             )
             y = cy - band / 2 - 0.04
 
     bottom = y - 0.4
     for a in actors:  # lifelines span the flow, from just below the vault badge
         ax.plot(
-            [xs[a["key"]], xs[a["key"]]], [lifeline_top + 0.1, bottom], color="#B3B6B7", lw=1.0, ls=(0, (2, 3)), zorder=0
+            [xs[a["key"]], xs[a["key"]]],
+            [lifeline_top + 0.1, bottom],
+            color="#B3B6B7",
+            lw=1.0,
+            ls=(0, (2, 3)),
+            zorder=0,
         )
 
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(bottom - 1.1, 1.3)
 
-    ax.text((x_min + x_max) / 2, 1.05, title, ha="center", va="center", fontsize=14, fontweight="bold")
+    ax.text(
+        (x_min + x_max) / 2,
+        1.05,
+        title,
+        ha="center",
+        va="center",
+        fontsize=14,
+        fontweight="bold",
+    )
 
     handles = [Line2D([0], [0], color=COLORS[k], lw=3) for k, _ in LEGEND]
     labels = [lbl for _, lbl in LEGEND]
@@ -283,7 +342,16 @@ def render(title, actors, steps, caption, outfile):
         handlelength=1.6,
         columnspacing=1.4,
     )
-    fig.text(0.5, 0.012, caption, ha="center", va="bottom", fontsize=8.5, color="#34495E", wrap=True)
+    fig.text(
+        0.5,
+        0.012,
+        caption,
+        ha="center",
+        va="bottom",
+        fontsize=8.5,
+        color="#34495E",
+        wrap=True,
+    )
 
     fig.tight_layout(rect=(0, 0.06, 1, 1))
     fig.savefig(outfile, dpi=200, bbox_inches="tight", facecolor="white")
@@ -302,13 +370,35 @@ def _server(key, name, sub, vault):
 
 def diagram_identity(out):
     steps = [
-        note("a", "Generate Ed25519 identity + X25519 static key. Private keys live in the Keychain.", "private"),
-        note("b", "Generate Ed25519 identity + X25519 static key. Private keys live in the Keychain.", "private"),
+        note(
+            "a",
+            "Generate Ed25519 identity + X25519 static key. Private keys live in the Keychain.",
+            "private",
+        ),
+        note(
+            "b",
+            "Generate Ed25519 identity + X25519 static key. Private keys live in the Keychain.",
+            "private",
+        ),
         divider("In person"),
-        msg("a", "b", "Show QR: ContactCard (public identity bundle + name + signed relay URLs)", "public"),
+        msg(
+            "a",
+            "b",
+            "Show QR: ContactCard (public identity bundle + name + signed relay URLs)",
+            "public",
+        ),
         msg("b", "a", "Show QR back (public ContactCard)", "public"),
-        note("a", "Verify the bundle signature binds identity to the Noise static key.", "action"),
-        binote("a", "b", "Compare the 60-digit safety number aloud — detects a man-in-the-middle.", "action"),
+        note(
+            "a",
+            "Verify the bundle signature binds identity to the Noise static key.",
+            "action",
+        ),
+        binote(
+            "a",
+            "b",
+            "Compare the 60-digit safety number aloud — detects a man-in-the-middle.",
+            "action",
+        ),
         note("a", "Bob is now a verified contact.", "plain"),
     ]
     render(
@@ -327,8 +417,14 @@ def _handshake_steps(transport):
         msg("a", "b", "Noise XX msg1 (ephemeral public key)", "public"),
         msg("b", "a", "Noise XX msg2 (ephemeral + static public keys)", "public"),
         msg("a", "b", "Noise XX msg3 (static public key)", "public"),
-        note("a", "Check handshake static key == verified bundle (binding check).", "action"),
-        note("a", "X25519 private key → ECDH → derive Double Ratchet session.", "private"),
+        note(
+            "a",
+            "Check handshake static key == verified bundle (binding check).",
+            "action",
+        ),
+        note(
+            "a", "X25519 private key → ECDH → derive Double Ratchet session.", "private"
+        ),
         msg("a", "b", "Encrypted message", "cipher"),
         note("b", "Ratchet message key → decrypt → show plaintext.", "plain"),
         msg("b", "a", "Encrypted delivery ack", "cipher"),
@@ -358,11 +454,19 @@ def diagram_wifi(out):
 def diagram_relay(out):
     relay = _server("r", "Relay", "blind mailbox", VAULT_RELAY)
     steps = [
-        note("r", "Stores opaque ciphertext keyed by recipient public key. Never sees plaintext or private keys.", "action"),
+        note(
+            "r",
+            "Stores opaque ciphertext keyed by recipient public key. Never sees plaintext or private keys.",
+            "action",
+        ),
         divider("Bob is online; out of Bluetooth range"),
         msg("b", "r", "Subscribe to my mailbox (= my public key)", "public"),
         msg("r", "b", "Challenge nonce", "public"),
-        note("b", "Sign the nonce with the identity private key (stays on device).", "private"),
+        note(
+            "b",
+            "Sign the nonce with the identity private key (stays on device).",
+            "private",
+        ),
         msg("b", "r", "Signature → proves mailbox ownership", "public"),
         msg("r", "b", "OK — authenticated", "public"),
         divider("Alice sends to Bob"),
@@ -386,13 +490,25 @@ def diagram_notifications(out):
     bob = _client("b", "Bob", "locked phone", VAULT_CLIENT_LOCKED)
     steps = [
         divider("Bob's phone is locked; app relaunched in the background"),
-        note("b", "Identity key readable (after first unlock) → can receive. Message vault stays locked behind Face ID.", "action"),
+        note(
+            "b",
+            "Identity key readable (after first unlock) → can receive. Message vault stays locked behind Face ID.",
+            "action",
+        ),
         msg("a", "r", "Deposit ciphertext for Bob", "cipher"),
         msg("r", "b", "Deliver ciphertext", "cipher"),
         note("b", "Vault locked → hold ciphertext in memory; do NOT ack.", "private"),
-        note("b", "Post a content-free notification: “New message” (no preview).", "action"),
+        note(
+            "b",
+            "Post a content-free notification: “New message” (no preview).",
+            "action",
+        ),
         divider("Bob unlocks with Face ID"),
-        note("b", "Vault opens → ratchet key decrypts buffered ciphertext → show message.", "plain"),
+        note(
+            "b",
+            "Vault opens → ratchet key decrypts buffered ciphertext → show message.",
+            "plain",
+        ),
         msg("b", "r", "Ack → relay deletes the envelope", "ack", dashed=True),
     ]
     render(
@@ -410,11 +526,17 @@ def diagram_notifications_apns(out):
     bob = _client("b", "Bob", "asleep phone", VAULT_CLIENT_LOCKED)
     steps = [
         divider("One-time: Bob opts in to push"),
-        note("b", "Register the opaque APNs device token with my official relay.", "action"),
+        note(
+            "b",
+            "Register the opaque APNs device token with my official relay.",
+            "action",
+        ),
         msg("b", "r", "device token + mailbox (public key)", "public"),
         divider("Alice sends while Bob's phone is asleep"),
         msg("a", "r", "Deposit ciphertext for Bob", "cipher"),
-        note("r", "Has a token for this mailbox → ask APNs to wake the device.", "action"),
+        note(
+            "r", "Has a token for this mailbox → ask APNs to wake the device.", "action"
+        ),
         msg("r", "p", "Content-free push (device token, no content)", "public"),
         msg("p", "b", "Wake — “New message” (no preview)", "action"),
         note("b", "Wakes in background; message vault still locked.", "private"),
