@@ -28,7 +28,7 @@ struct MenuView: View {
   private var menuList: some View {
     List {
       identityCardSection
-      fingerprintSection
+      // fingerprintSection
       bluetoothSection
       relaySection
       privacySection
