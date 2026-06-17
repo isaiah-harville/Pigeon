@@ -35,6 +35,13 @@ final class SessionManager {
   var conversations: [Data: [ChatMessage]] = [:]
   /// Contacts whose chat is ephemeral — new messages are kept in memory only.
   var ephemeralContactIDs: Set<Data> = []
+  /// Contacts whose chat the user has switched to relay-only (skip Bluetooth).
+  /// In-memory and session-scoped: this is a transient "use the internet for
+  /// this chat" choice, not a persisted setting (#24).
+  var relayOnlyContactIDs: Set<Data> = []
+  /// The link the last outbound message for a contact travelled over, so we can
+  /// post a one-time notice when a chat hands off between Bluetooth and relay.
+  var lastSendChannel: [Data: TransportChannel] = [:]
   /// The local user's own display name, shared in their QR card.
   var myName: String = ""
   var log: [String] = []
@@ -116,6 +123,9 @@ final class SessionManager {
       relay.relaysForRecipient = { [weak self] key in
         self?.contacts.first { $0.id == key }?.relayURLs ?? []
       }
+      relay.preferredRelayForRecipient = { [weak self] key in
+        self?.contacts.first { $0.id == key }?.preferredRelayURL
+      }
       // Only ack relay envelopes once unlocked; while locked we buffer and let
       // the relay retain its copy (see `handleInbound`).
       relay.canConsume = { [weak self] in self?.isUnlocked ?? false }
@@ -139,7 +149,8 @@ final class SessionManager {
       }
       return Contact(
         bundle: bundle, displayName: persisted.name,
-        relayURLs: persisted.relayURLs.compactMap { URL(string: $0) })
+        relayURLs: persisted.relayURLs.compactMap { URL(string: $0) },
+        preferredRelayURL: persisted.preferredRelayURL.flatMap { URL(string: $0) })
     }
     var loaded: [Data: [ChatMessage]] = [:]
     for (key, messages) in state.conversations {
@@ -264,8 +275,10 @@ final class SessionManager {
   /// acknowledges it; it is (re)sent on each tick while a session exists and
   /// queued otherwise, so it is never silently dropped on a disconnect.
   func send(_ text: String, to contact: Contact) {
+    let channel = outboundChannel(for: contact)
+    noteTransportHandoff(for: contact, to: channel)
     var message = ChatMessage(mine: true, text: text, pending: true)
-    message.transport = currentOutboundChannel
+    message.transport = channel
     record(message, for: contact.id)
     if establishedContactIDs.contains(contact.id) {
       transmit(message, to: contact)
@@ -295,16 +308,6 @@ final class SessionManager {
       let text = String(bytes: data.dropFirst(36), encoding: .utf8)
     else { return nil }
     return (id, text)
-  }
-
-  /// Conversation history with `contact`.
-  func messages(with contact: Contact) -> [ChatMessage] {
-    conversations[contact.id] ?? []
-  }
-
-  /// The most recent non-system message with `contact`, for list previews.
-  func lastMessage(with contact: Contact) -> ChatMessage? {
-    conversations[contact.id]?.last { !$0.system }
   }
 
 }

@@ -33,6 +33,7 @@ final class RelayTransport: Transport {
     case failed  // configured but currently unreachable
   }
 
+  let kind: TransportKind? = .relay
   private(set) var linkState: LinkState = .disabled
   private(set) var log: [String] = []
 
@@ -61,6 +62,10 @@ final class RelayTransport: Transport {
   var recipients: () -> [Data] = { [] }
   /// Resolves a recipient's advertised relay endpoints (from their QR bundle).
   var relaysForRecipient: (Data) -> [URL] = { _ in [] }
+  /// The relay the user prefers for a given recipient's conversation, or `nil`
+  /// for automatic. When set and reachable we deposit there; otherwise we fall
+  /// back to the contact's other relays (#18).
+  var preferredRelayForRecipient: (Data) -> URL? = { _ in nil }
 
   /// Whether we can durably take responsibility for a delivered envelope right
   /// now. When false (app locked — we can't decrypt or persist), we still
@@ -126,15 +131,25 @@ final class RelayTransport: Transport {
   func broadcast(_ message: Data, to recipient: Data?) {
     // Only directly-addressed messages go over the relay; flood packets don't.
     guard let recipient else { return }
+    let preferred = preferredRelayForRecipient(recipient)
     let targets = Self.deliveryTargets(
-      advertised: relaysForRecipient(recipient), myRelays: myRelays)
-    guard !targets.isEmpty else { return }
+      preferred: preferred, advertised: relaysForRecipient(recipient), myRelays: myRelays)
+    let ready = targets.filter { connections[$0]?.ready == true && connections[$0]?.socket != nil }
+    guard !ready.isEmpty else { return }
+
+    // Honor an explicitly chosen relay when it's reachable; otherwise fan out to
+    // every reachable relay so a dead one doesn't strand the message (#18).
+    let chosen: [URL]
+    if let preferred, ready.contains(preferred) {
+      chosen = [preferred]
+    } else {
+      chosen = ready
+    }
 
     let ciphertext = message.base64EncodedString()
     let recipientHex = Self.hex(recipient)
-    for url in targets {
-      guard let connection = connections[url], connection.ready, let socket = connection.socket
-      else { continue }
+    for url in chosen {
+      guard let socket = connections[url]?.socket else { continue }
       send(socket, ["type": "publish", "recipient": recipientHex, "ciphertext": ciphertext])
     }
   }
@@ -256,14 +271,26 @@ final class RelayTransport: Transport {
   private static func hex(_ data: Data) -> String {
     data.map { String(format: "%02x", $0) }.joined()
   }
+}
 
-  // MARK: - Pure routing decisions (unit-tested)
+// MARK: - Pure routing decisions (unit-tested)
+
+extension RelayTransport {
 
   /// Where to deposit ciphertext for a recipient: the relays they advertise
   /// (federation) if any, otherwise our own as a fallback. Address-less sends
   /// pass `advertised == []` *and* `myRelays == []` to target nothing.
   static func deliveryTargets(advertised: [URL], myRelays: [URL]) -> [URL] {
-    advertised.isEmpty ? myRelays : advertised
+    deliveryTargets(preferred: nil, advertised: advertised, myRelays: myRelays)
+  }
+
+  /// As above, but ordered to honor a user-chosen relay for this conversation:
+  /// the preferred relay first (when it's one the recipient advertises), then
+  /// their remaining relays, so a dead preferred falls through to the rest (#18).
+  static func deliveryTargets(preferred: URL?, advertised: [URL], myRelays: [URL]) -> [URL] {
+    let base = advertised.isEmpty ? myRelays : advertised
+    guard let preferred, base.contains(preferred) else { return base }
+    return [preferred] + base.filter { $0 != preferred }
   }
 
   /// The relays we keep connected: our own (to receive) plus every contact's

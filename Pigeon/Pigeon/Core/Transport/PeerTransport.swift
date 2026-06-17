@@ -28,6 +28,7 @@ import PigeonMesh
 @Observable
 final class PeerTransport: NSObject, Transport {
 
+  let kind: TransportKind? = .bluetooth
   private(set) var status: TransportStatus = .idle
   /// Number of peers we are currently connected to (as central).
   private(set) var connectedPeerCount = 0

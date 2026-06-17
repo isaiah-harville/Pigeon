@@ -17,6 +17,9 @@ struct PersistedContact: Codable {
   /// Advertised relay endpoints (absolute URL strings). Defaults empty so
   /// stores written before relay support still decode.
   var relayURLs: [String] = []
+  /// The relay the user prefers for this conversation (absolute URL string), or
+  /// `nil` for automatic. Defaults nil so older stores still decode (#18).
+  var preferredRelayURL: String?
 }
 
 /// The complete persisted app state. Conversation keys are contact identity

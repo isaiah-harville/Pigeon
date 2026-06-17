@@ -30,6 +30,28 @@ extension SessionManager {
     return nil
   }
 
+  /// The link an outbound message to `contact` would travel over, honoring a
+  /// relay-only switch for that chat (#24).
+  func outboundChannel(for contact: Contact) -> TransportChannel? {
+    if relayOnlyContactIDs.contains(contact.id) {
+      return relayHosts.first.map { .relay(host: $0) }
+    }
+    return currentOutboundChannel
+  }
+
+  /// Whether this chat is pinned to the relay (Bluetooth skipped) — #24.
+  func isRelayOnly(_ contact: Contact) -> Bool { relayOnlyContactIDs.contains(contact.id) }
+
+  /// Whether a relay is configured at all, so the UI can hide the relay-only
+  /// switch when there's nothing to switch to.
+  var hasRelay: Bool { relayLinkState != .disabled }
+
+  /// Pins/unpins a chat to the relay. Affects only how future messages for this
+  /// contact are dispatched; nothing already sent changes.
+  func setRelayOnly(_ on: Bool, for contact: Contact) {
+    if on { relayOnlyContactIDs.insert(contact.id) } else { relayOnlyContactIDs.remove(contact.id) }
+  }
+
   /// The full configured relay list (endpoints + enabled flags) for the settings UI.
   var relayEntries: [RelayEntry] { RelaySettings.entries() }
 
@@ -82,6 +104,35 @@ extension SessionManager {
     guard let index = contacts.firstIndex(where: { $0.id == contact.id }) else { return }
     contacts[index].displayName = name.trimmingCharacters(in: .whitespacesAndNewlines)
     persist()
+  }
+
+  /// The relay preferred for this conversation (`nil` = automatic), and the
+  /// contact's advertised relays the picker chooses from (#18).
+  func preferredRelay(for contact: Contact) -> URL? {
+    contacts.first { $0.id == contact.id }?.preferredRelayURL
+  }
+
+  func advertisedRelays(for contact: Contact) -> [URL] {
+    contacts.first { $0.id == contact.id }?.relayURLs ?? []
+  }
+
+  /// Pins this conversation to a chosen relay (or `nil` for automatic) and
+  /// reconnects so a connection to the chosen relay is open (#18).
+  func setPreferredRelay(_ url: URL?, for contact: Contact) {
+    guard let index = contacts.firstIndex(where: { $0.id == contact.id }) else { return }
+    contacts[index].preferredRelayURL = url
+    persist()
+    refreshRelay()
+  }
+
+  /// Conversation history with `contact`.
+  func messages(with contact: Contact) -> [ChatMessage] {
+    conversations[contact.id] ?? []
+  }
+
+  /// The most recent non-system message with `contact`, for list previews.
+  func lastMessage(with contact: Contact) -> ChatMessage? {
+    conversations[contact.id]?.last { !$0.system }
   }
 
   /// The safety number to compare in person with `contact`.
