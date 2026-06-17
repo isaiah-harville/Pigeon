@@ -57,8 +57,9 @@ struct MenuView: View {
     """
     Notify you of new messages while your device is locked. This keeps your \
     identity key readable in the background after the first unlock. Turn it off \
-    for stricter at-rest protection — keys readable only while unlocked — at the \
-    cost of background notifications.
+    to make your keys readable only while unlocked, at the cost of background \
+    notifications — an unlikely attack vector that only matters if you lose your \
+    phone. Either way, message content is never previewed in a notification.
     """
   }
 
