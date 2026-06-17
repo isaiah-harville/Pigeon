@@ -13,6 +13,7 @@ struct MenuView: View {
   @Environment(IdentityManager.self) private var identity
   @Environment(\.dismiss) private var dismiss
 
+  @AppStorage("pigeon.appearance") private var appearanceValue = AppAppearance.system.rawValue
   @State private var receiveWhileLocked = true
   @State private var showCopied = false
 
@@ -32,8 +33,20 @@ struct MenuView: View {
       fingerprintSection
       bluetoothSection
       relaySection
+      appearanceSection
       privacySection
       activitySection
+    }
+  }
+
+  private var appearanceSection: some View {
+    Section("Appearance") {
+      Picker("Appearance", selection: $appearanceValue) {
+        ForEach(AppAppearance.allCases) { appearance in
+          Text(appearance.label).tag(appearance.rawValue)
+        }
+      }
+      .pickerStyle(.segmented)
     }
   }
 
