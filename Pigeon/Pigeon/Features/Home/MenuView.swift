@@ -28,7 +28,7 @@ struct MenuView: View {
   private var menuList: some View {
     List {
       identityCardSection
-      fingerprintSection
+      // fingerprintSection
       bluetoothSection
       relaySection
       privacySection
@@ -57,8 +57,9 @@ struct MenuView: View {
     """
     Notify you of new messages while your device is locked. This keeps your \
     identity key readable in the background after the first unlock. Turn it off \
-    for stricter at-rest protection — keys readable only while unlocked — at the \
-    cost of background notifications.
+    to make your keys readable only while unlocked, at the cost of background \
+    notifications — an unlikely attack vector that only matters if you lose your \
+    phone. Either way, message content is never previewed in a notification.
     """
   }
 
@@ -89,12 +90,12 @@ struct MenuView: View {
     .padding(.vertical, 4)
   }
 
-  private var fingerprintSection: some View {
-    Section("Identity") {
-      LabeledContent("Fingerprint", value: identity.publicKey.shortFingerprint)
-        .font(.callout.monospaced())
-    }
-  }
+  // private var fingerprintSection: some View {
+  //   Section("Identity") {
+  //     LabeledContent("Fingerprint", value: identity.publicKey.shortFingerprint)
+  //       .font(.callout.monospaced())
+  //   }
+  // }
 
   private var bluetoothSection: some View {
     Section("Bluetooth") {

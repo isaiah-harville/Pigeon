@@ -372,13 +372,18 @@ async fn expiry_loop(state: AppState) {
     let mut ticker = tokio::time::interval(Duration::from_secs(60));
     loop {
         ticker.tick().await;
-        let cutoff = now().saturating_sub(state.cfg.ttl_secs);
-        let mut mailboxes = state.mailboxes.lock().unwrap();
-        mailboxes.retain(|_, mailbox| {
-            mailbox.queue.retain(|e| e.ts >= cutoff);
-            !(mailbox.queue.is_empty() && mailbox.subscribers.is_empty())
-        });
+        expire_mailboxes(&state, now().saturating_sub(state.cfg.ttl_secs));
     }
+}
+
+/// Drops envelopes older than `cutoff` and reclaims mailboxes with no queue and
+/// no live subscribers. Bounds memory; envelopes are ephemeral by design.
+fn expire_mailboxes(state: &AppState, cutoff: u64) {
+    let mut mailboxes = state.mailboxes.lock().unwrap();
+    mailboxes.retain(|_, mailbox| {
+        mailbox.queue.retain(|e| e.ts >= cutoff);
+        !(mailbox.queue.is_empty() && mailbox.subscribers.is_empty())
+    });
 }
 
 fn env_u64(key: &str, default: u64) -> u64 {
@@ -419,3 +424,6 @@ async fn main() {
     eprintln!("pigeon-relay listening on {addr}");
     axum::serve(listener, app).await.expect("server error");
 }
+
+#[cfg(test)]
+mod tests;

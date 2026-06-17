@@ -90,8 +90,7 @@ final class RelayTransport: Transport {
   func reconfigure(_ myRelays: [URL]) {
     self.myRelays = myRelays
     let contactRelays = recipients().flatMap { relaysForRecipient($0) }
-    var wanted: [URL] = []
-    for url in myRelays + contactRelays where !wanted.contains(url) { wanted.append(url) }
+    let wanted = Self.wantedConnections(myRelays: myRelays, contactRelays: contactRelays)
 
     for (url, connection) in connections where !wanted.contains(url) {
       connection.task?.cancel()
@@ -118,8 +117,8 @@ final class RelayTransport: Transport {
   func broadcast(_ message: Data, to recipient: Data?) {
     // Only directly-addressed messages go over the relay; flood packets don't.
     guard let recipient else { return }
-    let advertised = relaysForRecipient(recipient)
-    let targets = advertised.isEmpty ? myRelays : advertised  // fall back to our own
+    let targets = Self.deliveryTargets(
+      advertised: relaysForRecipient(recipient), myRelays: myRelays)
     guard !targets.isEmpty else { return }
 
     let ciphertext = message.base64EncodedString()
@@ -182,23 +181,18 @@ final class RelayTransport: Transport {
 
     while !Task.isCancelled {
       let message = try await receive(socket)
-      switch message["type"] as? String {
-      case "envelope":
-        if let id = message["id"] as? String,
-          let ciphertextB64 = message["ciphertext"] as? String,
-          let data = Data(base64Encoded: ciphertextB64)
-        {
-          onMessage?(data, "relay:\(host(url))")
-          // Ack (and so delete from the mailbox) only once we can durably handle
-          // it. While locked we skip the ack, leaving the relay to retain and
-          // re-deliver the envelope after the user unlocks.
-          if canConsume() {
-            send(socket, ["type": "ack", "id": id])
-          }
+      switch Self.classifyInbound(message) {
+      case .envelope(let envelope):
+        onMessage?(envelope.ciphertext, "relay:\(host(url))")
+        // Ack (and so delete from the mailbox) only once we can durably handle
+        // it. While locked we skip the ack, leaving the relay to retain and
+        // re-deliver the envelope after the user unlocks.
+        if canConsume() {
+          send(socket, ["type": "ack", "id": envelope.id])
         }
-      case "error":
-        note("Relay \(host(url)): \(message["message"] as? String ?? "error")")
-      default:
+      case .error(let detail):
+        note("Relay \(host(url)): \(detail)")
+      case .ignored:
         break
       }
     }
@@ -252,6 +246,52 @@ final class RelayTransport: Transport {
 
   private static func hex(_ data: Data) -> String {
     data.map { String(format: "%02x", $0) }.joined()
+  }
+
+  // MARK: - Pure routing decisions (unit-tested)
+
+  /// Where to deposit ciphertext for a recipient: the relays they advertise
+  /// (federation) if any, otherwise our own as a fallback. Address-less sends
+  /// pass `advertised == []` *and* `myRelays == []` to target nothing.
+  static func deliveryTargets(advertised: [URL], myRelays: [URL]) -> [URL] {
+    advertised.isEmpty ? myRelays : advertised
+  }
+
+  /// The relays we keep connected: our own (to receive) plus every contact's
+  /// advertised relays (to deposit), de-duplicated and order-preserving.
+  static func wantedConnections(myRelays: [URL], contactRelays: [URL]) -> [URL] {
+    var wanted: [URL] = []
+    for url in myRelays + contactRelays where !wanted.contains(url) { wanted.append(url) }
+    return wanted
+  }
+
+  /// A classified inbound server frame. Malformed envelopes (missing/!base64
+  /// fields) and unknown types become `.ignored` rather than crashing.
+  enum InboundFrame: Equatable {
+    case envelope(Envelope)
+    case error(String)
+    case ignored
+
+    /// A delivered ciphertext blob and the id used to ack it.
+    struct Envelope: Equatable {
+      let id: String
+      let ciphertext: Data
+    }
+  }
+
+  static func classifyInbound(_ message: [String: Any]) -> InboundFrame {
+    switch message["type"] as? String {
+    case "envelope":
+      guard let id = message["id"] as? String,
+        let ciphertextB64 = message["ciphertext"] as? String,
+        let data = Data(base64Encoded: ciphertextB64)
+      else { return .ignored }
+      return .envelope(InboundFrame.Envelope(id: id, ciphertext: data))
+    case "error":
+      return .error(message["message"] as? String ?? "error")
+    default:
+      return .ignored
+    }
   }
 }
 

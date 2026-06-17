@@ -16,5 +16,9 @@
 --self remove
 --stripunusedargs closure-only
 --ifdef no-indent
+# Pattern-let style: keep `let` inline at each binding (`case .foo(let a, let b)`).
+# SwiftLint's `pattern_matching_keywords` wants the opposite (hoisted), so it is
+# disabled in .swiftlint.yml — SwiftFormat owns this choice.
+--patternlet inline
 
 --exclude Pigeon/Pigeon.xcodeproj,PigeonCrypto/.build,PigeonCrypto/.swiftpm,PigeonMesh/.build,PigeonMesh/.swiftpm

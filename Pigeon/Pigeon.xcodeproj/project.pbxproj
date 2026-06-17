@@ -9,10 +9,22 @@
 /* Begin PBXBuildFile section */
 		C0FFEE0000000000000000A3 /* PigeonCrypto in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE0000000000000000A2 /* PigeonCrypto */; };
 		C0FFEE0000000000000000B3 /* PigeonMesh in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE0000000000000000B2 /* PigeonMesh */; };
+		D1150000000000000000000D /* PigeonCrypto in Frameworks */ = {isa = PBXBuildFile; productRef = D1150000000000000000000C /* PigeonCrypto */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		D1150000000000000000000B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BFCCC6DD2FE0108E000F4D70 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BFCCC6E42FE0108F000F4D70;
+			remoteInfo = Pigeon;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		BFCCC6E52FE0108F000F4D70 /* Pigeon.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pigeon.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D11500000000000000000001 /* PigeonTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PigeonTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -34,6 +46,11 @@
 			path = Pigeon;
 			sourceTree = "<group>";
 		};
+		D11500000000000000000002 /* PigeonTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PigeonTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -46,6 +63,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D11500000000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D1150000000000000000000D /* PigeonCrypto in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -53,6 +78,7 @@
 			isa = PBXGroup;
 			children = (
 				BFCCC6E72FE0108F000F4D70 /* Pigeon */,
+				D11500000000000000000002 /* PigeonTests */,
 				BFCCC6E62FE0108F000F4D70 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -61,6 +87,7 @@
 			isa = PBXGroup;
 			children = (
 				BFCCC6E52FE0108F000F4D70 /* Pigeon.app */,
+				D11500000000000000000001 /* PigeonTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -92,6 +119,30 @@
 			productReference = BFCCC6E52FE0108F000F4D70 /* Pigeon.app */;
 			productType = "com.apple.product-type.application";
 		};
+		D11500000000000000000003 /* PigeonTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D11500000000000000000007 /* Build configuration list for PBXNativeTarget "PigeonTests" */;
+			buildPhases = (
+				D11500000000000000000004 /* Sources */,
+				D11500000000000000000005 /* Frameworks */,
+				D11500000000000000000006 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D1150000000000000000000A /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				D11500000000000000000002 /* PigeonTests */,
+			);
+			name = PigeonTests;
+			packageProductDependencies = (
+				D1150000000000000000000C /* PigeonCrypto */,
+			);
+			productName = PigeonTests;
+			productReference = D11500000000000000000001 /* PigeonTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -104,6 +155,10 @@
 				TargetAttributes = {
 					BFCCC6E42FE0108F000F4D70 = {
 						CreatedOnToolsVersion = 26.5;
+					};
+					D11500000000000000000003 = {
+						CreatedOnToolsVersion = 26.5;
+						TestTargetID = BFCCC6E42FE0108F000F4D70;
 					};
 				};
 			};
@@ -126,12 +181,20 @@
 			projectRoot = "";
 			targets = (
 				BFCCC6E42FE0108F000F4D70 /* Pigeon */,
+				D11500000000000000000003 /* PigeonTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		BFCCC6E32FE0108F000F4D70 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D11500000000000000000006 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -148,7 +211,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D11500000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		D1150000000000000000000A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BFCCC6E42FE0108F000F4D70 /* Pigeon */;
+			targetProxy = D1150000000000000000000B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		BFCCC6F02FE0108F000F4D70 /* Debug */ = {
@@ -273,7 +351,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = PUMV3ZMP9G;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -325,7 +403,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = PUMV3ZMP9G;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -371,6 +449,54 @@
 			};
 			name = Release;
 		};
+		D11500000000000000000008 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 3;
+				DEVELOPMENT_TEAM = PUMV3ZMP9G;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.isaiah-harville.PigeonTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Pigeon.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Pigeon";
+			};
+			name = Debug;
+		};
+		D11500000000000000000009 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 3;
+				DEVELOPMENT_TEAM = PUMV3ZMP9G;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.isaiah-harville.PigeonTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Pigeon.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Pigeon";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -388,6 +514,15 @@
 			buildConfigurations = (
 				BFCCC6F32FE0108F000F4D70 /* Debug */,
 				BFCCC6F42FE0108F000F4D70 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D11500000000000000000007 /* Build configuration list for PBXNativeTarget "PigeonTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D11500000000000000000008 /* Debug */,
+				D11500000000000000000009 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -413,6 +548,10 @@
 		C0FFEE0000000000000000B2 /* PigeonMesh */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = PigeonMesh;
+		};
+		D1150000000000000000000C /* PigeonCrypto */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PigeonCrypto;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
