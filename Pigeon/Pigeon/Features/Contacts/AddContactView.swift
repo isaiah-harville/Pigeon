@@ -24,6 +24,7 @@ struct AddContactView: View {
       content
         .navigationTitle("Add Contact")
         .navigationBarTitleDisplayMode(.inline)
+        .maxBrightness(while: showingMyQR)  // full brightness while showing our QR
         .toolbar {
           ToolbarItem(placement: .cancellationAction) {
             Button(addedName == nil ? "Cancel" : "Done") { dismiss() }

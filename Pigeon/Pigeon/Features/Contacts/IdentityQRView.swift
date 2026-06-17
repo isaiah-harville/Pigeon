@@ -7,7 +7,6 @@
 //
 
 import SwiftUI
-import UIKit
 
 struct IdentityQRView: View {
   @Environment(SessionManager.self) private var session
@@ -17,19 +16,12 @@ struct IdentityQRView: View {
   @State private var editedName = ""
   @State private var showCopied = false
   @State private var qrImage: CGImage?
-  @State private var priorBrightness: CGFloat = 1.0
 
   var body: some View {
     content
       .navigationTitle("My Identity")
-      .onAppear {
-        if let screen = activeScreen {
-          priorBrightness = screen.brightness
-          screen.brightness = 1.0  // max brightness so the QR scans reliably
-        }
-        regenerateQR()
-      }
-      .onDisappear { activeScreen?.brightness = priorBrightness }
+      .maxBrightness()  // full brightness so the QR scans reliably
+      .onAppear { regenerateQR() }
       .onChange(of: session.myName) { regenerateQR() }
       .onChange(of: session.relayURLs) { regenerateQR() }  // advertised relays changed
       .overlay(alignment: .bottom) { copiedToast }
@@ -144,14 +136,5 @@ struct IdentityQRView: View {
 
   private func regenerateQR() {
     qrImage = QRCode.cgImage(from: session.myCard.encoded())
-  }
-
-  /// The foreground scene's screen, used to adjust brightness. Replaces the
-  /// deprecated `UIScreen.main` with the per-window-scene screen (iOS 26+).
-  private var activeScreen: UIScreen? {
-    UIApplication.shared.connectedScenes
-      .compactMap { $0 as? UIWindowScene }
-      .first { $0.activationState == .foregroundActive }?
-      .screen
   }
 }
