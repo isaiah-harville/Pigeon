@@ -24,6 +24,27 @@ enum TransportStatus: String {
   case scanning = "Scanning for peers…"
 }
 
+/// Which link a message travelled over, surfaced to the UI so users can see
+/// whether a message went by local Bluetooth or over an internet relay (and
+/// which relay). This is *locally observed* — derived from which transport
+/// delivered the bytes — never read from the wire, so it adds no unauthenticated
+/// routing metadata and keeps the relay zero-knowledge.
+enum TransportChannel: Codable, Equatable, Hashable {
+  case bluetooth
+  case relay(host: String)
+
+  /// Classifies the opaque, transport-scoped sender id from `onMessage`. The
+  /// relay tags its deliveries `"relay:<host>"`; BLE reports a raw peer UUID.
+  init(peerID: String) {
+    let prefix = "relay:"
+    if peerID.hasPrefix(prefix) {
+      self = .relay(host: String(peerID.dropFirst(prefix.count)))
+    } else {
+      self = .bluetooth
+    }
+  }
+}
+
 /// A peer-to-peer byte pipe. Implementations handle their own discovery,
 /// connection management, and fragmentation; callers see only whole messages.
 ///

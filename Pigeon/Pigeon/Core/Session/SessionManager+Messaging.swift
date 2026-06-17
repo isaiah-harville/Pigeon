@@ -11,7 +11,7 @@ extension SessionManager {
 
   // MARK: - Inbound
 
-  func handleInbound(_ data: Data) {
+  func handleInbound(_ data: Data, channel: TransportChannel) {
     guard let envelope = try? SessionEnvelope(decoding: data) else { return }
     guard envelope.recipient == myID else { return }  // not addressed to us
 
@@ -20,14 +20,14 @@ extension SessionManager {
     // the user to unlock; the relay retains its copy too (we don't ack while
     // locked), so nothing is lost if we're killed before unlock.
     guard isUnlocked else {
-      bufferWhileLocked(data)
+      bufferWhileLocked(data, channel: channel)
       return
     }
 
     guard let contact = contacts.first(where: { $0.id == envelope.sender }) else { return }
     switch envelope.type {
     case .handshake: handleHandshake(envelope.payload, from: contact)
-    case .message: handleMessage(envelope.payload, from: contact)
+    case .message: handleMessage(envelope.payload, from: contact, channel: channel)
     case .rehandshakeRequest: handleRehandshakeRequest(from: contact)
     case .ack: handleAck(envelope.payload, from: contact)
     case .control: handleControl(envelope.payload, from: contact)
@@ -74,7 +74,7 @@ extension SessionManager {
     }
   }
 
-  func handleMessage(_ payload: Data, from contact: Contact) {
+  func handleMessage(_ payload: Data, from contact: Contact, channel: TransportChannel) {
     guard let session = sessions[contact.id], establishedContactIDs.contains(contact.id) else {
       // We have no session for a contact that's messaging us — our state is
       // stale (we likely restarted). Trigger reconnection.
@@ -94,6 +94,7 @@ extension SessionManager {
     if conversations[contact.id]?.contains(where: { $0.id == id }) == true { return }
     var received = ChatMessage(mine: false, text: text)
     received.id = id
+    received.transport = channel
     record(received, for: contact.id)
 
     // Surface a notification unless the user is actively viewing this chat.
@@ -273,8 +274,8 @@ extension SessionManager {
   /// Buffers an envelope received while locked and prompts the user to unlock.
   /// The notification is content-free and fires once per locked session
   /// (coalesced) so a flood of deposits can't spam notifications.
-  func bufferWhileLocked(_ data: Data) {
-    lockedInbox.append(data)
+  func bufferWhileLocked(_ data: Data, channel: TransportChannel) {
+    lockedInbox.append((data, channel))
     if lockedInbox.count > Self.maxLockedInbox {
       lockedInbox.removeFirst(lockedInbox.count - Self.maxLockedInbox)
     }
@@ -290,7 +291,7 @@ extension SessionManager {
     guard !lockedInbox.isEmpty else { return }
     let buffered = lockedInbox
     lockedInbox.removeAll()
-    for data in buffered { handleInbound(data) }
+    for (data, channel) in buffered { handleInbound(data, channel: channel) }
   }
 
   // MARK: - Store-and-forward
