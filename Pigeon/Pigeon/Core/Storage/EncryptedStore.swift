@@ -29,6 +29,9 @@ struct PersistedState: Codable {
   var conversations: [String: [ChatMessage]] = [:]
   /// Base64 identity ids of contacts whose chat is ephemeral.
   var ephemeralContactIDs: [String] = []
+  /// Base64 identity ids of contacts whose chat uses Bluetooth instead of the
+  /// relay (relay is the default). Defaults empty so older stores still decode.
+  var bluetoothContactIDs: [String] = []
   /// The local user's own display name, shared in their QR card.
   var myName: String = ""
 }

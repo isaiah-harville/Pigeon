@@ -132,6 +132,59 @@ extension SessionManager {
     persist()
   }
 
+  // MARK: - Transport mode (relay default; Bluetooth opt-in)
+
+  /// Switches a chat between the relay (default) and Bluetooth, mirroring the
+  /// change to the peer so both ends of the chat use the same link (#24).
+  func setChatUsesBluetooth(_ useBluetooth: Bool, for contact: Contact) {
+    guard bluetoothChatIDs.contains(contact.id) != useBluetooth else { return }
+    applyTransport(useBluetooth: useBluetooth, for: contact.id, announce: true)
+    sendTransportState(to: contact)
+  }
+
+  /// Applies a transport-mode change locally and adds a centered notice in the
+  /// chat (matching how ephemeral announces itself).
+  func applyTransport(useBluetooth: Bool, for contactID: Data, announce: Bool) {
+    let changed = bluetoothChatIDs.contains(contactID) != useBluetooth
+    if useBluetooth {
+      bluetoothChatIDs.insert(contactID)
+    } else {
+      bluetoothChatIDs.remove(contactID)
+    }
+    if changed && announce {
+      record(
+        ChatMessage(
+          mine: false, text: useBluetooth ? "Switched to Bluetooth" : "Switched to relay",
+          system: true),
+        for: contactID)
+    }
+    persist()
+  }
+
+  /// Sends our current transport choice for this chat to the peer (encrypted).
+  func sendTransportState(to contact: Contact) {
+    guard let session = sessions[contact.id], establishedContactIDs.contains(contact.id) else {
+      return
+    }
+    let byte: UInt8 = bluetoothChatIDs.contains(contact.id) ? 1 : 0
+    let command = Data([0x02, byte])  // 0x02 = transport cmd (1 = Bluetooth, 0 = relay)
+    guard let ciphertext = try? session.encrypt(command) else { return }
+    sendEnvelope(.control, payload: ciphertext, to: contact)
+  }
+
+  func handleControl(_ payload: Data, from contact: Contact) {
+    guard let session = sessions[contact.id],
+      let plaintext = try? session.decrypt(payload),
+      plaintext.count == 2
+    else { return }
+    let value = plaintext[plaintext.index(after: plaintext.startIndex)] == 1
+    switch plaintext.first {
+    case 0x01: applyEphemeral(value, for: contact.id, announce: true)
+    case 0x02: applyTransport(useBluetooth: value, for: contact.id, announce: true)
+    default: break
+    }
+  }
+
   /// Recovers a lost/stale session. The initiator restarts the handshake; the
   /// responder asks the initiator to do so.
   func requestRehandshake(with contact: Contact) {
@@ -219,16 +272,19 @@ extension SessionManager {
     note("Secure session established with \"\(contact.displayName)\"")
     sendPending(to: contact)  // deliver anything queued while out of range
     if ephemeralContactIDs.contains(contact.id) { sendEphemeralState(to: contact) }  // re-sync ephemeral
+    if bluetoothChatIDs.contains(contact.id) { sendTransportState(to: contact) }  // re-sync link choice
   }
 
   func sendEnvelope(_ type: EnvelopeType, payload: Data, to contact: Contact) {
     let envelope = SessionEnvelope(
       type: type, sender: myID, recipient: contact.id, payload: payload)
-    // The recipient hint lets the relay address this contact's mailbox directly;
-    // BLE ignores it and floods. When the chat is switched to relay-only, skip
-    // Bluetooth entirely (#24).
+    // App messages travel over the chat's chosen link (relay by default). Every
+    // other envelope — handshakes, acks, the control message that *syncs* the
+    // link choice — floods both links so establishment and state sync stay
+    // robust regardless of the selected transport (#24). The recipient hint lets
+    // the relay address this contact's mailbox directly; BLE ignores it.
     let channels: Set<TransportKind> =
-      relayOnlyContactIDs.contains(contact.id) ? [.relay] : TransportKind.all
+      type == .message ? chatChannels(for: contact) : TransportKind.all
     mesh.send(envelope.encoded(), to: contact.id, over: channels)
   }
 
@@ -327,23 +383,6 @@ extension SessionManager {
     if log.count > 200 { log.removeFirst(log.count - 200) }
   }
 
-  /// Records a one-time, centered notice when a chat's outbound link changes —
-  /// e.g. Bluetooth drops and messages start riding the relay, or the user
-  /// switches the chat to relay-only (#24). The first send for a contact sets
-  /// the baseline silently; only subsequent changes are announced.
-  func noteTransportHandoff(for contact: Contact, to channel: TransportChannel?) {
-    guard let channel else { return }  // no link available yet — nothing to note
-    let previous = lastSendChannel[contact.id]
-    lastSendChannel[contact.id] = channel
-    guard let previous, previous != channel else { return }
-    let text: String
-    switch channel {
-    case .bluetooth: text = "Switched to Bluetooth"
-    case .relay(let host): text = "Switched to relay · \(host)"
-    }
-    record(ChatMessage(mine: false, text: text, system: true), for: contact.id)
-  }
-
   /// Appends a message to the in-memory view, and to the on-disk mirror unless
   /// the chat is ephemeral, then persists.
   func record(_ message: ChatMessage, for contactID: Data) {
@@ -373,6 +412,7 @@ extension SessionManager {
         contacts: persistedContacts,
         conversations: conversationsByKey,
         ephemeralContactIDs: ephemeralContactIDs.map { $0.base64EncodedString() },
+        bluetoothContactIDs: bluetoothChatIDs.map { $0.base64EncodedString() },
         myName: myName))
   }
 }

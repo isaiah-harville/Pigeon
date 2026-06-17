@@ -41,6 +41,10 @@ struct ChatView: View {
       statusBanner
       messagesScroll
       composer
+      if session.hasRelay {
+        TransportPill(contact: contact)
+          .padding(.bottom, 6)
+      }
     }
   }
 
@@ -97,11 +101,6 @@ struct ChatView: View {
     Toggle(isOn: ephemeralBinding) {
       Label("Ephemeral chat", systemImage: "clock.arrow.circlepath")
     }
-    if session.hasRelay {
-      Toggle(isOn: relayOnlyBinding) {
-        Label("Send via relay", systemImage: "network")
-      }
-    }
     RelayPicker(contact: contact)
     Button {
       newName = contact.displayName
@@ -120,13 +119,6 @@ struct ChatView: View {
     Binding(
       get: { session.isEphemeral(contact) },
       set: { session.setEphemeral($0, for: contact) }
-    )
-  }
-
-  private var relayOnlyBinding: Binding<Bool> {
-    Binding(
-      get: { session.isRelayOnly(contact) },
-      set: { session.setRelayOnly($0, for: contact) }
     )
   }
 
@@ -239,6 +231,49 @@ private struct ConnectionSummary: View {
     if peers > 0 { parts.append("Bluetooth · \(peers) peer\(peers == 1 ? "" : "s")") }
     if let host = relayHosts.first { parts.append("Relay · \(host)") }
     return parts.isEmpty ? "Offline" : parts.joined(separator: "   ")
+  }
+}
+
+/// A thin pill above the composer to pick the chat's link. Relay is the default
+/// (we encourage relays); Bluetooth is the opt-in second option. Tap a segment
+/// or swipe to switch; the choice is mirrored to the peer (#24).
+private struct TransportPill: View {
+  @Environment(SessionManager.self) private var session
+  let contact: Contact
+
+  var body: some View {
+    let bluetooth = session.usesBluetooth(contact)
+    HStack(spacing: 2) {
+      segment("Relay", "network", selected: !bluetooth) {
+        session.setChatUsesBluetooth(false, for: contact)
+      }
+      segment("Bluetooth", "dot.radiowaves.left.and.right", selected: bluetooth) {
+        session.setChatUsesBluetooth(true, for: contact)
+      }
+    }
+    .padding(3)
+    .background(Capsule().fill(.fill.tertiary))
+    .gesture(
+      DragGesture(minimumDistance: 24).onEnded { value in
+        session.setChatUsesBluetooth(value.translation.width > 0, for: contact)
+      }
+    )
+    .animation(.easeInOut(duration: 0.15), value: bluetooth)
+  }
+
+  private func segment(
+    _ title: String, _ symbol: String, selected: Bool, action: @escaping () -> Void
+  ) -> some View {
+    Button(action: action) {
+      Label(title, systemImage: symbol)
+        .font(.caption2.weight(.medium))
+        .padding(.vertical, 5)
+        .padding(.horizontal, 12)
+        .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+        .background(
+          selected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.clear), in: Capsule())
+    }
+    .buttonStyle(.plain)
   }
 }
 
