@@ -43,6 +43,7 @@ markdown_extensions:
 
 nav:
   - Overview: index.md
+  - How It Works: HOW_IT_WORKS.md
   - Security Model: SECURITY_MODEL.md
   - Roadmap: ROADMAP.md
   - Apple Export Compliance: APPLE_EXPORT_COMPLIANCE.md
