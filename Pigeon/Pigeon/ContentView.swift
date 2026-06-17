@@ -10,9 +10,11 @@ import SwiftUI
 
 struct ContentView: View {
   @Environment(SessionManager.self) private var session
+  @AppStorage("pigeon.appearance") private var appearanceValue = AppAppearance.system.rawValue
 
   var body: some View {
     content
+      .preferredColorScheme(appearance.colorScheme)
       .overlay(alignment: .top) {
         if let banner = session.banner {
           bannerView(banner)
@@ -48,5 +50,33 @@ struct ContentView: View {
     .shadow(radius: 8, y: 2)
     .padding(.horizontal)
     .onTapGesture { session.dismissBanner() }
+  }
+
+  private var appearance: AppAppearance {
+    AppAppearance(rawValue: appearanceValue) ?? .system
+  }
+}
+
+enum AppAppearance: String, CaseIterable, Identifiable {
+  case system
+  case light
+  case dark
+
+  var id: String { rawValue }
+
+  var label: String {
+    switch self {
+    case .system: return "System"
+    case .light: return "Light"
+    case .dark: return "Dark"
+    }
+  }
+
+  var colorScheme: ColorScheme? {
+    switch self {
+    case .system: return nil
+    case .light: return .light
+    case .dark: return .dark
+    }
   }
 }
