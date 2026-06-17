@@ -160,8 +160,11 @@ public final class DoubleRatchetSession {
       // after the first DH ratchet step.
       throw RatchetError.decryptionFailed
     }
-    let (nextCK, messageKey) = Primitives.kdfChainKey(chainKey: cks)
+    // Destructuring gives `messageKey` sole ownership of its buffer, so it can
+    // be wiped after use (the tuple form avoids a lingering aliasing copy).
+    var (nextCK, messageKey) = Primitives.kdfChainKey(chainKey: cks)
     sendingChainKey = nextCK
+    defer { SecureMemory.zero(&messageKey) }
 
     let header = RatchetHeader(
       dhPublic: dhSelf.publicKey.rawRepresentation,
@@ -198,9 +201,10 @@ public final class DoubleRatchetSession {
 
     // 4. Derive this message's key and advance the receiving chain.
     guard let ckr = receivingChainKey else { throw RatchetError.decryptionFailed }
-    let (nextCK, messageKey) = Primitives.kdfChainKey(chainKey: ckr)
+    var (nextCK, messageKey) = Primitives.kdfChainKey(chainKey: ckr)
     receivingChainKey = nextCK
     receiveCount += 1
+    defer { SecureMemory.zero(&messageKey) }
 
     let ad = associatedData + header.encoded()
     do {
@@ -218,16 +222,18 @@ public final class DoubleRatchetSession {
   {
     let id = SkippedKeyID(
       dhPublic: message.header.dhPublic, messageNumber: message.header.messageNumber)
-    guard let messageKey = skipped[id] else { return nil }
+    guard var messageKey = skipped[id] else { return nil }
     let ad = associatedData + message.header.encoded()
     let plaintext: Data
     do {
       plaintext = try Primitives.decrypt(
         ciphertext: message.ciphertext, messageKey: messageKey, associatedData: ad)
     } catch {
-      throw RatchetError.decryptionFailed
+      throw RatchetError.decryptionFailed  // key kept for a later retry
     }
     skipped[id] = nil  // each message key is used exactly once
+    // The dict reference is now gone, so this local solely owns the buffer; wipe it.
+    SecureMemory.zero(&messageKey)
     return plaintext
   }
 

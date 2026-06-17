@@ -196,6 +196,11 @@ struct MenuView: View {
     }
   }
 
+}
+
+// MARK: - Status indicators & actions
+
+extension MenuView {
   private var statusColor: Color {
     if session.connectedPeerCount > 0 { return .green }
     switch session.status {

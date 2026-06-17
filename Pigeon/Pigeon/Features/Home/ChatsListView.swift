@@ -53,7 +53,7 @@ struct ChatsListView: View {
       Text("Pigeon")
         .font(.system(size: 28, weight: .heavy, design: .rounded).smallCaps())
         .tracking(2)
-        .foregroundStyle(.white)
+        .foregroundStyle(.primary)
     }
     ToolbarItem(placement: .topBarTrailing) {
       Button {

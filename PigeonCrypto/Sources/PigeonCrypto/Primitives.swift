@@ -64,8 +64,12 @@ public enum Primitives {
       info: rootInfo,
       outputByteCount: 64
     )
-    let bytes = derived.withUnsafeBytes { Data($0) }
-    return (rootKey: bytes.prefix(32), chainKey: bytes.suffix(32))
+    var bytes = derived.withUnsafeBytes { Data($0) }
+    // Return fresh copies of the two halves, then wipe the combined buffer.
+    // `Data(_:)` copies into new storage, so `bytes` stays the sole owner and
+    // zeroing it below cannot corrupt the returned values.
+    defer { SecureMemory.zero(&bytes) }
+    return (rootKey: Data(bytes.prefix(32)), chainKey: Data(bytes.suffix(32)))
   }
 
   // MARK: - KDF_CK
@@ -100,11 +104,14 @@ public enum Primitives {
     key: SymmetricKey, nonce: AES.GCM.Nonce
   ) {
     guard messageKey.count == 32 else { throw CryptoError.invalidLength }
-    let material = HKDF<SHA256>.deriveKey(
+    var material = HKDF<SHA256>.deriveKey(
       inputKeyMaterial: SymmetricKey(data: messageKey),
       info: aeadInfo,
       outputByteCount: 44  // 32-byte key + 12-byte nonce
     ).withUnsafeBytes { Data($0) }
+    // `SymmetricKey`/`Nonce` copy their inputs into their own storage, so we can
+    // wipe the derived buffer once they're built without affecting them.
+    defer { SecureMemory.zero(&material) }
     let key = SymmetricKey(data: material.prefix(32))
     let nonce = try AES.GCM.Nonce(data: material.suffix(12))
     return (key, nonce)
