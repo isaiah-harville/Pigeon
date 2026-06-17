@@ -123,6 +123,9 @@ final class SessionManager {
       relay.relaysForRecipient = { [weak self] key in
         self?.contacts.first { $0.id == key }?.relayURLs ?? []
       }
+      relay.preferredRelayForRecipient = { [weak self] key in
+        self?.contacts.first { $0.id == key }?.preferredRelayURL
+      }
       // Only ack relay envelopes once unlocked; while locked we buffer and let
       // the relay retain its copy (see `handleInbound`).
       relay.canConsume = { [weak self] in self?.isUnlocked ?? false }
@@ -146,7 +149,8 @@ final class SessionManager {
       }
       return Contact(
         bundle: bundle, displayName: persisted.name,
-        relayURLs: persisted.relayURLs.compactMap { URL(string: $0) })
+        relayURLs: persisted.relayURLs.compactMap { URL(string: $0) },
+        preferredRelayURL: persisted.preferredRelayURL.flatMap { URL(string: $0) })
     }
     var loaded: [Data: [ChatMessage]] = [:]
     for (key, messages) in state.conversations {
@@ -304,16 +308,6 @@ final class SessionManager {
       let text = String(bytes: data.dropFirst(36), encoding: .utf8)
     else { return nil }
     return (id, text)
-  }
-
-  /// Conversation history with `contact`.
-  func messages(with contact: Contact) -> [ChatMessage] {
-    conversations[contact.id] ?? []
-  }
-
-  /// The most recent non-system message with `contact`, for list previews.
-  func lastMessage(with contact: Contact) -> ChatMessage? {
-    conversations[contact.id]?.last { !$0.system }
   }
 
 }

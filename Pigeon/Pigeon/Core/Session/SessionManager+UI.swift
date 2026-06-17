@@ -106,6 +106,35 @@ extension SessionManager {
     persist()
   }
 
+  /// The relay preferred for this conversation (`nil` = automatic), and the
+  /// contact's advertised relays the picker chooses from (#18).
+  func preferredRelay(for contact: Contact) -> URL? {
+    contacts.first { $0.id == contact.id }?.preferredRelayURL
+  }
+
+  func advertisedRelays(for contact: Contact) -> [URL] {
+    contacts.first { $0.id == contact.id }?.relayURLs ?? []
+  }
+
+  /// Pins this conversation to a chosen relay (or `nil` for automatic) and
+  /// reconnects so a connection to the chosen relay is open (#18).
+  func setPreferredRelay(_ url: URL?, for contact: Contact) {
+    guard let index = contacts.firstIndex(where: { $0.id == contact.id }) else { return }
+    contacts[index].preferredRelayURL = url
+    persist()
+    refreshRelay()
+  }
+
+  /// Conversation history with `contact`.
+  func messages(with contact: Contact) -> [ChatMessage] {
+    conversations[contact.id] ?? []
+  }
+
+  /// The most recent non-system message with `contact`, for list previews.
+  func lastMessage(with contact: Contact) -> ChatMessage? {
+    conversations[contact.id]?.last { !$0.system }
+  }
+
   /// The safety number to compare in person with `contact`.
   func safetyNumber(with contact: Contact) -> String {
     guard let remote = try? IdentityPublicKey(rawRepresentation: contact.bundle.identityKey) else {
