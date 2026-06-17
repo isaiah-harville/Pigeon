@@ -89,12 +89,12 @@ struct MenuView: View {
     .padding(.vertical, 4)
   }
 
-  private var fingerprintSection: some View {
-    Section("Identity") {
-      LabeledContent("Fingerprint", value: identity.publicKey.shortFingerprint)
-        .font(.callout.monospaced())
-    }
-  }
+  // private var fingerprintSection: some View {
+  //   Section("Identity") {
+  //     LabeledContent("Fingerprint", value: identity.publicKey.shortFingerprint)
+  //       .font(.callout.monospaced())
+  //   }
+  // }
 
   private var bluetoothSection: some View {
     Section("Bluetooth") {
