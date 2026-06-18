@@ -40,24 +40,36 @@ jobs:
             exit 1
           fi
 
-  crypto-tests:
-    name: Swift Package Tests
+  package-tests:
+    name: Swift Package Tests (${{ matrix.package }})
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - PigeonCrypto
+          - PigeonMesh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test ${{ matrix.package }}
+        run: swift test --package-path "${{ matrix.package }}"
+
+  core-tests:
+    name: PigeonCore XCFramework Tests
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
-      - name: Test PigeonCrypto
-        run: swift test --package-path PigeonCrypto
+      # The XCFramework is a build artifact (gitignored), so build it from the
+      # Rust crate first; the script also adds the Rust targets it needs.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build PigeonCore XCFramework
+        run: bash pigeon-core-ffi/build-xcframework.sh
 
-  mesh-tests:
-    name: Swift Package Tests
-    runs-on: macos-26
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Test PigeonMesh
-        run: swift test --package-path PigeonMesh
-
+      - name: Test PigeonCore
+        run: swift test --package-path PigeonCore
 
   app-build:
     name: iOS App Build
