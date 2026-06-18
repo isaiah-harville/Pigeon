@@ -1,0 +1,58 @@
+name: Rust
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pigeon-core/**"
+      - "pigeon-core-ffi/**"
+      - "PigeonRelay/**"
+      - ".github/actions/rust-crate-ci/**"
+      - ".github/workflows/rust.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "pigeon-core/**"
+      - "pigeon-core-ffi/**"
+      - "PigeonRelay/**"
+      - ".github/actions/rust-crate-ci/**"
+      - ".github/workflows/rust.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pigeon-core:
+    name: pigeon-core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust-crate-ci
+        with:
+          working-directory: pigeon-core
+          cache-workspaces: pigeon-core
+          docs: "true"
+
+  pigeon-core-ffi:
+    name: pigeon-core-ffi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust-crate-ci
+        with:
+          working-directory: pigeon-core-ffi
+          cache-workspaces: |
+            pigeon-core
+            pigeon-core-ffi
+
+  pigeon-relay:
+    name: PigeonRelay
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust-crate-ci
+        with:
+          working-directory: PigeonRelay
+          cache-workspaces: PigeonRelay

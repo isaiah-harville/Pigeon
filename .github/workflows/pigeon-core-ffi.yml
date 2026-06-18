@@ -1,0 +1,88 @@
+name: pigeon-core-ffi
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pigeon-core-ffi/**"
+      - "pigeon-core/**"
+      - "PigeonCore/**"
+      - ".github/workflows/pigeon-core-ffi.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "pigeon-core-ffi/**"
+      - "pigeon-core/**"
+      - "PigeonCore/**"
+      - ".github/workflows/pigeon-core-ffi.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bindings-up-to-date:
+    name: Generated Swift bindings match the FFI surface
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pigeon-core-ffi
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            pigeon-core
+            pigeon-core-ffi
+      # Regenerate the Swift bindings from the *current* src/lib.rs and compare
+      # them to the committed copy under PigeonCore/. If the FFI surface changed
+      # without `build-xcframework.sh` being rerun, the committed bindings (and
+      # the XCFramework that ships alongside them) are stale — fail loudly with
+      # the fix. Binding generation is pure Rust + uniffi, so no Xcode/macOS is
+      # needed here; only the surface, not the compiled iOS slices, is checked.
+      - name: Regenerate bindings and diff against the committed copy
+        run: |
+          set -euo pipefail
+          cargo build --release --lib
+          out="$(mktemp -d)"
+          cargo run --quiet --bin uniffi-bindgen -- generate \
+            --library target/release/libpigeon_core_ffi.so \
+            --language swift \
+            --out-dir "$out"
+
+          committed="../PigeonCore/Sources/PigeonCore/Generated"
+          drift=0
+          for generated in "$out"/*.swift; do
+            name="$(basename "$generated")"
+            if ! diff -u "$committed/$name" "$generated" > /tmp/bindings.diff 2>&1; then
+              drift=1
+              cat /tmp/bindings.diff
+            fi
+          done
+
+          if [ "$drift" -ne 0 ]; then
+            cat <<'EOF'
+
+          ┌────────────────────────────────────────────────────────────────────┐
+          │ pigeon-core-ffi: generated Swift bindings are OUT OF DATE.           │
+          │                                                                      │
+          │ The FFI surface in pigeon-core-ffi/src/lib.rs changed, but the       │
+          │ generated Swift bindings under PigeonCore/Sources/PigeonCore/        │
+          │ Generated/ (and the PigeonCoreFFI.xcframework that ships with them)  │
+          │ were not regenerated. The Swift app would link against a stale       │
+          │ binding that no longer matches the Rust ABI.                         │
+          │                                                                      │
+          │ Fix: rerun the build script locally and commit its output:          │
+          │                                                                      │
+          │     bash pigeon-core-ffi/build-xcframework.sh                        │
+          │     git add PigeonCore/                                              │
+          │     git commit                                                       │
+          │                                                                      │
+          │ (The diff above shows exactly what regeneration would change.)       │
+          └────────────────────────────────────────────────────────────────────┘
+          EOF
+            exit 1
+          fi
+          echo "Generated Swift bindings are in sync with src/lib.rs."

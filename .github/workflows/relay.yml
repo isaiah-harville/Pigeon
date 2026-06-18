@@ -21,23 +21,12 @@ jobs:
   check:
     name: Check & test
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: PigeonRelay
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust-crate-ci
         with:
-          components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: PigeonRelay
-      - name: Format
-        run: cargo fmt --check
-      - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
-      - name: Test
-        run: cargo test
+          working-directory: PigeonRelay
+          cache-workspaces: PigeonRelay
 
   image:
     name: Build & push image
