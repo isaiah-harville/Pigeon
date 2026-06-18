@@ -8,7 +8,6 @@
 
 import CryptoKit
 import Foundation
-import PigeonCrypto
 
 /// A contact in persisted form (the IdentityBundle stored as its 128-byte encoding).
 struct PersistedContact: Codable {
