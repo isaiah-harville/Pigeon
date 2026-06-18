@@ -168,8 +168,6 @@ Several are audit blockers (see [SECURITY_MODEL.md](SECURITY_MODEL.md) → Audit
   decryption, deliberately). Remaining limit: iOS *suspends* a backgrounded app,
   so reliable "phone in pocket for hours" delivery still needs a push wake-up
   (see **Push wake-up** under Next).
-- **Lint/format debt** — SwiftLint/SwiftFormat pre-commit hooks fail; commits use
-  `--no-verify` for now. Do a cleanup pass.
 
 *Resolved:* multi-path duplicate delivery (mesh dedup), identity↔Noise-static
 binding (IdentityBundle), one-sided-restart reconnection (auto-reconnect +
