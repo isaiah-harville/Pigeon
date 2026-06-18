@@ -147,21 +147,13 @@ struct MessageFooter: View {
   var body: some View {
     HStack(spacing: 4) {
       Text(message.displayDate.formatted(date: .omitted, time: .shortened))
-      if let delay = message.deliveryDelay {
+      if message.deliveryDelay != nil {
         Image(systemName: "clock.arrow.circlepath")
-        Text("delivered \(Self.delayText(delay)) later")
+        Text("received \(message.date.formatted(date: .omitted, time: .shortened))")
       }
     }
     .font(.caption2)
     .foregroundStyle(.secondary)
-  }
-
-  /// Compact "2h" / "5m" / "1d" rendering of a delivery delay.
-  static func delayText(_ delay: TimeInterval) -> String {
-    let minutes = Int(delay / 60)
-    if minutes < 60 { return "\(minutes)m" }
-    let hours = minutes / 60
-    return hours < 24 ? "\(hours)h" : "\(hours / 24)d"
   }
 }
 
@@ -286,11 +278,12 @@ extension ChatMessage {
 
   /// How long an incoming message waited between being sent and arriving here,
   /// or `nil` when it arrived promptly (or is our own message). Drives the
-  /// "delivered late" hint so a old message doesn't look brand new.
+  /// "received at" hint so a delayed message doesn't look brand new. Threshold:
+  /// more than three minutes late.
   var deliveryDelay: TimeInterval? {
     guard !mine, let sentAt else { return nil }
     let delay = date.timeIntervalSince(sentAt)
-    return delay >= 30 ? delay : nil
+    return delay > 180 ? delay : nil
   }
 }
 
