@@ -1,12 +1,9 @@
-name: Rust crate CI
-description: Install Rust, cache a crate, then run fmt, clippy, tests, and optional docs.
+name: Rust workspace package CI
+description: Install Rust, cache the workspace, then run fmt, clippy, tests, and optional docs for one package.
 
 inputs:
-  working-directory:
-    description: Directory containing the crate Cargo.toml.
-    required: true
-  cache-workspaces:
-    description: Workspace path passed to Swatinem/rust-cache.
+  package:
+    description: Cargo package name to check with -p.
     required: true
   docs:
     description: Whether to run cargo doc for the crate.
@@ -22,25 +19,21 @@ runs:
 
     - uses: Swatinem/rust-cache@v2
       with:
-        workspaces: ${{ inputs.cache-workspaces }}
+        workspaces: .
 
     - name: Format
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: cargo fmt --check
+      run: cargo fmt --all --check
 
     - name: Clippy
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: cargo clippy --all-targets -- -D warnings
+      run: cargo clippy -p "${{ inputs.package }}" --all-targets -- -D warnings
 
     - name: Test
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: cargo test
+      run: cargo test -p "${{ inputs.package }}"
 
     - name: Docs
       if: inputs.docs == 'true'
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: cargo doc --no-deps --document-private-items
+      run: cargo doc -p "${{ inputs.package }}" --no-deps --document-private-items

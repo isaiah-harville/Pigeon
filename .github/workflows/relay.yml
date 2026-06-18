@@ -25,8 +25,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust-crate-ci
         with:
-          working-directory: PigeonRelay
-          cache-workspaces: PigeonRelay
+          package: pigeon-relay
 
   image:
     name: Build & push image

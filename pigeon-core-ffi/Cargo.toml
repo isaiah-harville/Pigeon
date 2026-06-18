@@ -17,11 +17,6 @@ name = "pigeon_core_ffi"
 name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
 
-[profile.release]
-# Strip symbols from the static libs that go into the XCFramework — they bloat
-# the artifact and the app links its own symbols anyway.
-strip = true
-
 [dependencies]
 pigeon-core = { path = "../pigeon-core" }
 # Needed directly only to (de)serialize the Olm AccountPickle at the FFI seam;

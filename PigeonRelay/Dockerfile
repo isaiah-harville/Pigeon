@@ -3,6 +3,15 @@
 FROM rust:1.96.0-slim-trixie AS build
 WORKDIR /src
 
+# A blind mailbox does not need to be large or fast; optimize the standalone
+# Docker build for size. These replace Cargo.toml profile settings so the relay
+# can also live cleanly inside the repository workspace.
+ENV CARGO_PROFILE_RELEASE_STRIP=true \
+    CARGO_PROFILE_RELEASE_LTO=true \
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
+    CARGO_PROFILE_RELEASE_OPT_LEVEL=z \
+    CARGO_PROFILE_RELEASE_PANIC=abort
+
 COPY Cargo.toml ./
 RUN mkdir src && echo 'fn main() {}' > src/main.rs \
     && cargo build --release \

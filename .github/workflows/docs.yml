@@ -11,6 +11,8 @@ on:
       - "PigeonMesh/Package.resolved"
       - "PigeonRelay/Cargo.toml"
       - "PigeonRelay/Cargo.lock"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - "pigeon-core/Cargo.toml"
       - "pigeon-core/Cargo.lock"
       - "Pigeon/README.md"
@@ -46,6 +48,8 @@ on:
       - "PigeonMesh/Package.resolved"
       - "PigeonRelay/Cargo.toml"
       - "PigeonRelay/Cargo.lock"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - "pigeon-core/Cargo.toml"
       - "pigeon-core/Cargo.lock"
       - "Pigeon/README.md"
@@ -145,7 +149,7 @@ jobs:
         run: |
           rm -rf "$RUNNER_TEMP/pigeon-core-docs" "$PWD/public/api/pigeon-core"
           cargo doc \
-            --manifest-path pigeon-core/Cargo.toml \
+            -p pigeon-core \
             --no-deps \
             --document-private-items \
             --target-dir "$RUNNER_TEMP/pigeon-core-docs"

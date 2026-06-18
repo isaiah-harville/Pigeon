@@ -15,11 +15,3 @@ ed25519-dalek = "2"
 base64 = "0.22"
 hex = "0.4"
 rand = "0.8"
-
-# A blind mailbox does not need to be large or fast; optimize the image for size.
-[profile.release]
-strip = true
-lto = true
-codegen-units = 1
-opt-level = "z"
-panic = "abort"
