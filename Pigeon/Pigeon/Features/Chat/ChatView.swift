@@ -30,8 +30,8 @@ struct ChatView: View {
       .sheet(isPresented: $showSafetyNumber) {
         SafetyNumberSheet(
           number: session.safetyNumber(with: contact), name: contact.displayName,
-          isVerified: session.isVerifiedInPerson(contact),
-          onVerify: { session.markVerifiedInPerson(contact) })
+          isVerified: session.isVerifiedInPerson(contact)
+        ) { session.markVerifiedInPerson(contact) }
       }
       .alert("Rename Contact", isPresented: $showRename) {
         TextField("Name", text: $newName)

@@ -327,34 +327,35 @@ struct SafetyNumberSheet: View {
 
   var body: some View {
     NavigationStack {
-      ScrollView {
-        VStack(spacing: 16) {
-          Text(explanation)
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-          Text(number)
-            .font(.title3.monospaced())
-            .multilineTextAlignment(.center)
-          if !isVerified, let onVerify {
-            Button {
-              onVerify()
-              dismiss()
-            } label: {
-              Label("Mark as Verified", systemImage: "checkmark.shield.fill")
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .padding(.top, 4)
+      ScrollView { details.padding() }
+        .navigationTitle("Safety Number")
+        .toolbar {
+          ToolbarItem(placement: .confirmationAction) {
+            Button("Done") { dismiss() }
           }
         }
-        .padding()
-      }
-      .navigationTitle("Safety Number")
-      .toolbar {
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Done") { dismiss() }
+    }
+  }
+
+  private var details: some View {
+    VStack(spacing: 16) {
+      Text(explanation)
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+      Text(number)
+        .font(.title3.monospaced())
+        .multilineTextAlignment(.center)
+      if !isVerified, let onVerify {
+        Button {
+          onVerify()
+          dismiss()
+        } label: {
+          Label("Mark as Verified", systemImage: "checkmark.shield.fill")
+            .frame(maxWidth: .infinity)
         }
+        .buttonStyle(.borderedProminent)
+        .padding(.top, 4)
       }
     }
   }

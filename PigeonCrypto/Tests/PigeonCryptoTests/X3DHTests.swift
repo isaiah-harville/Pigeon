@@ -50,7 +50,7 @@ final class X3DHTests: XCTestCase {
     return (bundle, spk, otk)
   }
 
-  private func msg(_ s: String) -> Data { Data(s.utf8) }
+  private func msg(_ text: String) -> Data { Data(text.utf8) }
 
   // MARK: - End to end
 

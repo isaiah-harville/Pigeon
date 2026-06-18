@@ -235,19 +235,9 @@ final class SessionManager {
   /// Verifies and stores a scanned contact bundle, then begins establishing a
   /// session. `relayURLs` are the contact's advertised relay endpoints from
   /// their QR card (where we deposit ciphertext for them off-Bluetooth).
-  @discardableResult
-  func addContact(_ bundle: IdentityBundle, name: String) -> Bool {
-    addContact(bundle, name: name, relayURLs: [])
-  }
-
-  @discardableResult
-  func addContact(_ bundle: IdentityBundle, name: String, relayURLs: [URL]) -> Bool {
-    addContact(bundle, name: name, relayURLs: relayURLs, prekeyBundle: nil, verifiedInPerson: true)
-  }
-
-  /// Full add path. `prekeyBundle` (from the scanned/pasted card) enables async
-  /// first contact; `verifiedInPerson` records whether the safety number was
-  /// exchanged face to face (scan) versus a code shared out of band (paste).
+  /// `prekeyBundle` (from the scanned/pasted card) enables async first contact;
+  /// `verifiedInPerson` records whether the safety number was exchanged face to
+  /// face (scan) versus a code shared out of band (paste).
   @discardableResult
   func addContact(
     _ bundle: IdentityBundle, name: String, relayURLs: [URL],

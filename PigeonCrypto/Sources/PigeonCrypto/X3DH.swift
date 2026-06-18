@@ -196,13 +196,13 @@ public struct X3DHPrekeyBundle: Equatable, Sendable {
   }
 
   public init(decoding data: Data) throws {
-    var c = ByteCursor(data)
+    var cursor = ByteCursor(data)
     let identity = try IdentityBundle(
-      decoding: c.take(IdentityBundle.size, X3DHError.malformedBundle))
-    let spkID = try c.takeUInt32(X3DHError.malformedBundle)
-    let spk = try c.take(32, X3DHError.malformedBundle)
-    let spkSig = try c.take(64, X3DHError.malformedBundle)
-    let hasOTK = try c.takeByte(X3DHError.malformedBundle)
+      decoding: cursor.take(IdentityBundle.size, X3DHError.malformedBundle))
+    let spkID = try cursor.takeUInt32(X3DHError.malformedBundle)
+    let spk = try cursor.take(32, X3DHError.malformedBundle)
+    let spkSig = try cursor.take(64, X3DHError.malformedBundle)
+    let hasOTK = try cursor.takeByte(X3DHError.malformedBundle)
 
     var otkID: UInt32?
     var otk: Data?
@@ -211,13 +211,13 @@ public struct X3DHPrekeyBundle: Equatable, Sendable {
     case 0:
       break
     case 1:
-      otkID = try c.takeUInt32(X3DHError.malformedBundle)
-      otk = try c.take(32, X3DHError.malformedBundle)
-      otkSig = try c.take(64, X3DHError.malformedBundle)
+      otkID = try cursor.takeUInt32(X3DHError.malformedBundle)
+      otk = try cursor.take(32, X3DHError.malformedBundle)
+      otkSig = try cursor.take(64, X3DHError.malformedBundle)
     default:
       throw X3DHError.malformedBundle
     }
-    guard c.isAtEnd else { throw X3DHError.malformedBundle }
+    guard cursor.isAtEnd else { throw X3DHError.malformedBundle }
 
     self.init(
       identity: identity,
@@ -275,22 +275,22 @@ public struct X3DHInitiation: Equatable, Sendable {
   }
 
   public init(decoding data: Data) throws {
-    var c = ByteCursor(data)
+    var cursor = ByteCursor(data)
     let identity = try IdentityBundle(
-      decoding: c.take(IdentityBundle.size, X3DHError.malformedInitiation))
-    let ephemeral = try c.take(32, X3DHError.malformedInitiation)
-    let spkID = try c.takeUInt32(X3DHError.malformedInitiation)
-    let usedOTK = try c.takeByte(X3DHError.malformedInitiation)
+      decoding: cursor.take(IdentityBundle.size, X3DHError.malformedInitiation))
+    let ephemeral = try cursor.take(32, X3DHError.malformedInitiation)
+    let spkID = try cursor.takeUInt32(X3DHError.malformedInitiation)
+    let usedOTK = try cursor.takeByte(X3DHError.malformedInitiation)
     var otkID: UInt32?
     switch usedOTK {
     case 0:
       break
     case 1:
-      otkID = try c.takeUInt32(X3DHError.malformedInitiation)
+      otkID = try cursor.takeUInt32(X3DHError.malformedInitiation)
     default:
       throw X3DHError.malformedInitiation
     }
-    guard c.isAtEnd else { throw X3DHError.malformedInitiation }
+    guard cursor.isAtEnd else { throw X3DHError.malformedInitiation }
     self.init(
       initiatorIdentity: identity,
       ephemeralKey: ephemeral,

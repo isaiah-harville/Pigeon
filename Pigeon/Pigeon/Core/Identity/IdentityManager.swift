@@ -67,13 +67,14 @@ final class IdentityManager {
   convenience init() throws {
     try self.init(
       store: KeychainStore(account: IdentityManager.identityAccount),
-      staticStore: KeychainStore(account: IdentityManager.staticAccount))
+      staticStore: KeychainStore(account: IdentityManager.staticAccount),
+      prekeyStore: KeychainStore(account: IdentityManager.signedPrekeyAccount))
   }
 
   init(
     store: KeychainStore,
     staticStore: KeychainStore,
-    prekeyStore: KeychainStore = KeychainStore(account: IdentityManager.signedPrekeyAccount)
+    prekeyStore: KeychainStore
   ) throws {
     self.store = store
     self.staticStore = staticStore
@@ -101,8 +102,7 @@ final class IdentityManager {
     }
 
     // Load (or generate) the signed prekey, rotating it if it has aged out.
-    let loaded = (try? prekeyStore.get()).flatMap { $0 }.flatMap(SignedPrekeyState.init(decoding:))
-    if let loaded {
+    if let stored = try? prekeyStore.get(), let loaded = SignedPrekeyState(decoding: stored) {
       self.signedPrekeys = loaded
     } else {
       self.signedPrekeys = SignedPrekeyState.fresh(id: 1)
@@ -227,14 +227,14 @@ private struct SignedPrekeyState {
   }
 
   init?(decoding data: Data) {
-    var c = data.startIndex
+    var cursor = data.startIndex
     func take(_ n: Int) -> Data? {
-      guard data.endIndex - c >= n else { return nil }
-      defer { c += n }
-      return Data(data[c..<c + n])
+      guard data.endIndex - cursor >= n else { return nil }
+      defer { cursor += n }
+      return Data(data[cursor..<cursor + n])
     }
-    func u32(_ d: Data) -> UInt32 { d.reduce(0) { ($0 << 8) | UInt32($1) } }
-    func u64(_ d: Data) -> UInt64 { d.reduce(0) { ($0 << 8) | UInt64($1) } }
+    func u32(_ bytes: Data) -> UInt32 { bytes.reduce(0) { ($0 << 8) | UInt32($1) } }
+    func u64(_ bytes: Data) -> UInt64 { bytes.reduce(0) { ($0 << 8) | UInt64($1) } }
 
     guard let version = take(1), version.first == Self.version,
       let curID = take(4), let curTime = take(8), let curPriv = take(32),
