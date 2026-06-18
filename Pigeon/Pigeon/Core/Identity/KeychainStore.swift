@@ -35,13 +35,28 @@ enum KeychainAccessibility {
   }
 }
 
+/// A persistent slot for one secret, abstracting the Keychain so identity code
+/// can be unit-tested against an in-memory double. `KeychainStore` is the only
+/// production implementation; it must never be backed by anything that leaves
+/// the device (see the type's note on `…ThisDeviceOnly`).
+protocol KeyStore {
+  /// Returns the stored bytes, or `nil` if nothing is stored.
+  func get() throws -> Data?
+  /// Stores `data`, replacing any existing value, with the given accessibility.
+  func set(_ data: Data, accessibility: KeychainAccessibility) throws
+  /// Rewrites the stored item under a new accessibility class (no-op if empty).
+  func setAccessibility(_ accessibility: KeychainAccessibility) throws
+  /// Removes the stored item if present.
+  func delete() throws
+}
+
 /// Stores small secrets (key material) in the Keychain as generic passwords.
 ///
 /// Items are always `…ThisDeviceOnly`: they never leave the device, are not
 /// included in backups, and never sync to iCloud. The caller chooses the
 /// lock-state accessibility (`KeychainAccessibility`) per write. Identity keys
 /// are the root of the app's security, so they must not migrate to new devices.
-struct KeychainStore {
+struct KeychainStore: KeyStore {
 
   /// The keychain service namespace for all Pigeon items.
   static let service = "com.isaiah-harville.Pigeon.keys"
