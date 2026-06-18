@@ -12,14 +12,27 @@ auditable code over clever abstractions.
 
 ## Current Architecture
 
-The repo has four components: the **app** (`Pigeon/`), and three packages —
-`PigeonCrypto/` (Swift), `PigeonMesh/` (Swift), and `PigeonRelay/` (Rust).
+The repo has the **app** (`Pigeon/`) plus four packages — `PigeonCrypto/`
+(Swift), `pigeon-core/` (Rust), `PigeonMesh/` (Swift), and `PigeonRelay/` (Rust).
+
+**Rust migration in progress (#79–#83):** the Swift `PigeonCrypto` is being
+replaced by the Rust `pigeon-core`, which adopts Olm (via the audited
+`vodozemac` crate) instead of the clean-room Noise XX + X3DH + Double Ratchet.
+The iOS app still links `PigeonCrypto` today; it cuts over to `pigeon-core`
+through an FFI/XCFramework (#80), after which `PigeonCrypto` is deleted. Until
+then both exist — do not delete `PigeonCrypto`, and keep its behavior intact.
 
 - `Pigeon/` contains the SwiftUI app and Xcode project (`Pigeon/Pigeon.xcodeproj`,
   scheme `Pigeon`). Source lives under `Pigeon/Pigeon/`, split into `Core/`
   (model/logic) and `Features/` (SwiftUI views).
 - `PigeonCrypto/` is a standalone, dependency-free Swift package for cryptographic
   protocol code. Keep it dependency-free unless there is a strong security reason.
+  (Being superseded by `pigeon-core`; see the migration note above.)
+- `pigeon-core/` is a standalone Rust crate (`Apache-2.0 OR MIT`) — the pairwise
+  messaging core built on Olm/`vodozemac`. It keeps Pigeon's identity binding (a
+  long-term Ed25519 key signs Olm's Curve25519 identity key) on top of Olm's
+  session establishment + Double Ratchet. It is NOT a Cargo-workspace member of
+  `PigeonRelay` and must never depend on the AGPL relay.
 - `PigeonMesh/` is a dependency-free, platform-agnostic Swift package for
   transport/mesh logic (packet framing, fragmentation/reassembly over small BLE
   MTUs, store-and-forward routing). The CoreBluetooth driver lives in the app and
@@ -52,12 +65,18 @@ App `Features/`: `Onboarding/` (`UnlockView`, `OnboardingNameView`), `Home/`
 
 `PigeonCrypto/Sources/PigeonCrypto/`: `Primitives.swift` (CryptoKit wrappers),
 `DoubleRatchet.swift` (ratchet state + message encrypt/decrypt), `NoiseHandshake`,
-`SecretBox`, `SecureSession`, `IdentityBundle`.
+`SecretBox`, `SecureSession`, `IdentityBundle`, `X3DH`.
+
+`pigeon-core/src/`: `identity.rs` (`IdentityKeypair` + `IdentityBundle` binding),
+`account.rs` (`Account`: Ed25519 identity + Olm account + prekeys + persistence),
+`prekey.rs` (`PrekeyBundle`), `session.rs` (`Session`, `Initiation`), `error.rs`.
+Behavioral tests in `pigeon-core/tests/pairwise.rs`.
 
 `PigeonMesh/Sources/PigeonMesh/`: `MeshPacket`, `SessionEnvelope`, `Fragmentation`.
 
-Tests live in `PigeonCrypto/Tests/` and `PigeonMesh/Tests/` (the app target has no
-unit tests). Docs of note: `docs/SECURITY_MODEL.md`, `docs/ROADMAP.md`.
+Tests live in `PigeonCrypto/Tests/`, `PigeonMesh/Tests/`, `pigeon-core/tests/`, and
+the app's `Pigeon/PigeonTests/` target. Docs of note: `docs/SECURITY_MODEL.md`,
+`docs/ROADMAP.md`.
 
 ## Security Invariants
 
@@ -95,6 +114,7 @@ shared behavior:
 swift test --package-path PigeonCrypto
 swift test --package-path PigeonMesh
 xcodebuild build -project Pigeon/Pigeon.xcodeproj -scheme Pigeon -destination 'generic/platform=iOS'
+cargo test --manifest-path pigeon-core/Cargo.toml   # Rust messaging core
 cargo test --manifest-path PigeonRelay/Cargo.toml   # relay (Rust)
 ```
 

@@ -50,7 +50,11 @@ concurrently):
 - `Pigeon/Pigeon/Core/Identity/` - long-term device identity, Keychain storage,
   public key fingerprints, and safety-number derivation.
 - `PigeonCrypto/` - standalone Swift package for Noise, Double Ratchet, and
-  protocol primitives.
+  protocol primitives. The iOS app links this today; it is being replaced by
+  `pigeon-core/` (see below) and will be removed once the app cuts over via FFI.
+- `pigeon-core/` - Rust pairwise messaging core (Olm via the audited `vodozemac`
+  crate), the cross-platform successor to `PigeonCrypto`. Not yet wired into the
+  app (FFI/XCFramework is in progress).
 - `PigeonMesh/` - standalone Swift package for fragmentation, mesh packets,
   deduplication, TTL, and session envelopes.
 - `PigeonRelay/` - Rust zero-knowledge relay server.
@@ -63,6 +67,7 @@ swift test --package-path PigeonCrypto
 swift test --package-path PigeonMesh
 xcodebuild -list -project Pigeon/Pigeon.xcodeproj
 xcodebuild build -project Pigeon/Pigeon.xcodeproj -scheme Pigeon -destination 'generic/platform=iOS'
+cargo test --manifest-path pigeon-core/Cargo.toml
 cargo test --manifest-path PigeonRelay/Cargo.toml
 uv run --group docs mkdocs build --strict
 ```
@@ -88,6 +93,7 @@ copyleft:
 - **The iOS app** (this repo, root [LICENSE](LICENSE)), **[`PigeonCrypto/`](PigeonCrypto/LICENSE)**,
   and **[`PigeonMesh/`](PigeonMesh/LICENSE)** — **MIT**. Permissive and App
   Store–compatible; the app links only these.
+- **[`pigeon-core/`](pigeon-core/Cargo.toml)** — **Apache-2.0 OR MIT**. Undecided but will be permissive.
 - **[`PigeonRelay/`](PigeonRelay/LICENSE)** — **GNU AGPL-3.0-only**. It's a standalone
   network server (not linked into the app), so AGPL's network-source-availability
   (§13) applies to anyone running a modified relay, with no effect on the app.
