@@ -85,7 +85,7 @@ struct AddContactView: View {
       if showingMyQR {
         myQRCode
       } else {
-        QRScanner { code in handle(code) }
+        QRScanner { code in handle(code, verifiedInPerson: true) }
         ScannerReticle()
       }
     }
@@ -141,7 +141,9 @@ struct AddContactView: View {
         .font(.caption.monospaced())
         .textFieldStyle(.roundedBorder)
       Button {
-        handle(pasted)
+        // Pasted codes arrive over some out-of-band channel, so the safety
+        // number wasn't compared face to face — mark the contact unverified.
+        handle(pasted, verifiedInPerson: false)
       } label: {
         Text("Add Contact").frame(maxWidth: .infinity)
       }
@@ -179,13 +181,16 @@ struct AddContactView: View {
     .padding(.top, 4)
   }
 
-  private func handle(_ code: String) {
+  private func handle(_ code: String, verifiedInPerson: Bool) {
     guard let card = ContactCard(scanned: code) else {
       error = "That isn't a valid Pigeon contact code."
       return
     }
     let name = card.name.isEmpty ? "Unnamed" : card.name
-    if session.addContact(card.bundle, name: name, relayURLs: card.relayURLs) {
+    if session.addContact(
+      card.bundle, name: name, relayURLs: card.relayURLs,
+      prekeyBundle: card.prekeyBundle, verifiedInPerson: verifiedInPerson)
+    {
       error = nil
       pasted = ""
       // Mutual exchange: once we've added them, flip to our own QR so the

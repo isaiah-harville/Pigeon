@@ -72,17 +72,20 @@ final class X3DHTests: XCTestCase {
     let bobSession = try X3DH.respond(
       localStatic: bob.staticKey, signedPrekey: spk, oneTimePrekey: otk, header: header)
 
-    let decoded = try bobSession.decrypt(roundTrip(firstCiphertext))
+    let decoded = try bobSession.decrypt(firstCiphertext)
     XCTAssertEqual(decoded, msg("hello bob"))
 
     // Bob's identity (from the header) matches the real Alice for safety-number UX.
     XCTAssertEqual(header.initiatorIdentity, alice.identity)
+    // Each side sees the other's verified Noise static key for the binding check.
+    XCTAssertEqual(initiation.session.remoteStaticKey, bob.identity.staticKey)
+    XCTAssertEqual(bobSession.remoteStaticKey, alice.identity.staticKey)
 
     // The ratchet now runs normally in both directions.
     let reply = try bobSession.encrypt(msg("hi alice"))
-    XCTAssertEqual(try initiation.session.decrypt(roundTrip(reply)), msg("hi alice"))
+    XCTAssertEqual(try initiation.session.decrypt(reply), msg("hi alice"))
     let second = try initiation.session.encrypt(msg("how are you"))
-    XCTAssertEqual(try bobSession.decrypt(roundTrip(second)), msg("how are you"))
+    XCTAssertEqual(try bobSession.decrypt(second), msg("how are you"))
   }
 
   func testAsyncFirstContactWithoutOneTimePrekey() throws {
@@ -98,7 +101,7 @@ final class X3DHTests: XCTestCase {
     let header = try X3DHInitiation(decoding: initiation.header.encoded())
     let bobSession = try X3DH.respond(
       localStatic: bob.staticKey, signedPrekey: spk, oneTimePrekey: nil, header: header)
-    XCTAssertEqual(try bobSession.decrypt(roundTrip(first)), msg("no otk path"))
+    XCTAssertEqual(try bobSession.decrypt(first), msg("no otk path"))
   }
 
   // MARK: - Bundle authenticity
@@ -222,7 +225,7 @@ final class X3DHTests: XCTestCase {
     // Bob uses the wrong signed-prekey private half -> different shared secret.
     let bobSession = try X3DH.respond(
       localStatic: bob.staticKey, signedPrekey: DHKeyPair(), oneTimePrekey: otk, header: header)
-    XCTAssertThrowsError(try bobSession.decrypt(roundTrip(first)))
+    XCTAssertThrowsError(try bobSession.decrypt(first))
   }
 
   // MARK: - Malformed input
@@ -236,13 +239,4 @@ final class X3DHTests: XCTestCase {
     XCTAssertThrowsError(try X3DHPrekeyBundle(decoding: bundle.encoded() + Data([0xFF])))
   }
 
-  // MARK: - Helpers
-
-  /// Serializes a ratchet message to wire bytes and back, exercising the same
-  /// encoding the transport uses between the two ends.
-  private func roundTrip(_ message: RatchetMessage) throws -> RatchetMessage {
-    let wire = message.header.encoded() + message.ciphertext
-    let header = try RatchetHeader(decoding: wire.prefix(40))
-    return RatchetMessage(header: header, ciphertext: Data(wire.dropFirst(40)))
-  }
 }

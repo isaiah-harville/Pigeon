@@ -20,6 +20,12 @@ struct PersistedContact: Codable {
   /// The relay the user prefers for this conversation (absolute URL string), or
   /// `nil` for automatic. Defaults nil so older stores still decode (#18).
   var preferredRelayURL: String?
+  /// The contact's published X3DH prekey bundle, as its wire encoding. `nil` for
+  /// legacy contacts / cards without prekeys. Defaults nil so older stores decode.
+  var prekeyBundle: Data?
+  /// Whether the contact was verified in person (scanned vs pasted). Defaults
+  /// true so contacts saved before this field read as verified (§5.7 trust UX).
+  var verifiedInPerson: Bool = true
 }
 
 /// The complete persisted app state. Conversation keys are contact identity

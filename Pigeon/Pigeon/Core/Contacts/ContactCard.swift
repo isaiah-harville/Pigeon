@@ -29,8 +29,14 @@ struct ContactCard {
   /// Identity signature over `relayPayload(relayURLs)`. Empty when no URLs are
   /// advertised (or for a received card whose URL signature didn't verify).
   let relaySignature: Data
+  /// X3DH prekey bundle for async first contact (SECURITY_MODEL.md §5.7). Lets a
+  /// scanner open a session and send a first message while this device is
+  /// offline. `nil` for legacy cards (version < 0x03) or when not published; a
+  /// received bundle is honoured only if valid and bound to this same identity.
+  let prekeyBundle: X3DHPrekeyBundle?
 
-  private static let version: UInt8 = 0x02
+  /// 0x03 added the prekey field; 0x02 cards (relays, no prekeys) still parse.
+  private static let version: UInt8 = 0x03
 
   init(name: String, bundle: IdentityBundle) {
     self.init(name: name, bundle: bundle, relayURLs: [], relaySignature: Data())
@@ -41,12 +47,14 @@ struct ContactCard {
   }
 
   init(
-    name: String, bundle: IdentityBundle, relayURLs: [URL], relaySignature: Data
+    name: String, bundle: IdentityBundle, relayURLs: [URL], relaySignature: Data,
+    prekeyBundle: X3DHPrekeyBundle? = nil
   ) {
     self.name = name
     self.bundle = bundle
     self.relayURLs = relayURLs
     self.relaySignature = relaySignature
+    self.prekeyBundle = prekeyBundle
   }
 
   /// The canonical bytes signed/verified for a set of relay URLs.
@@ -61,6 +69,9 @@ struct ContactCard {
     Self.appendField(&data, Data(name.utf8))
     Self.appendField(&data, Self.relayPayload(relayURLs))
     Self.appendField(&data, relaySignature)
+    // The prekey bundle re-includes the 128-byte identity; it is self-verifying
+    // (every field signed by the identity key) so no separate signature here.
+    Self.appendField(&data, prekeyBundle?.encoded() ?? Data())
     return data.base64EncodedString()
   }
 
@@ -76,12 +87,14 @@ struct ContactCard {
 
     // A fresh, zero-based copy so field math is straightforward.
     let body = Data(raw.dropFirst(IdentityBundle.size))
-    guard body.first == Self.version else {
-      // Legacy card: everything after the bundle is the name; no relays.
+    let version = body.first
+    guard version == 0x02 || version == 0x03 else {
+      // Legacy card: everything after the bundle is the name; no relays/prekeys.
       guard let name = String(bytes: body, encoding: .utf8) else { return nil }
       self.name = name
       self.relayURLs = []
       self.relaySignature = Data()
+      self.prekeyBundle = nil
       return
     }
 
@@ -104,6 +117,18 @@ struct ContactCard {
     } else {
       self.relayURLs = []
       self.relaySignature = Data()
+    }
+
+    // Version 0x03 carries a prekey bundle. Honour it only if it is internally
+    // valid (self-signed) and bound to the *same* identity as this card, so a
+    // tampered card can at worst deny async delivery, never redirect trust.
+    if version == 0x03, let prekeyField = Self.readField(body, &cursor), !prekeyField.isEmpty,
+      let parsed = try? X3DHPrekeyBundle(decoding: prekeyField), parsed.isValid(),
+      parsed.identity.identityKey == bundle.identityKey
+    {
+      self.prekeyBundle = parsed
+    } else {
+      self.prekeyBundle = nil
     }
   }
 

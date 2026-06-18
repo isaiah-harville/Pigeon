@@ -42,6 +42,9 @@ public final class SecureSession {
 
   private var ratchet: DoubleRatchetSession?
   private var result: NoiseHandshakeResult?
+  /// Set when the session was established out-of-band (e.g. via X3DH) rather
+  /// than by pumping the Noise handshake, so `remoteStaticKey` still answers.
+  private var establishedRemoteStaticKey: Data?
 
   private init(isInitiator: Bool, staticKey: DHKeyPair) {
     self.isInitiator = isInitiator
@@ -57,12 +60,26 @@ public final class SecureSession {
     SecureSession(isInitiator: false, staticKey: localStatic)
   }
 
+  /// Wraps a ratchet that was already bootstrapped outside the Noise handshake
+  /// (the X3DH path, `X3DH.swift`). The session is immediately established;
+  /// `remoteStaticKey` returns the peer static key the caller verified out of
+  /// band so the app's binding check can run uniformly. The Noise handshake
+  /// state on this instance is inert.
+  public static func established(
+    ratchet: DoubleRatchetSession, remoteStaticKey: Data
+  ) -> SecureSession {
+    let session = SecureSession(isInitiator: true, staticKey: DHKeyPair())
+    session.ratchet = ratchet
+    session.establishedRemoteStaticKey = remoteStaticKey
+    return session
+  }
+
   /// True once the ratchet is ready and `encrypt`/`decrypt` may be used.
   public var isEstablished: Bool { ratchet != nil }
 
   /// The peer's long-term static public key — verify this against the
   /// identity exchanged in person before trusting the channel.
-  public var remoteStaticKey: Data? { result?.remoteStaticKey }
+  public var remoteStaticKey: Data? { result?.remoteStaticKey ?? establishedRemoteStaticKey }
 
   // MARK: - Handshake pump
 

@@ -28,7 +28,10 @@ struct ChatView: View {
       .onDisappear { if session.activeChatID == contact.id { session.activeChatID = nil } }
       .toolbar { chatToolbar }
       .sheet(isPresented: $showSafetyNumber) {
-        SafetyNumberSheet(number: session.safetyNumber(with: contact), name: contact.displayName)
+        SafetyNumberSheet(
+          number: session.safetyNumber(with: contact), name: contact.displayName,
+          isVerified: session.isVerifiedInPerson(contact),
+          onVerify: { session.markVerifiedInPerson(contact) })
       }
       .alert("Rename Contact", isPresented: $showRename) {
         TextField("Name", text: $newName)
@@ -130,6 +133,19 @@ struct ChatView: View {
         }
       }
       .foregroundStyle(isSecure ? .green : .secondary)
+      if !session.isVerifiedInPerson(contact) {
+        Button {
+          showSafetyNumber = true
+        } label: {
+          HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.shield.fill")
+            Text("Not verified in person — compare the safety number")
+            Spacer()
+          }
+          .foregroundStyle(.orange)
+        }
+        .buttonStyle(.plain)
+      }
       ConnectionSummary(peers: session.connectedPeerCount, relayHosts: session.relayHosts)
     }
     .font(.footnote)

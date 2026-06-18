@@ -27,6 +27,7 @@ extension SessionManager {
     guard let contact = contacts.first(where: { $0.id == envelope.sender }) else { return }
     switch envelope.type {
     case .handshake: handleHandshake(envelope.payload, from: contact)
+    case .x3dhInit: handleX3DHInit(envelope.payload, from: contact)
     case .message: handleMessage(envelope.payload, from: contact, channel: channel)
     case .rehandshakeRequest: handleRehandshakeRequest(from: contact)
     case .ack: handleAck(envelope.payload, from: contact)
@@ -72,6 +73,53 @@ extension SessionManager {
       }
       pump(session, with: contact)
     }
+  }
+
+  /// Responder side of async first contact: a peer opened a session against our
+  /// published prekeys (we may have been offline when they sent it). Reconstruct
+  /// the session, then process the `message` envelopes that follow normally.
+  func handleX3DHInit(_ payload: Data, from contact: Contact) {
+    // Only the lexicographic responder accepts initiations; if we're the
+    // initiator we drive our own session and ignore a crossed initiation.
+    guard !isInitiator(toward: contact.id) else { return }
+
+    // A retransmit of the initiation we already processed: ignore. Re-running
+    // `X3DH.respond` would reset an advanced ratchet and break decryption. A
+    // *different* header means the peer restarted — fall through and rebuild.
+    if payload == lastX3DHIn[contact.id] { return }
+
+    guard let header = try? X3DHInitiation(decoding: payload) else { return }
+    // Binding check: the initiation's identity must match the verified contact
+    // (constant-time over public keys, mirroring the Noise `finalize` check).
+    guard ConstantTime.equals(header.initiatorIdentity.staticKey, contact.bundle.staticKey),
+      contact.bundle.isValid()
+    else {
+      note(sessionRejectedMessage(for: contact))
+      return
+    }
+    // Look up the private signed prekey the initiator named.
+    guard let signedPrekey = identity.signedPrekey(forID: header.signedPrekeyID) else {
+      note("X3DH init from \"\(contact.displayName)\" referenced an unknown prekey")
+      return
+    }
+    // We publish SPK-only in the QR (no one-time prekeys), so a header should
+    // carry none; if a future bundle did, we have no OPK store to satisfy it and
+    // `respond` will reject — surfaced as a failure rather than silently wrong.
+    let oneTimePrekey: DHKeyPair? = nil
+    guard
+      let session = try? X3DH.respond(
+        localStatic: identity.noiseStaticKey,
+        signedPrekey: signedPrekey,
+        oneTimePrekey: oneTimePrekey,
+        header: header)
+    else {
+      note("X3DH respond failed from \"\(contact.displayName)\"")
+      return
+    }
+    lastX3DHIn[contact.id] = payload
+    sessions[contact.id] = session
+    establishedContactIDs.insert(contact.id)
+    note("Secure session established with \"\(contact.displayName)\" (async first contact)")
   }
 
   func handleMessage(_ payload: Data, from contact: Contact, channel: TransportChannel) {
@@ -126,6 +174,9 @@ extension SessionManager {
       let idString = String(data: plaintext, encoding: .utf8),
       let id = UUID(uuidString: idString)
     else { return }
+    // An ack proves the peer holds the session, so the X3DH initiation has
+    // landed — stop resending it.
+    pendingX3DHInit[contact.id] = nil
     setPending(false, messageID: id, contactID: contact.id)
     persist()
   }
@@ -230,6 +281,15 @@ extension SessionManager {
       let contact = contacts.first(where: { $0.id == contactID })
     else { return }
 
+    // Prefer async X3DH first contact when we hold the peer's prekey bundle: it
+    // establishes immediately and reaches the peer even if they're offline now
+    // (they drain it from their relay mailbox later). Falls back to the
+    // interactive Noise handshake for legacy contacts without prekeys.
+    if contact.prekeyBundle != nil {
+      establishViaX3DH(contact)
+      return
+    }
+
     if sessions[contactID] == nil {
       // Start a fresh handshake and remember msg1 for retries.
       let session = SecureSession.initiator(localStatic: identity.noiseStaticKey)
@@ -245,6 +305,40 @@ extension SessionManager {
       // Resend the SAME msg1 (peer may not have been a contact yet / it was lost).
       sendEnvelope(.handshake, payload: msg1, to: contact)
     }
+  }
+
+  /// Initiator side of async first contact. Builds the session from the peer's
+  /// published prekeys, marks it established immediately (the binding is checked
+  /// here), and emits the initiation header. Any queued messages are delivered
+  /// right after, so they land in the peer's mailbox whether or not they're
+  /// online. The header is retained (`pendingX3DHInit`) and resent until the
+  /// peer acknowledges, surviving loss and a peer that's offline for a while.
+  func establishViaX3DH(_ contact: Contact) {
+    guard let peerBundle = contact.prekeyBundle else { return }
+    // Defense-in-depth binding check (the card scanner already verified it):
+    // the prekey bundle's identity static key must equal the verified contact.
+    guard ConstantTime.equals(peerBundle.identity.staticKey, contact.bundle.staticKey) else {
+      note(sessionRejectedMessage(for: contact))
+      return
+    }
+    guard
+      let initiation = try? X3DH.initiate(
+        localStatic: identity.noiseStaticKey,
+        localIdentity: identity.identityBundle,
+        bundle: peerBundle)
+    else {
+      note("X3DH first contact failed with \"\(contact.displayName)\"")
+      return
+    }
+    sessions[contact.id] = initiation.session
+    let header = initiation.header.encoded()
+    pendingX3DHInit[contact.id] = header
+    establishedContactIDs.insert(contact.id)
+    sendEnvelope(.x3dhInit, payload: header, to: contact)
+    note("→ X3DH first contact to \"\(contact.displayName)\"")
+    sendPending(to: contact)  // deliver anything queued (header precedes it)
+    if ephemeralContactIDs.contains(contact.id) { sendEphemeralState(to: contact) }
+    if bluetoothChatIDs.contains(contact.id) { sendTransportState(to: contact) }
   }
 
   func makeResponder(for contact: Contact) -> SecureSession {
@@ -371,6 +465,11 @@ extension SessionManager {
   /// lost packets; duplicates are deduplicated by the recipient.
   func sendPending(to contact: Contact) {
     guard establishedContactIDs.contains(contact.id) else { return }
+    // For an X3DH-initiated session not yet acknowledged, resend the initiation
+    // header first so it always precedes the messages, even on reorder/loss.
+    if let header = pendingX3DHInit[contact.id] {
+      sendEnvelope(.x3dhInit, payload: header, to: contact)
+    }
     let pending = (conversations[contact.id] ?? []).filter { $0.mine && $0.pending }
     for message in pending {
       transmit(message, to: contact)
@@ -424,7 +523,9 @@ extension SessionManager {
       PersistedContact(
         name: contact.displayName, bundle: contact.bundle.encoded(),
         relayURLs: contact.relayURLs.map(\.absoluteString),
-        preferredRelayURL: contact.preferredRelayURL?.absoluteString)
+        preferredRelayURL: contact.preferredRelayURL?.absoluteString,
+        prekeyBundle: contact.prekeyBundle?.encoded(),
+        verifiedInPerson: contact.verifiedInPerson)
     }
     var conversationsByKey: [String: [ChatMessage]] = [:]
     for (id, messages) in persistedConversations {

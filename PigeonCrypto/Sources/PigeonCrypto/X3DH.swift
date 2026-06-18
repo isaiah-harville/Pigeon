@@ -312,10 +312,10 @@ public enum X3DH {
   private static let kdfPrefix = Data(repeating: 0xFF, count: 32)
 
   /// The result of initiating: the header to transmit ahead of the first
-  /// message, and the ready-to-use ratchet (call `encrypt` for the first body).
+  /// message, and the ready-to-use session (call `encrypt` for the first body).
   public struct Initiation {
     public let header: X3DHInitiation
-    public let session: DoubleRatchetSession
+    public let session: SecureSession
   }
 
   /// Initiator side (Alice). Validates `bundle`, derives the shared secret, and
@@ -351,8 +351,12 @@ public enum X3DH {
       SecureMemory.zero(&sharedSecret)
     }
 
-    let session = try DoubleRatchetSession.initiator(
+    let ratchet = try DoubleRatchetSession.initiator(
       sharedSecret: sharedSecret, remotePublicKey: spkB)
+    // The peer's verified Noise static key (IK_B) is what the app's binding
+    // check compares against the contact bundle.
+    let session = SecureSession.established(
+      ratchet: ratchet, remoteStaticKey: bundle.identity.staticKey)
 
     let header = X3DHInitiation(
       initiatorIdentity: localIdentity,
@@ -378,7 +382,7 @@ public enum X3DH {
     signedPrekey: DHKeyPair,
     oneTimePrekey: DHKeyPair?,
     header: X3DHInitiation
-  ) throws -> DoubleRatchetSession {
+  ) throws -> SecureSession {
     guard header.initiatorIdentity.isValid() else { throw X3DHError.invalidIdentityBinding }
     // One-time prekey presence must match what the initiator said it used.
     guard (header.oneTimePrekeyID == nil) == (oneTimePrekey == nil) else {
@@ -407,7 +411,11 @@ public enum X3DH {
 
     // The signed prekey is the responder's initial ratchet key, matching the
     // initiator's `remotePublicKey`.
-    return DoubleRatchetSession.responder(sharedSecret: sharedSecret, selfKeyPair: signedPrekey)
+    let ratchet = DoubleRatchetSession.responder(
+      sharedSecret: sharedSecret, selfKeyPair: signedPrekey)
+    // IK_A — the initiator's verified Noise static key — for the binding check.
+    return SecureSession.established(
+      ratchet: ratchet, remoteStaticKey: header.initiatorIdentity.staticKey)
   }
 
   // MARK: Internals

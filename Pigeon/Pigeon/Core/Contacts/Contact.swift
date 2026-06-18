@@ -23,6 +23,15 @@ struct Contact: Identifiable, Equatable {
   /// the contact's other advertised relays, then our own, if this one is down
   /// (#18).
   var preferredRelayURL: URL?
+  /// The contact's published X3DH prekey bundle, learned from their QR card.
+  /// Present enables async first contact (messaging them while they're offline);
+  /// `nil` for legacy cards, where we fall back to the interactive handshake.
+  var prekeyBundle: X3DHPrekeyBundle?
+  /// Whether this contact was added by scanning their QR **in person** (so the
+  /// safety number was exchanged face to face) rather than pasted from a code
+  /// shared over some other channel. Drives the "not verified in person" cue.
+  /// Defaults true so contacts added before this distinction read as verified.
+  var verifiedInPerson: Bool = true
 
   /// Identity public key, used as the stable contact id.
   var id: Data { bundle.identityKey }

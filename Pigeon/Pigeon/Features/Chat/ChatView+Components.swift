@@ -319,6 +319,10 @@ struct BubbleShape: Shape {
 struct SafetyNumberSheet: View {
   let number: String
   let name: String
+  /// When the contact isn't yet verified in person, an optional action to mark
+  /// them verified after the user has compared the numbers out of band.
+  var isVerified: Bool = true
+  var onVerify: (() -> Void)?
   @Environment(\.dismiss) private var dismiss
 
   var body: some View {
@@ -332,6 +336,17 @@ struct SafetyNumberSheet: View {
           Text(number)
             .font(.title3.monospaced())
             .multilineTextAlignment(.center)
+          if !isVerified, let onVerify {
+            Button {
+              onVerify()
+              dismiss()
+            } label: {
+              Label("Mark as Verified", systemImage: "checkmark.shield.fill")
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .padding(.top, 4)
+          }
         }
         .padding()
       }
