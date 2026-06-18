@@ -2,7 +2,7 @@
 //  ContactCardTests.swift
 //  PigeonTests
 //
-//  The QR card wire format: round-trips, legacy (name-only) cards, and the
+//  The QR card wire format: round-trips, a minimal (no-relay) card, and the
 //  security-critical rule that advertised relay URLs are honoured only when
 //  signed by the card's own identity key.
 //
@@ -28,9 +28,10 @@ final class ContactCardTests: XCTestCase {
     return (idKey, bundle)
   }
 
-  func testNameOnlyRoundTrip() {
+  func testMinimalCardRoundTrip() {
     let (_, bundle) = makeIdentity()
-    let card = ContactCard(name: "Alice", bundle: bundle)
+    let card = ContactCard(
+      name: "Alice", bundle: bundle, relayURLs: [], relaySignature: Data(), prekeyBundle: nil)
     let decoded = ContactCard(scanned: card.encoded())
     XCTAssertEqual(decoded?.name, "Alice")
     XCTAssertEqual(decoded?.bundle, bundle)
@@ -41,7 +42,8 @@ final class ContactCardTests: XCTestCase {
     let (idKey, bundle) = makeIdentity()
     let urls = [URL(string: "wss://a.example/ws")!, URL(string: "wss://b.example/ws")!]
     let signature = try! idKey.signature(for: ContactCard.relayPayload(urls))
-    let card = ContactCard(name: "Bob", bundle: bundle, relayURLs: urls, relaySignature: signature)
+    let card = ContactCard(
+      name: "Bob", bundle: bundle, relayURLs: urls, relaySignature: signature, prekeyBundle: nil)
 
     let decoded = ContactCard(scanned: card.encoded())
     XCTAssertEqual(decoded?.name, "Bob")
@@ -52,7 +54,8 @@ final class ContactCardTests: XCTestCase {
     // Built with an empty relay signature: a scanner must not honour the URLs.
     let (_, bundle) = makeIdentity()
     let urls = [URL(string: "wss://a.example/ws")!]
-    let card = ContactCard(name: "Bob", bundle: bundle, relayURLs: urls)  // empty signature
+    let card = ContactCard(
+      name: "Bob", bundle: bundle, relayURLs: urls, relaySignature: Data(), prekeyBundle: nil)
 
     let decoded = ContactCard(scanned: card.encoded())
     XCTAssertEqual(decoded?.relayURLs, [])
@@ -64,7 +67,8 @@ final class ContactCardTests: XCTestCase {
     let urls = [URL(string: "wss://evil.example/ws")!]
     // Signed by a *different* identity than the card's bundle — must be rejected.
     let forged = try! attackerKey.signature(for: ContactCard.relayPayload(urls))
-    let card = ContactCard(name: "Bob", bundle: bundle, relayURLs: urls, relaySignature: forged)
+    let card = ContactCard(
+      name: "Bob", bundle: bundle, relayURLs: urls, relaySignature: forged, prekeyBundle: nil)
 
     let decoded = ContactCard(scanned: card.encoded())
     XCTAssertEqual(decoded?.relayURLs, [])

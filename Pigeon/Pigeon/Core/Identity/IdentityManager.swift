@@ -34,9 +34,9 @@ final class IdentityManager {
   /// window — see SECURITY_MODEL.md §5.7.
   private static let signedPrekeyLifetime: TimeInterval = 7 * 24 * 60 * 60
 
-  private let store: KeychainStore
-  private let staticStore: KeychainStore
-  private let prekeyStore: KeychainStore
+  private let store: any KeyStore
+  private let staticStore: any KeyStore
+  private let prekeyStore: any KeyStore
   private var privateKey: Curve25519.Signing.PrivateKey
   private var staticKeyPair: DHKeyPair
   /// Signed-prekey lifecycle state for X3DH async first contact (current +
@@ -72,9 +72,9 @@ final class IdentityManager {
   }
 
   init(
-    store: KeychainStore,
-    staticStore: KeychainStore,
-    prekeyStore: KeychainStore
+    store: any KeyStore,
+    staticStore: any KeyStore,
+    prekeyStore: any KeyStore
   ) throws {
     self.store = store
     self.staticStore = staticStore
