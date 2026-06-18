@@ -180,9 +180,14 @@ final class RelayTransport: Transport {
         backoff = 1.0
       } catch {
         guard !Task.isCancelled else { break }
+        // A connection that had come up and then dropped (e.g. an airplane-mode
+        // blip) should reconnect promptly, so only grow the backoff for endpoints
+        // that never became ready in the first place.
+        let wasReady = connections[url]?.ready == true
         connections[url]?.ready = false
         note("Relay \(host(url)) offline; retrying")
         refreshLinkState()
+        if wasReady { backoff = 1.0 }
       }
       if Task.isCancelled { break }
       try? await Task.sleep(for: .seconds(min(backoff, 30)))
@@ -216,6 +221,13 @@ final class RelayTransport: Transport {
     connection.ready = true
     note("Relay \(host(url)) \(connection.authenticate ? "online" : "ready")")
     refreshLinkState()
+
+    // Heartbeat alongside the blocking receive loop: a half-open socket (network
+    // dropped and returned without a clean close) otherwise stays "ready" forever
+    // while deposits vanish. A missed pong cancels the socket so receive() throws
+    // and supervise() reconnects.
+    let heartbeat = Task { [weak self] in await self?.keepAlive(socket) }
+    defer { heartbeat.cancel() }
 
     while !Task.isCancelled {
       let message = try await receive(socket)
@@ -284,6 +296,46 @@ final class RelayTransport: Transport {
 
   private static func hex(_ data: Data) -> String {
     data.map { String(format: "%02x", $0) }.joined()
+  }
+}
+
+// MARK: - Heartbeat
+
+extension RelayTransport {
+
+  /// Periodically pings a live socket; a missed pong cancels it so the blocking
+  /// `receive()` in `serve` throws and `supervise` reconnects. This is what
+  /// rescues a connection silently killed mid-stream (the airplane-mode case)
+  /// rather than leaving it "ready" with every deposit dropped on the floor.
+  func keepAlive(_ socket: URLSessionWebSocketTask) async {
+    while !Task.isCancelled {
+      try? await Task.sleep(for: .seconds(15))
+      guard !Task.isCancelled else { return }
+      if await Self.isAlive(socket) { continue }
+      socket.cancel(with: .goingAway, reason: nil)  // unblock receive() → reconnect
+      return
+    }
+  }
+
+  /// Sends a WebSocket ping and waits for the pong, treating no reply within a
+  /// few seconds as a dead connection. `sendPing` has no built-in pong timeout,
+  /// so we race it against a sleep — essential for spotting a half-open socket
+  /// that would otherwise accept `sendPing` writes that never arrive.
+  nonisolated static func isAlive(_ socket: URLSessionWebSocketTask) async -> Bool {
+    await withTaskGroup(of: Bool.self) { group in
+      group.addTask {
+        await withCheckedContinuation { continuation in
+          socket.sendPing { continuation.resume(returning: $0 == nil) }
+        }
+      }
+      group.addTask {
+        try? await Task.sleep(for: .seconds(8))
+        return false
+      }
+      let alive = await group.next() ?? false
+      group.cancelAll()
+      return alive
+    }
   }
 }
 
