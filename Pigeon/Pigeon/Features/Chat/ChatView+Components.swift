@@ -145,9 +145,15 @@ struct MessageFooter: View {
   let message: ChatMessage
 
   var body: some View {
-    Text(message.date.formatted(date: .omitted, time: .shortened))
-      .font(.caption2)
-      .foregroundStyle(.secondary)
+    HStack(spacing: 4) {
+      Text(message.displayDate.formatted(date: .omitted, time: .shortened))
+      if message.deliveryDelay != nil {
+        Image(systemName: "clock.arrow.circlepath")
+        Text("received \(message.date.formatted(date: .omitted, time: .shortened))")
+      }
+    }
+    .font(.caption2)
+    .foregroundStyle(.secondary)
   }
 }
 
@@ -265,6 +271,20 @@ extension ChatMessage {
     let text = self.text.replacingOccurrences(of: "\n", with: " ")
     return text.count > 72 ? String(text.prefix(72)) + "..." : text
   }
+
+  /// The time to show on the bubble: the original send time when known, so a
+  /// store-and-forward-delayed message reads as when it was sent.
+  var displayDate: Date { sentAt ?? date }
+
+  /// How long an incoming message waited between being sent and arriving here,
+  /// or `nil` when it arrived promptly (or is our own message). Drives the
+  /// "received at" hint so a delayed message doesn't look brand new. Threshold:
+  /// more than three minutes late.
+  var deliveryDelay: TimeInterval? {
+    guard !mine, let sentAt else { return nil }
+    let delay = date.timeIntervalSince(sentAt)
+    return delay > 180 ? delay : nil
+  }
 }
 
 /// Long-press detail for a message: the link it travelled over plus the full
@@ -277,7 +297,12 @@ struct MessageDetailMenu: View {
     if let transport = message.transport {
       Label(linkText(transport), systemImage: symbol(transport))
     }
-    Text(message.date.formatted(date: .abbreviated, time: .standard))
+    if message.deliveryDelay != nil {
+      Text("Sent \(message.displayDate.formatted(date: .abbreviated, time: .standard))")
+      Text("Received \(message.date.formatted(date: .abbreviated, time: .standard))")
+    } else {
+      Text(message.date.formatted(date: .abbreviated, time: .standard))
+    }
   }
 
   private func linkText(_ channel: TransportChannel) -> String {
@@ -319,27 +344,43 @@ struct BubbleShape: Shape {
 struct SafetyNumberSheet: View {
   let number: String
   let name: String
+  /// When the contact isn't yet verified in person, an optional action to mark
+  /// them verified after the user has compared the numbers out of band.
+  var isVerified: Bool = true
+  var onVerify: (() -> Void)?
   @Environment(\.dismiss) private var dismiss
 
   var body: some View {
     NavigationStack {
-      ScrollView {
-        VStack(spacing: 16) {
-          Text(explanation)
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-          Text(number)
-            .font(.title3.monospaced())
-            .multilineTextAlignment(.center)
+      ScrollView { details.padding() }
+        .navigationTitle("Safety Number")
+        .toolbar {
+          ToolbarItem(placement: .confirmationAction) {
+            Button("Done") { dismiss() }
+          }
         }
-        .padding()
-      }
-      .navigationTitle("Safety Number")
-      .toolbar {
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Done") { dismiss() }
+    }
+  }
+
+  private var details: some View {
+    VStack(spacing: 16) {
+      Text(explanation)
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+      Text(number)
+        .font(.title3.monospaced())
+        .multilineTextAlignment(.center)
+      if !isVerified, let onVerify {
+        Button {
+          onVerify()
+          dismiss()
+        } label: {
+          Label("Mark as Verified", systemImage: "checkmark.shield.fill")
+            .frame(maxWidth: .infinity)
         }
+        .buttonStyle(.borderedProminent)
+        .padding(.top, 4)
       }
     }
   }

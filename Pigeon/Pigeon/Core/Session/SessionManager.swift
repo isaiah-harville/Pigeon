@@ -74,6 +74,14 @@ final class SessionManager {
   /// retransmission (resend our reply when the peer repeats its message).
   var lastHandshakeIn: [Data: Data] = [:]
   var lastHandshakeOut: [Data: Data] = [:]
+  /// The X3DH initiation header we sent per contact (async first contact),
+  /// retained so it can be resent until the peer drains it — analogous to
+  /// `pendingMsg1`. Cleared once the peer acks (proof it has the session).
+  var pendingX3DHInit: [Data: Data] = [:]
+  /// The last X3DH initiation header we processed as responder, to ignore
+  /// retransmits (re-running `X3DH.respond` would reset an advanced ratchet);
+  /// a *different* header signals a genuine peer restart.
+  var lastX3DHIn: [Data: Data] = [:]
   /// The on-disk mirror of conversations (excludes ephemeral-era messages).
   var persistedConversations: [Data: [ChatMessage]] = [:]
   var retryTimer: Timer?
@@ -145,10 +153,17 @@ final class SessionManager {
       guard let bundle = try? IdentityBundle(decoding: persisted.bundle), bundle.isValid() else {
         return nil
       }
+      // Honour a stored prekey bundle only if still valid and bound to this
+      // identity (the same guard the QR scanner applies).
+      let prekeyBundle = persisted.prekeyBundle
+        .flatMap { try? X3DHPrekeyBundle(decoding: $0) }
+        .flatMap { $0.isValid() && $0.identity.identityKey == bundle.identityKey ? $0 : nil }
       return Contact(
         bundle: bundle, displayName: persisted.name,
         relayURLs: persisted.relayURLs.compactMap { URL(string: $0) },
-        preferredRelayURL: persisted.preferredRelayURL.flatMap { URL(string: $0) })
+        preferredRelayURL: persisted.preferredRelayURL.flatMap { URL(string: $0) },
+        prekeyBundle: prekeyBundle,
+        verifiedInPerson: persisted.verifiedInPerson)
     }
     var loaded: [Data: [ChatMessage]] = [:]
     for (key, messages) in state.conversations {
@@ -220,13 +235,14 @@ final class SessionManager {
   /// Verifies and stores a scanned contact bundle, then begins establishing a
   /// session. `relayURLs` are the contact's advertised relay endpoints from
   /// their QR card (where we deposit ciphertext for them off-Bluetooth).
+  /// `prekeyBundle` (from the scanned/pasted card) enables async first contact;
+  /// `verifiedInPerson` records whether the safety number was exchanged face to
+  /// face (scan) versus a code shared out of band (paste).
   @discardableResult
-  func addContact(_ bundle: IdentityBundle, name: String) -> Bool {
-    addContact(bundle, name: name, relayURLs: [])
-  }
-
-  @discardableResult
-  func addContact(_ bundle: IdentityBundle, name: String, relayURLs: [URL]) -> Bool {
+  func addContact(
+    _ bundle: IdentityBundle, name: String, relayURLs: [URL],
+    prekeyBundle: X3DHPrekeyBundle?, verifiedInPerson: Bool
+  ) -> Bool {
     guard bundle.isValid() else {
       note("Rejected contact \"\(name)\": invalid identity binding")
       return false
@@ -235,11 +251,16 @@ final class SessionManager {
       note("That QR is your own identity")
       return false
     }
+    // A prekey bundle is honoured only if bound to this same identity.
+    let prekeys = prekeyBundle.flatMap { $0.identity.identityKey == bundle.identityKey ? $0 : nil }
+    let contact = Contact(
+      bundle: bundle, displayName: name, relayURLs: relayURLs,
+      prekeyBundle: prekeys, verifiedInPerson: verifiedInPerson)
     if let index = contacts.firstIndex(where: { $0.id == bundle.identityKey }) {
       // Refresh the full bundle (e.g. a rotated static key), not just the name.
-      contacts[index] = Contact(bundle: bundle, displayName: name, relayURLs: relayURLs)
+      contacts[index] = contact
     } else {
-      contacts.append(Contact(bundle: bundle, displayName: name, relayURLs: relayURLs))
+      contacts.append(contact)
     }
     persist()
     refreshRelay()  // open a publish connection to the new contact's relays
@@ -255,6 +276,8 @@ final class SessionManager {
     pendingMsg1[contactID] = nil
     lastHandshakeIn[contactID] = nil
     lastHandshakeOut[contactID] = nil
+    pendingX3DHInit[contactID] = nil
+    lastX3DHIn[contactID] = nil
     establishedContactIDs.remove(contactID)
   }
 

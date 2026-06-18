@@ -90,7 +90,13 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 - **Async first contact (X3DH-style prekeys)** — message a peer who is not
   currently reachable at first contact (prekeys in the QR / gossiped over mesh).
   Unblocks long-distance and async group messaging. Has prekey-exhaustion/replay
-  tradeoffs.
+  tradeoffs. **Crypto core done:** `PigeonCrypto/X3DH.swift` (prekey bundle +
+  agreement, reuses `IdentityBundle` trust and the Double Ratchet bootstrap;
+  CLI-tested) and the tradeoffs are written up in
+  [SECURITY_MODEL.md §5.7](SECURITY_MODEL.md). Remaining: app wiring (prekey
+  gen/storage/rotation, OPK delete-on-use, bundle in the QR card / relay, mesh
+  gossip), the "added remotely / not verified in person" trust UX, and the X3DH
+  validation audit item (3a).
 - **Push wake-up (APNs via the official relay)** — iOS suspends backgrounded
   apps, so without a push the device may not notice a relay-delivered message
   until the user opens Pigeon. Only the app publisher can hold the APNs signing
@@ -162,8 +168,6 @@ Several are audit blockers (see [SECURITY_MODEL.md](SECURITY_MODEL.md) → Audit
   decryption, deliberately). Remaining limit: iOS *suspends* a backgrounded app,
   so reliable "phone in pocket for hours" delivery still needs a push wake-up
   (see **Push wake-up** under Next).
-- **Lint/format debt** — SwiftLint/SwiftFormat pre-commit hooks fail; commits use
-  `--no-verify` for now. Do a cleanup pass.
 
 *Resolved:* multi-path duplicate delivery (mesh dedup), identity↔Noise-static
 binding (IdentityBundle), one-sided-restart reconnection (auto-reconnect +

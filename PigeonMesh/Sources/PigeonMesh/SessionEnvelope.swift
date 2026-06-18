@@ -30,6 +30,10 @@ public enum EnvelopeType: UInt8, Sendable {
   case ack = 4
   /// An (encrypted) control/state-sync message, e.g. toggling ephemeral mode.
   case control = 5
+  /// An X3DH async first-contact initiation header (cleartext prekey/identity
+  /// metadata) sent by the initiator ahead of the first `message`, so a peer
+  /// who was offline can reconstruct the session. See `X3DH.swift`.
+  case x3dhInit = 6
 }
 
 /// An identity-addressed envelope. `sender`/`recipient` are 32-byte identity

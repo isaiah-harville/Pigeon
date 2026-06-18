@@ -101,7 +101,24 @@ extension SessionManager {
       name: myName,
       bundle: identity.identityBundle,
       relayURLs: relayURLs,
-      relaySignature: signature)
+      relaySignature: signature,
+      prekeyBundle: identity.publishedPrekeyBundle)  // enables async first contact
+  }
+
+  /// Whether `contact` was verified in person (QR scanned face to face) rather
+  /// than added from a pasted code. Reads live state so the UI updates when the
+  /// user marks the contact verified (§5.7 trust UX).
+  func isVerifiedInPerson(_ contact: Contact) -> Bool {
+    contacts.first { $0.id == contact.id }?.verifiedInPerson ?? contact.verifiedInPerson
+  }
+
+  /// Records that the user compared the safety number out of band and trusts
+  /// this contact, clearing the "not verified in person" cue. Deliberate and
+  /// user-initiated — we never flip trust silently.
+  func markVerifiedInPerson(_ contact: Contact) {
+    guard let index = contacts.firstIndex(where: { $0.id == contact.id }) else { return }
+    contacts[index].verifiedInPerson = true
+    persist()
   }
 
   var myFingerprint: String { identity.publicKey.fingerprint }
