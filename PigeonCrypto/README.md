@@ -28,3 +28,10 @@ swift test --package-path PigeonCrypto
 This package has not been independently audited. It composes CryptoKit
 primitives but still needs byte-level Noise test-vector validation and external
 review before production security claims.
+
+## License
+
+Licensed under the **GNU Affero General Public License v3.0 only**
+(`AGPL-3.0-only`) — see [LICENSE](LICENSE). This package is reusable messaging
+core code: people can use it to build new apps, but modified versions offered to
+users must keep their source available under the AGPL.

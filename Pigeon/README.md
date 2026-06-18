@@ -23,5 +23,12 @@ The `Pigeon/` directory contains the iOS SwiftUI app and Xcode project.
 xcodebuild build -project Pigeon/Pigeon.xcodeproj -scheme Pigeon -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO
 ```
 
-The app links the MIT-licensed `PigeonCrypto` and `PigeonMesh` packages. The
-AGPL relay server is a separate network service and is not linked into the app.
+The app source is available for transparency, review, and local development
+under the source-available [LICENSE](LICENSE). It is not open source:
+commercial use, redistribution as an app, and App Store/TestFlight publication
+require permission from the Pigeon maintainers.
+
+The app currently links the Swift `PigeonCrypto` and `PigeonMesh` packages while
+the Rust migration is underway. Those packages, along with `pigeon-core` and
+`PigeonRelay`, are AGPL-3.0-only so reusable messaging core code cannot be taken
+closed.

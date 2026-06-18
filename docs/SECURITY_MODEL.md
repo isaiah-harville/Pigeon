@@ -182,13 +182,15 @@ code composes them into protocols; it **never implements primitive algorithms**.
 - **Risk boundary:** we implement *protocol composition*, not primitives, which
   is a far smaller and more checkable surface than implementing curve math.
   This does **not** remove the need for an external audit (§Audit Readiness).
-- **License:** the app and the packages it links (`PigeonCrypto`, `PigeonMesh`)
-  are **MIT** — permissive and App Store–compatible. The standalone **`relay`
-  server is AGPL-3.0-only** (it isn't linked into the app, so AGPL's network
-  copyleft applies only to relay operators). libsignal is AGPL-3.0; pulling it
-  into the app would force the app to AGPL and reintroduce the App Store conflict
-  (VLC precedent) — so license is now a reason the clean-room packages stay MIT,
-  alongside fit, auditability, and the risk boundary above.
+- **License:** the reusable protocol, cryptography, mesh, and relay packages
+  should remain open and copyleft, not source-visible-but-closable.
+  **`PigeonCrypto`, `PigeonMesh`, `pigeon-core`, and `relay` are
+  AGPL-3.0-only**, so modified versions offered to users, including over a
+  network, must keep their source available. The iOS app and app-specific code
+  are source-available for transparency, local development, and security review,
+  but are not open source; commercial use, redistribution as an app, and
+  App Store/TestFlight publication require permission from the Pigeon
+  maintainers.
 
 ### 5.6 Constant-time comparisons & key zeroization
 

@@ -10,6 +10,15 @@ ordinary users.
 Security is a product requirement, not a later polish step. Favor boring,
 auditable code over clever abstractions.
 
+## Licensing Policy
+
+Keep the reusable protocol, cryptography, mesh, and relay packages open source
+and copyleft. `PigeonCrypto`, `PigeonMesh`, `pigeon-core`, and `PigeonRelay` are
+`AGPL-3.0-only` so modified protocol/network code offered to users cannot be
+taken closed. The iOS app and app-specific code are source-available but not
+open source; commercial use, redistribution as an app, and App Store/TestFlight
+publication require permission from the Pigeon maintainers.
+
 ## Current Architecture
 
 The repo has the **app** (`Pigeon/`) plus four packages — `PigeonCrypto/`
@@ -28,11 +37,11 @@ then both exist — do not delete `PigeonCrypto`, and keep its behavior intact.
 - `PigeonCrypto/` is a standalone, dependency-free Swift package for cryptographic
   protocol code. Keep it dependency-free unless there is a strong security reason.
   (Being superseded by `pigeon-core`; see the migration note above.)
-- `pigeon-core/` is a standalone Rust crate (`Apache-2.0 OR MIT`) — the pairwise
+- `pigeon-core/` is a standalone Rust crate (`AGPL-3.0-only`) — the pairwise
   messaging core built on Olm/`vodozemac`. It keeps Pigeon's identity binding (a
   long-term Ed25519 key signs Olm's Curve25519 identity key) on top of Olm's
   session establishment + Double Ratchet. It is NOT a Cargo-workspace member of
-  `PigeonRelay` and must never depend on the AGPL relay.
+  `PigeonRelay`.
 - `PigeonMesh/` is a dependency-free, platform-agnostic Swift package for
   transport/mesh logic (packet framing, fragmentation/reassembly over small BLE
   MTUs, store-and-forward routing). The CoreBluetooth driver lives in the app and

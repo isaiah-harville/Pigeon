@@ -3,11 +3,7 @@ name = "pigeon-core"
 version = "0.1.0"
 edition = "2024"
 description = "Pigeon's pairwise end-to-end-encrypted messaging core (Olm via vodozemac), with an Ed25519 identity binding over Olm's Curve25519 identity key."
-license = "Apache-2.0 OR MIT"
-
-# NOTE: pigeon-core is permissively licensed and MUST NOT depend on the AGPL
-# PigeonRelay. It is a standalone crate (not a workspace member) so the relay's
-# Docker build, which uses PigeonRelay/ as its context, stays untouched.
+license = "AGPL-3.0-only"
 
 [dependencies]
 # Olm Account/Session: audited Double Ratchet + async-first prekey establishment.
