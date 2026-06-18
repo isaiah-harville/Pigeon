@@ -29,6 +29,7 @@ Run the narrowest checks that match your change:
 swift test --package-path PigeonCrypto
 swift test --package-path PigeonMesh
 xcodebuild build -project Pigeon/Pigeon.xcodeproj -scheme Pigeon -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO
+cargo test --manifest-path pigeon-core/Cargo.toml
 cargo test --manifest-path PigeonRelay/Cargo.toml
 uv run --group docs mkdocs build --strict
 ```
@@ -38,6 +39,8 @@ Formatting and linting:
 ```sh
 swiftlint lint --strict
 swift-format lint --recursive --parallel Pigeon PigeonCrypto PigeonMesh
+cargo fmt --check --manifest-path pigeon-core/Cargo.toml
+cargo clippy --manifest-path pigeon-core/Cargo.toml --all-targets -- -D warnings
 cargo fmt --check --manifest-path PigeonRelay/Cargo.toml
 cargo clippy --manifest-path PigeonRelay/Cargo.toml --all-targets -- -D warnings
 ```

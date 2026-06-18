@@ -46,7 +46,11 @@ impl Account {
     /// Olm pickle, and the current fallback public key (from
     /// [`Account::export_fallback_key`]). The host app stores the seed and Olm
     /// pickle encrypted; the `identity_seed` is private and is wiped after use.
-    pub fn import(identity_seed: [u8; 32], olm_pickle: AccountPickle, fallback_key: [u8; 32]) -> Self {
+    pub fn import(
+        identity_seed: [u8; 32],
+        olm_pickle: AccountPickle,
+        fallback_key: [u8; 32],
+    ) -> Self {
         Self {
             olm: OlmAccount::from_pickle(olm_pickle),
             identity: IdentityKeypair::from_seed(identity_seed),

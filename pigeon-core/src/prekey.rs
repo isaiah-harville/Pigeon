@@ -16,7 +16,7 @@
 //! one-time prekey to the fallback.
 
 use crate::error::Error;
-use crate::identity::{verify_prekey_signature, IdentityBundle};
+use crate::identity::{IdentityBundle, verify_prekey_signature};
 
 /// A published prekey bundle: the recipient's identity plus one signed
 /// Curve25519 prekey. The host app distributes these (QR / mesh / relay); a

@@ -48,7 +48,10 @@ fn first_contact_with_one_time_key() {
 
     assert_eq!(plaintext, b"first");
     // The session records the peer's verified identity for the safety-number check.
-    assert_eq!(initiation.identity.identity_key, alice.identity_public_key());
+    assert_eq!(
+        initiation.identity.identity_key,
+        alice.identity_public_key()
+    );
 }
 
 #[test]
@@ -58,7 +61,10 @@ fn first_contact_with_fallback_key() {
 
     // The fallback (signed-prekey) path works even with no one-time keys.
     let bundle = bob.signed_prekey_bundle();
-    assert!(!bundle.one_time, "the fallback bundle must not be flagged one-time");
+    assert!(
+        !bundle.one_time,
+        "the fallback bundle must not be flagged one-time"
+    );
 
     let (_a, initiation) = Session::establish_outbound(&alice, &bundle, b"async hi").unwrap();
     let (_b, plaintext) =
@@ -69,8 +75,14 @@ fn first_contact_with_fallback_key() {
 #[test]
 fn remote_identity_key_is_the_verified_peer() {
     let (alice, bob, alice_session, bob_session) = converged_pair();
-    assert_eq!(alice_session.remote_identity_key(), bob.identity_public_key());
-    assert_eq!(bob_session.remote_identity_key(), alice.identity_public_key());
+    assert_eq!(
+        alice_session.remote_identity_key(),
+        bob.identity_public_key()
+    );
+    assert_eq!(
+        bob_session.remote_identity_key(),
+        alice.identity_public_key()
+    );
 }
 
 #[test]

@@ -11,6 +11,8 @@ on:
       - "PigeonMesh/Package.resolved"
       - "PigeonRelay/Cargo.toml"
       - "PigeonRelay/Cargo.lock"
+      - "pigeon-core/Cargo.toml"
+      - "pigeon-core/Cargo.lock"
       - "Pigeon/README.md"
       - "Pigeon/CONTRIBUTING.md"
       - "Pigeon/docs/**"
@@ -27,6 +29,7 @@ on:
       - "PigeonRelay/CONTRIBUTING.md"
       - "PigeonRelay/docs/**"
       - "PigeonRelay/mkdocs.yml"
+      - "pigeon-core/src/**"
       - "CONTRIBUTING.md"
       - "README.md"
       - "mkdocs.yml"
@@ -43,6 +46,8 @@ on:
       - "PigeonMesh/Package.resolved"
       - "PigeonRelay/Cargo.toml"
       - "PigeonRelay/Cargo.lock"
+      - "pigeon-core/Cargo.toml"
+      - "pigeon-core/Cargo.lock"
       - "Pigeon/README.md"
       - "Pigeon/CONTRIBUTING.md"
       - "Pigeon/docs/**"
@@ -59,6 +64,7 @@ on:
       - "PigeonRelay/CONTRIBUTING.md"
       - "PigeonRelay/docs/**"
       - "PigeonRelay/mkdocs.yml"
+      - "pigeon-core/src/**"
       - "CONTRIBUTING.md"
       - "README.md"
       - "mkdocs.yml"
@@ -134,6 +140,17 @@ jobs:
             --target-dir "$RUNNER_TEMP/pigeon-relay-docs"
           mkdir -p "$PWD/public/api/PigeonRelay"
           cp -R "$RUNNER_TEMP/pigeon-relay-docs/doc" "$PWD/public/api/PigeonRelay/doc"
+
+      - name: Build pigeon-core API docs
+        run: |
+          rm -rf "$RUNNER_TEMP/pigeon-core-docs" "$PWD/public/api/pigeon-core"
+          cargo doc \
+            --manifest-path pigeon-core/Cargo.toml \
+            --no-deps \
+            --document-private-items \
+            --target-dir "$RUNNER_TEMP/pigeon-core-docs"
+          mkdir -p "$PWD/public/api/pigeon-core"
+          cp -R "$RUNNER_TEMP/pigeon-core-docs/doc" "$PWD/public/api/pigeon-core/doc"
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
