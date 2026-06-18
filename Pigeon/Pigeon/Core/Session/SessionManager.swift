@@ -85,6 +85,12 @@ final class SessionManager {
   /// The on-disk mirror of conversations (excludes ephemeral-era messages).
   var persistedConversations: [Data: [ChatMessage]] = [:]
   var retryTimer: Timer?
+  /// Per-contact backoff gating *retries* of unacked messages. Each retry
+  /// re-encrypts (advancing the ratchet), so retrying every tick while a peer is
+  /// offline could, over a long outage, outrun the ratchet's skip limit. New
+  /// sends and (re)establishment still flush immediately; only timed retries back
+  /// off. Cleared when the queue drains or the session is reset.
+  var resendGate: [Data: ResendGate] = [:]
 
   /// Envelopes received while locked (we can't decrypt or persist yet). Held in
   /// memory only — never written to disk — and replayed once unlocked. The relay
@@ -278,6 +284,7 @@ final class SessionManager {
     lastHandshakeOut[contactID] = nil
     pendingX3DHInit[contactID] = nil
     lastX3DHIn[contactID] = nil
+    resendGate[contactID] = nil  // a fresh session should flush pending promptly
     establishedContactIDs.remove(contactID)
   }
 
