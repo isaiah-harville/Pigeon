@@ -218,6 +218,65 @@ own `SymmetricKey`, `SharedSecret`, and private-key types do zero their storage
 on deallocation. Fuller zeroization would mean keeping all ratchet state inside
 CryptoKit secure containers — a larger refactor tracked for audit prep.
 
+### 5.7 Async first contact — X3DH prekeys (`X3DH.swift`)
+
+The Noise XX handshake above is **interactive**: it needs both peers online to
+complete its round trips. To message a peer who is *not currently reachable*
+(out of range, offline, or only on a relay), Pigeon adds an **X3DH-style** key
+agreement that establishes a session and a first message from prekeys the
+recipient published ahead of time. After the first message the normal Double
+Ratchet (§5.3) takes over unchanged. This is **opt-in to the moment** — when the
+peer is online, XX is still used; X3DH covers the asynchronous case.
+
+**Reuse of existing trust.** No new root of trust is introduced. The recipient's
+`IdentityBundle` (§4) is reused verbatim: the Ed25519 identity key signs the
+X25519 static key, and that **same static key is X3DH's identity DH key (IK)**.
+So verifying a peer's safety number authenticates every DH below it. The
+recipient additionally publishes:
+- a **signed prekey (SPK)** — an X25519 key, rotated periodically, signed by the
+  identity key and bound to a numeric id; and
+- optionally a **one-time prekey (OPK)** — likewise signed and id-bound.
+
+Each prekey signature covers `id ‖ key`, so a relay or mesh forwarder cannot
+substitute its own key or relabel an id without breaking verification
+(`X3DHPrekeyBundle.isValid()` checks the identity binding *and* every prekey
+signature before any DH runs).
+
+**Agreement.** The initiator computes
+`DH1 = DH(IK_A, SPK_B)`, `DH2 = DH(EK_A, IK_B)`, `DH3 = DH(EK_A, SPK_B)`, and
+(when an OPK is offered) `DH4 = DH(EK_A, OPK_B)`, where `EK_A` is a fresh
+ephemeral. The shared secret is `HKDF-SHA256` over `0xFF×32 ‖ DH1 ‖ DH2 ‖ DH3 [‖
+DH4]` (domain-separated, info `"Pigeon.X3DH.SharedSecret"`). It seeds the Double
+Ratchet with the recipient's **signed prekey as the recipient's initial ratchet
+key** — the Signal X3DH→ratchet bootstrap, which reuses the existing
+`DoubleRatchetSession.initiator`/`responder` paths with no new ratchet code. The
+initiator transmits an `X3DHInitiation` header (its identity bundle, the
+ephemeral public key, and which SPK/OPK ids it consumed) ahead of the first
+ratchet message; the recipient looks up the named private prekeys and recomputes
+the same secret.
+
+**Tradeoffs (deliberate).**
+- **Replay.** A one-time prekey is the replay defense: the recipient deletes an
+  OPK once used, so a replayed initiation yields a different shared secret and
+  fails to decrypt. **Without** an OPK (exhausted, see below) a captured first
+  message can be replayed to re-establish *the same* initial session state until
+  the SPK rotates — so replay resistance for first contact degrades to the SPK
+  rotation window. Application-level message dedup/freshness is still required;
+  X3DH does not by itself make the *first* message single-delivery once OPKs run
+  out. Tracked as an audit item.
+- **Exhaustion / availability.** OPKs are a finite published pool. When they are
+  gone the protocol still works SPK-only (no DH4), trading the per-session replay
+  resistance above for availability — chosen over refusing first contact. The
+  SPK is rotated to bound the exposure window; the recipient must replenish OPKs
+  when it next comes online.
+- **Weaker forward secrecy at rest than interactive XX.** Until the recipient
+  comes online and the ratchet performs its first DH step, the session's secrecy
+  rests on the long-lived SPK (and OPK). A compromise of the unrotated SPK
+  private key exposes sessions opened against it. This is inherent to async
+  setup and is why SPK rotation + OPK consumption matter.
+- **No forward secrecy for the prekey-publication metadata** itself; prekeys are
+  public by construction.
+
 ---
 
 ## 6. Transport & Mesh
@@ -347,6 +406,9 @@ authoritative to-do list for reaching audit readiness.
    published vectors to the test suite.
 3. **Handshake replay / freshness.** Define and test behavior for replayed or
    reordered handshake messages, including across the mesh's store-and-forward.
+3a. **X3DH first-contact validation (§5.7).** Cross-validate
+   the X3DH key schedule against reference behavior
+   SPK-only (OPK-exhausted) replay window is acceptable and that the app enforces OPK delete-on-use and SPK rotation once integration lands.
 
 ### Should-address
 4. **Skipped-key DoS bound.** Review `maxSkip` (currently 1000) and the memory
