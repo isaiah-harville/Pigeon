@@ -145,9 +145,23 @@ struct MessageFooter: View {
   let message: ChatMessage
 
   var body: some View {
-    Text(message.date.formatted(date: .omitted, time: .shortened))
-      .font(.caption2)
-      .foregroundStyle(.secondary)
+    HStack(spacing: 4) {
+      Text(message.displayDate.formatted(date: .omitted, time: .shortened))
+      if let delay = message.deliveryDelay {
+        Image(systemName: "clock.arrow.circlepath")
+        Text("delivered \(Self.delayText(delay)) later")
+      }
+    }
+    .font(.caption2)
+    .foregroundStyle(.secondary)
+  }
+
+  /// Compact "2h" / "5m" / "1d" rendering of a delivery delay.
+  static func delayText(_ delay: TimeInterval) -> String {
+    let minutes = Int(delay / 60)
+    if minutes < 60 { return "\(minutes)m" }
+    let hours = minutes / 60
+    return hours < 24 ? "\(hours)h" : "\(hours / 24)d"
   }
 }
 
@@ -265,6 +279,19 @@ extension ChatMessage {
     let text = self.text.replacingOccurrences(of: "\n", with: " ")
     return text.count > 72 ? String(text.prefix(72)) + "..." : text
   }
+
+  /// The time to show on the bubble: the original send time when known, so a
+  /// store-and-forward-delayed message reads as when it was sent.
+  var displayDate: Date { sentAt ?? date }
+
+  /// How long an incoming message waited between being sent and arriving here,
+  /// or `nil` when it arrived promptly (or is our own message). Drives the
+  /// "delivered late" hint so a old message doesn't look brand new.
+  var deliveryDelay: TimeInterval? {
+    guard !mine, let sentAt else { return nil }
+    let delay = date.timeIntervalSince(sentAt)
+    return delay >= 30 ? delay : nil
+  }
 }
 
 /// Long-press detail for a message: the link it travelled over plus the full
@@ -277,7 +304,12 @@ struct MessageDetailMenu: View {
     if let transport = message.transport {
       Label(linkText(transport), systemImage: symbol(transport))
     }
-    Text(message.date.formatted(date: .abbreviated, time: .standard))
+    if message.deliveryDelay != nil {
+      Text("Sent \(message.displayDate.formatted(date: .abbreviated, time: .standard))")
+      Text("Received \(message.date.formatted(date: .abbreviated, time: .standard))")
+    } else {
+      Text(message.date.formatted(date: .abbreviated, time: .standard))
+    }
   }
 
   private func linkText(_ channel: TransportChannel) -> String {

@@ -11,7 +11,13 @@ struct ChatMessage: Identifiable, Equatable, Codable {
   var id = UUID()
   let mine: Bool
   let text: String
+  /// When this message arrived on *this* device (local time), used for ordering
+  /// and day separators. For our own messages this is also the send time.
   var date = Date()
+  /// The original send time stamped by the sender. Differs from `date` when a
+  /// message waited in store-and-forward before reaching us; `nil` for our own
+  /// messages (we display `date`). Surfaces a "delivered late" hint in the UI.
+  var sentAt: Date?
   var pending: Bool = false
   /// A centered notice (e.g. "Ephemeral enabled") rather than a chat bubble.
   var system: Bool = false
@@ -46,7 +52,7 @@ struct ChatMessage: Identifiable, Equatable, Codable {
   // Tolerant decoding: missing optional-ish fields default rather than fail,
   // so adding fields doesn't discard already-stored history.
   private enum CodingKeys: String, CodingKey {
-    case id, mine, text, date, pending, system, transport
+    case id, mine, text, date, sentAt, pending, system, transport
     case personalReaction, otherReactions, replySnippet
   }
 
@@ -56,6 +62,7 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     mine = try container.decode(Bool.self, forKey: .mine)
     text = try container.decode(String.self, forKey: .text)
     date = (try? container.decode(Date.self, forKey: .date)) ?? Date()
+    sentAt = try? container.decode(Date.self, forKey: .sentAt)
     pending = (try? container.decode(Bool.self, forKey: .pending)) ?? false
     system = (try? container.decode(Bool.self, forKey: .system)) ?? false
     transport = try? container.decode(TransportChannel.self, forKey: .transport)

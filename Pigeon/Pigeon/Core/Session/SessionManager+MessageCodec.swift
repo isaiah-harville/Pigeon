@@ -20,6 +20,9 @@ extension SessionManager {
     let id: UUID
     let text: String
     let replySnippet: String?
+    /// The sender's send time, so a message delayed in store-and-forward shows
+    /// when it was actually sent rather than when it happened to arrive.
+    let sentAt: Date?
   }
 
   /// Longest reply snippet we keep from a peer. The sender already truncates to
@@ -31,7 +34,8 @@ extension SessionManager {
   /// payload is never silently encrypted and sent as an empty message.
   static func encodeMessage(_ message: ChatMessage) -> Data? {
     let payload = AppMessagePayload(
-      id: message.id, text: message.text, replySnippet: message.replySnippet)
+      id: message.id, text: message.text, replySnippet: message.replySnippet,
+      sentAt: message.date)
     return try? JSONEncoder().encode(payload)
   }
 
@@ -42,6 +46,9 @@ extension SessionManager {
     var message = ChatMessage(mine: false, text: payload.text)
     message.id = payload.id
     message.replySnippet = payload.replySnippet.map(clampSnippet)
+    // A message can't have been sent after it arrived; clamp a fast/skewed peer
+    // clock to our arrival time so the displayed send time is never in the future.
+    message.sentAt = payload.sentAt.map { min($0, message.date) }
     return message
   }
 
