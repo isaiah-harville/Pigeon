@@ -6,13 +6,13 @@
 //
 
 import Foundation
-import PigeonCrypto
+import PigeonCore
 
-/// A verified peer. The `bundle` carries their Ed25519 identity, X25519 Noise
-/// static key, and the signature binding them; it must have passed
-/// `bundle.isValid()` before becoming a Contact.
+/// A verified peer. The `bundle` carries their Ed25519 identity, Olm Curve25519
+/// identity key, and the signature binding them; decoding a `PigeonIdentityBundle`
+/// already verified that binding before it could become a Contact.
 struct Contact: Identifiable, Equatable {
-  let bundle: IdentityBundle
+  let bundle: PigeonIdentityBundle
   var displayName: String
   /// Relay endpoints this contact advertised (from their QR card). Where we
   /// deposit ciphertext for them when they're out of Bluetooth range. Empty for
@@ -23,10 +23,11 @@ struct Contact: Identifiable, Equatable {
   /// the contact's other advertised relays, then our own, if this one is down
   /// (#18).
   var preferredRelayURL: URL?
-  /// The contact's published X3DH prekey bundle, learned from their QR card.
-  /// Present enables async first contact (messaging them while they're offline);
-  /// `nil` for legacy cards, where we fall back to the interactive handshake.
-  var prekeyBundle: X3DHPrekeyBundle?
+  /// The contact's published prekey bundle (their signed/fallback Olm prekey),
+  /// learned from their QR card. Required to open a session: the initiator runs
+  /// `establishOutbound` against it. `nil` only for cards without one (which then
+  /// cannot be reached, since Olm is async-first with no interactive fallback).
+  var prekeyBundle: PigeonPrekeyBundle?
   /// Whether this contact was added by scanning their QR **in person** (so the
   /// safety number was exchanged face to face) rather than pasted from a code
   /// shared over some other channel. Drives the "not verified in person" cue.

@@ -1,0 +1,37 @@
+Pigeon Source Available License
+Version 1.0
+
+Copyright (c) 2026 Isaiah Harville
+
+This license applies to the Pigeon iOS app, app-specific code, project
+configuration, artwork, and other content in the `Pigeon/` directory unless a
+file or subdirectory is covered by its own license notice.
+
+Permission is granted to view, clone, fork, build, run, inspect, test, and
+modify the covered source code for personal, non-commercial development,
+security review, research, and evaluation.
+
+You may publish patches, pull requests, issues, reviews, and other proposed
+changes back to the Pigeon project.
+
+Without prior written permission from the copyright holder, you may not:
+
+- sell, license, rent, or otherwise commercially exploit the covered software;
+- redistribute the covered software or modified versions of it as an app,
+  binary, hosted service, or competing product;
+- publish, submit, or distribute the covered software or modified versions
+  through the Apple App Store, TestFlight, or another app marketplace;
+- use the Pigeon name, logo, artwork, bundle identifiers, domains, or branding
+  to suggest that an unofficial build is official, endorsed, or affiliated with
+  the Pigeon maintainers.
+
+All copies or substantial portions of the covered software must retain this
+license notice.
+
+THE COVERED SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT. IN NO EVENT
+SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY CLAIM, DAMAGES, OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING
+FROM, OUT OF, OR IN CONNECTION WITH THE COVERED SOFTWARE OR THE USE OF OR OTHER
+DEALINGS IN THE COVERED SOFTWARE.

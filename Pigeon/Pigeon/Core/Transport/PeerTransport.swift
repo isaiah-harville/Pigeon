@@ -8,7 +8,7 @@
 //
 //  This layer is deliberately "dumb pipe": it moves opaque byte messages and
 //  knows nothing about encryption. Messages are fragmented to fit BLE MTUs via
-//  PigeonMesh and reassembled per source. Encryption (SecureSession) and mesh
+//  PigeonMesh and reassembled per source. Encryption (the Olm session) and mesh
 //  relaying layer on top of this.
 //
 //  Current limitations (tracked): uses write-with-response (reliable but slower)

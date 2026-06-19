@@ -4,7 +4,7 @@
 //
 
 import Foundation
-import PigeonCrypto
+import PigeonCore
 import PigeonMesh
 
 extension SessionManager {
@@ -88,21 +88,25 @@ extension SessionManager {
     }
   }
 
-  /// Our own shareable identity bundle (for display as a QR code).
-  var myBundle: IdentityBundle { identity.identityBundle }
-
   /// Our shareable card (identity bundle + display name + the relays we can be
-  /// reached at) for the QR, so scanners learn where to deposit for us.
-  var myCard: ContactCard {
+  /// reached at) for the QR, so scanners learn where to deposit for us. The
+  /// identity bundle and signed prekey come from the Olm `account`, which owns
+  /// the Curve25519 identity key the binding signs; `nil` before unlock (the
+  /// account isn't built yet, and the QR is only shown unlocked anyway).
+  var myCard: ContactCard? {
+    guard let account,
+      let bundle = try? PigeonIdentityBundle(decoding: account.identityBundle()),
+      let prekeyBundle = try? PigeonPrekeyBundle(decoding: account.signedPrekeyBundle())
+    else { return nil }
     let relayURLs = RelaySettings.urls()
     let payload = ContactCard.relayPayload(relayURLs)
     let signature = (try? identity.sign(payload)) ?? Data()
     return ContactCard(
       name: myName,
-      bundle: identity.identityBundle,
+      bundle: bundle,
       relayURLs: relayURLs,
       relaySignature: signature,
-      prekeyBundle: identity.publishedPrekeyBundle)  // enables async first contact
+      prekeyBundle: prekeyBundle)  // enables async first contact
   }
 
   /// Whether `contact` was verified in person (QR scanned face to face) rather

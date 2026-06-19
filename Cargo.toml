@@ -1,0 +1,13 @@
+[workspace]
+members = [
+  "pigeon-core",
+  "pigeon-core-ffi",
+  "pigeon-relay",
+]
+resolver = "2"
+
+[profile.release]
+# Keep release artifacts small when building from the repository workspace. The
+# relay's Docker build still uses pigeon-relay/ as its context and keeps its
+# standalone release profile there.
+strip = true

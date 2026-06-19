@@ -7,12 +7,7 @@
       "Bash(sed:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
-      "Bash(git show:*)",
-      "Bash(swift test:*)",
-      "Bash(xcodebuild -list:*)",
-      "Bash(xcodebuild build:*)",
-      "Bash(xcodebuild test:*)",
-      "Bash(swiftlint lint:*)"
+      "Bash(git show:*)"
     ],
     "deny": [
       "Bash(git reset:*)",

@@ -4,7 +4,7 @@
 //
 //  The internet `Transport`: delivers the same end-to-end ciphertext to peers
 //  who are out of Bluetooth range, via one or more zero-knowledge relays (see
-//  `PigeonRelay/` and SECURITY_MODEL §6.1). It is a dumb pipe like BLE — it moves
+//  `pigeon-relay/` and SECURITY_MODEL §6.1). It is a dumb pipe like BLE — it moves
 //  opaque bytes and never decrypts anything.
 //
 //  Addressing: a direct message carries its recipient's identity key, so we

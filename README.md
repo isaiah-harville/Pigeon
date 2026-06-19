@@ -49,21 +49,29 @@ concurrently):
 - `Pigeon/` - SwiftUI app and Xcode project.
 - `Pigeon/Pigeon/Core/Identity/` - long-term device identity, Keychain storage,
   public key fingerprints, and safety-number derivation.
-- `PigeonCrypto/` - standalone Swift package for Noise, Double Ratchet, and
-  protocol primitives.
+- `pigeon-core/` - Rust pairwise messaging core (Olm via the audited `vodozemac`
+  crate): the identity binding, prekeys, session establishment, and the
+  `pigeon.wire.v1` protobuf wire format. The cross-platform messaging core.
+- `pigeon-core-ffi/` - UniFFI bridge crate; `build-xcframework.sh` builds the
+  Apple XCFramework and generates the Swift bindings the app links.
+- `PigeonCore/` - Swift package wrapping that XCFramework (a `binaryTarget` plus
+  a thin Swift facade); this is what the iOS app links for messaging crypto.
 - `PigeonMesh/` - standalone Swift package for fragmentation, mesh packets,
   deduplication, TTL, and session envelopes.
-- `PigeonRelay/` - Rust zero-knowledge relay server.
+- `pigeon-relay/` - Rust zero-knowledge relay server.
 - `docs/` - MkDocs source for design, security, roadmap, and API docs.
 
 ## Common Commands
 
 ```sh
-swift test --package-path PigeonCrypto
+cargo test --manifest-path pigeon-core/Cargo.toml
+cargo test --manifest-path pigeon-core-ffi/Cargo.toml
+bash pigeon-core-ffi/build-xcframework.sh   # regenerate bindings + XCFramework
+swift test --package-path PigeonCore
 swift test --package-path PigeonMesh
 xcodebuild -list -project Pigeon/Pigeon.xcodeproj
 xcodebuild build -project Pigeon/Pigeon.xcodeproj -scheme Pigeon -destination 'generic/platform=iOS'
-cargo test --manifest-path PigeonRelay/Cargo.toml
+cargo test --manifest-path pigeon-relay/Cargo.toml
 uv run --group docs mkdocs build --strict
 ```
 
@@ -81,16 +89,4 @@ See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md).
 
 ## License
 
-Pigeon is fully open source under a split chosen so the app stays freely
-distributable (incl. the App Store) while the network relay stays strongly
-copyleft:
-
-- **The iOS app** (this repo, root [LICENSE](LICENSE)), **[`PigeonCrypto/`](PigeonCrypto/LICENSE)**,
-  and **[`PigeonMesh/`](PigeonMesh/LICENSE)** — **MIT**. Permissive and App
-  Store–compatible; the app links only these.
-- **[`PigeonRelay/`](PigeonRelay/LICENSE)** — **GNU AGPL-3.0-only**. It's a standalone
-  network server (not linked into the app), so AGPL's network-source-availability
-  (§13) applies to anyone running a modified relay, with no effect on the app.
-
-Source is always available either way. See
-[docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) §5.5.
+See [LICENSING.md](LICENSING.md) for the repository license map.

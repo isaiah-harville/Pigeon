@@ -36,3 +36,17 @@ repos:
         entry: swiftlint lint --strict
         pass_filenames: false
         types: [swift]
+
+      - id: cargo-fmt
+        name: cargo fmt
+        language: system
+        entry: cargo fmt --all
+        pass_filenames: false
+        files: ^(Cargo\.(toml|lock)|(pigeon-core|pigeon-core-ffi|pigeon-relay)/.*\.(rs|toml|lock))$
+
+      - id: cargo-clippy
+        name: cargo clippy
+        language: system
+        entry: cargo clippy --workspace --all-targets -- -D warnings
+        pass_filenames: false
+        files: ^(Cargo\.(toml|lock)|(pigeon-core|pigeon-core-ffi|pigeon-relay)/.*\.(rs|toml|lock))$

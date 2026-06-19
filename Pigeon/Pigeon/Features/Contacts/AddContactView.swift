@@ -113,7 +113,7 @@ struct AddContactView: View {
   }
 
   private var myQRCode: some View {
-    QRCode.image(from: session.myCard.encoded())
+    QRCode.image(from: session.myCard?.encoded() ?? "")
       .padding(24)
   }
 

@@ -58,7 +58,7 @@ VAULT_CLIENT = {
     "lines": [
         "Keychain · private keys",
         "Ed25519 identity → sign",
-        "X25519 static → ECDH",
+        "Curve25519 (Olm) → ECDH",
         "ratchet keys → decrypt",
     ],
 }
@@ -77,7 +77,7 @@ VAULT_CLIENT_LOCKED = {
     "lines": [
         "Keychain · after first unlock",
         "Ed25519 identity → sign",
-        "X25519 static → ECDH",
+        "Curve25519 (Olm) → ECDH",
         "message vault → locked",
     ],
 }
@@ -372,12 +372,12 @@ def diagram_identity(out):
     steps = [
         note(
             "a",
-            "Generate Ed25519 identity + X25519 static key. Private keys live in the Keychain.",
+            "Generate Ed25519 identity + Olm account (Curve25519 + prekeys). Private keys live in the Keychain.",
             "private",
         ),
         note(
             "b",
-            "Generate Ed25519 identity + X25519 static key. Private keys live in the Keychain.",
+            "Generate Ed25519 identity + Olm account (Curve25519 + prekeys). Private keys live in the Keychain.",
             "private",
         ),
         divider("In person"),
@@ -390,7 +390,7 @@ def diagram_identity(out):
         msg("b", "a", "Show QR back (public ContactCard)", "public"),
         note(
             "a",
-            "Verify the bundle signature binds identity to the Noise static key.",
+            "Verify the bundle signature binds identity to the Olm Curve25519 key.",
             "action",
         ),
         binote(
@@ -411,23 +411,28 @@ def diagram_identity(out):
 
 
 def _handshake_steps(transport):
-    """The Noise XX + ratchet exchange shared by every direct (serverless) link."""
+    """The Olm async-first session setup shared by every direct (serverless) link."""
     return [
         divider(transport),
-        msg("a", "b", "Noise XX msg1 (ephemeral public key)", "public"),
-        msg("b", "a", "Noise XX msg2 (ephemeral + static public keys)", "public"),
-        msg("a", "b", "Noise XX msg3 (static public key)", "public"),
         note(
             "a",
-            "Check handshake static key == verified bundle (binding check).",
-            "action",
+            "Olm: ECDH against Bob's published prekeys → derive Double Ratchet session.",
+            "private",
+        ),
+        msg(
+            "a",
+            "b",
+            "Olm pre-key message (initiation: identity bundle + first ciphertext)",
+            "cipher",
         ),
         note(
-            "a", "X25519 private key → ECDH → derive Double Ratchet session.", "private"
+            "b",
+            "Establish session from the pre-key message; check identity key == verified bundle (binding check).",
+            "action",
         ),
-        msg("a", "b", "Encrypted message", "cipher"),
         note("b", "Ratchet message key → decrypt → show plaintext.", "plain"),
-        msg("b", "a", "Encrypted delivery ack", "cipher"),
+        msg("b", "a", "Encrypted reply (normal Olm message)", "cipher"),
+        note("a", "Ratchet message key → decrypt → show plaintext.", "plain"),
     ]
 
 

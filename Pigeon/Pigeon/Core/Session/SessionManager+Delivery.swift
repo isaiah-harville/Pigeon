@@ -8,7 +8,7 @@
 //
 
 import Foundation
-import PigeonCrypto
+import PigeonCore
 import PigeonMesh
 
 extension SessionManager {
@@ -111,10 +111,10 @@ extension SessionManager {
   /// lost packets; duplicates are deduplicated by the recipient.
   func sendPending(to contact: Contact) {
     guard establishedContactIDs.contains(contact.id) else { return }
-    // For an X3DH-initiated session not yet acknowledged, resend the initiation
-    // header first so it always precedes the messages, even on reorder/loss.
-    if let header = pendingX3DHInit[contact.id] {
-      sendEnvelope(.x3dhInit, payload: header, to: contact)
+    // For a session whose initiation isn't yet acknowledged, resend the
+    // initiation first so it always precedes the messages, even on reorder/loss.
+    if let initiation = pendingInitiation[contact.id] {
+      sendEnvelope(.x3dhInit, payload: initiation, to: contact)
     }
     let pending = (conversations[contact.id] ?? []).filter { $0.mine && $0.pending }
     for message in pending {
@@ -167,22 +167,30 @@ extension SessionManager {
     guard let store, isUnlocked else { return }
     let persistedContacts = contacts.map { contact in
       PersistedContact(
-        name: contact.displayName, bundle: contact.bundle.encoded(),
+        name: contact.displayName, bundle: contact.bundle.encoded,
         relayURLs: contact.relayURLs.map(\.absoluteString),
         preferredRelayURL: contact.preferredRelayURL?.absoluteString,
-        prekeyBundle: contact.prekeyBundle?.encoded(),
+        prekeyBundle: contact.prekeyBundle?.encoded,
         verifiedInPerson: contact.verifiedInPerson)
     }
     var conversationsByKey: [String: [ChatMessage]] = [:]
     for (id, messages) in persistedConversations {
       conversationsByKey[id.base64EncodedString()] = messages
     }
+    // Re-seal the Olm account alongside the rest of the state. Inbound
+    // establishment and prekey rotation/replenish mutate the account, so its
+    // pickle is exported on every persist; the fallback public key rides along
+    // because Olm can't report it again after publishing.
+    let olmPickle = account.flatMap { try? $0.exportOlmPickle() }
+    let olmFallbackKey = account?.exportFallbackKey()
     store.save(
       PersistedState(
         contacts: persistedContacts,
         conversations: conversationsByKey,
         ephemeralContactIDs: ephemeralContactIDs.map { $0.base64EncodedString() },
         bluetoothContactIDs: bluetoothChatIDs.map { $0.base64EncodedString() },
-        myName: myName))
+        myName: myName,
+        olmAccountPickle: olmPickle,
+        olmFallbackKey: olmFallbackKey))
   }
 }

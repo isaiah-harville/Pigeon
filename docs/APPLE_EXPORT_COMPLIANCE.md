@@ -46,16 +46,15 @@ contain proprietary encryption algorithms.
 
 Algorithms used by the iOS app include:
 
-- X25519 / Curve25519 key agreement for session establishment and ratchet steps.
-- Ed25519 signatures for long-term device identity and relay challenge
-  authentication.
-- SHA-256 and SHA-512 hashing for fingerprints, transcripts, and safety-number
-  derivation.
-- HKDF-SHA256 for key derivation.
-- HMAC-SHA256 for Double Ratchet chain key derivation.
-- AES-256-GCM authenticated encryption for message encryption and local
-  encrypted storage.
-- ChaCha20-Poly1305 authenticated encryption inside the Noise handshake.
+- X25519 / Curve25519 key agreement for Olm session establishment and the Double
+  Ratchet's Diffie-Hellman steps.
+- Ed25519 signatures for long-term device identity (the identity binding) and
+  relay challenge authentication.
+- SHA-256 and SHA-512 hashing for fingerprints and safety-number derivation.
+- HKDF-SHA256 for Olm root/chain key derivation.
+- HMAC-SHA256 for Olm message authentication and chain key advancement.
+- AES-256-CBC for Olm message encryption (Encrypt-then-MAC with HMAC-SHA256).
+- AES-256-GCM authenticated encryption for local encrypted storage.
 
 These algorithms are standard algorithms accepted by international standards
 communities or widely specified public cryptographic protocols. Pigeon does not
@@ -63,20 +62,22 @@ implement custom cryptographic primitives.
 
 ## Apple APIs And App Code
 
-Pigeon primarily uses Apple's CryptoKit APIs for primitive cryptographic
-operations, including Curve25519 keys, Ed25519 signatures, SHA hashing, HKDF,
-HMAC, AES-GCM, and ChaChaPoly.
+The pairwise messaging protocol (Olm: session establishment and the Double
+Ratchet) is provided by the audited `vodozemac` Rust crate, linked into the app
+through the `pigeon-core` / `PigeonCore` XCFramework. The app itself uses Apple's
+CryptoKit APIs for the remaining primitive operations: Ed25519 identity
+signatures, SHA hashing for safety numbers, and AES-GCM for at-rest storage.
 
-The Pigeon app code composes these primitives into messaging protocols:
+The app code composes these into:
 
-- A clean-room implementation of the Noise XX handshake pattern using the
-  `Noise_XX_25519_ChaChaPoly_SHA256` construction.
-- A clean-room implementation of the Signal Double Ratchet construction.
-- A small encrypted-storage wrapper using AES-GCM.
+- The identity binding: a long-term Ed25519 key signs Olm's Curve25519 identity
+  key, so verifying a peer's safety number authenticates the channel.
+- A small encrypted-storage wrapper (`SecretBox`) using AES-256-GCM.
 
-The app does not implement low-level cryptographic math such as curve
-operations, block ciphers, hash compression functions, or polynomial
-authentication.
+Neither the app nor `pigeon-core` implements low-level cryptographic math such as
+curve operations, block ciphers, hash compression functions, or polynomial
+authentication; that math comes from CryptoKit and `vodozemac`'s vetted
+dependencies.
 
 ## Key Management
 
@@ -115,7 +116,7 @@ ciphertext sizes, but they are not designed to decrypt message contents.
 Additional implementation detail is available in:
 
 - `docs/SECURITY_MODEL.md`
-- `PigeonCrypto/Sources/PigeonCrypto/NoiseHandshake.swift`
-- `PigeonCrypto/Sources/PigeonCrypto/DoubleRatchet.swift`
-- `PigeonCrypto/Sources/PigeonCrypto/Primitives.swift`
-- `PigeonCrypto/Sources/PigeonCrypto/SecretBox.swift`
+- `pigeon-core/src/session.rs` (Olm session establishment + Double Ratchet)
+- `pigeon-core/src/identity.rs` (Ed25519 identity binding)
+- `pigeon-core/src/prekey.rs` (signed prekeys)
+- `Pigeon/Pigeon/Core/Storage/SecretBox.swift` (at-rest AES-GCM)

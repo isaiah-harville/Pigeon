@@ -1,13 +1,13 @@
-name: PigeonRelay
+name: pigeon-relay
 
 on:
   push:
     branches: [main]
-    paths: ["PigeonRelay/**", ".github/workflows/relay.yml"]
+    paths: ["pigeon-relay/**", ".github/workflows/relay.yml"]
     tags: ["relay-v*"]
   pull_request:
     branches: [main]
-    paths: ["PigeonRelay/**", ".github/workflows/relay.yml"]
+    paths: ["pigeon-relay/**", ".github/workflows/relay.yml"]
   workflow_dispatch:
 
 concurrency:
@@ -21,26 +21,15 @@ jobs:
   check:
     name: Check & test
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: PigeonRelay
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust-crate-ci
         with:
-          components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: PigeonRelay
-      - name: Format
-        run: cargo fmt --check
-      - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
-      - name: Test
-        run: cargo test
+          package: pigeon-relay
 
   image:
     name: Build & push image
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: check
     runs-on: ubuntu-latest
     permissions:
@@ -56,7 +45,6 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -78,9 +66,9 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: PigeonRelay
+          context: pigeon-relay
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Don't publish provenance/SBOM attestations — they show up as extra
@@ -95,7 +83,6 @@ jobs:
       # pointed at). Multi-arch aware: it keeps the per-platform child manifests
       # that the current tags still reference, deleting only true orphans.
       - name: Delete untagged versions
-        if: github.event_name != 'pull_request'
         uses: dataaxiom/ghcr-cleanup-action@v1
         with:
           owner: ${{ github.repository_owner }}

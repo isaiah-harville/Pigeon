@@ -128,6 +128,6 @@ struct IdentityQRView: View {
   }
 
   private func regenerateQR() {
-    qrImage = QRCode.cgImage(from: session.myCard.encoded())
+    qrImage = session.myCard.flatMap { QRCode.cgImage(from: $0.encoded()) }
   }
 }

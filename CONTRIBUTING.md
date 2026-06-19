@@ -26,10 +26,11 @@ For package-specific work, also read the package README and CONTRIBUTING file.
 Run the narrowest checks that match your change:
 
 ```sh
-swift test --package-path PigeonCrypto
+cargo test --workspace
+bash pigeon-core-ffi/build-xcframework.sh   # regenerate bindings + XCFramework
+swift test --package-path PigeonCore
 swift test --package-path PigeonMesh
 xcodebuild build -project Pigeon/Pigeon.xcodeproj -scheme Pigeon -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO
-cargo test --manifest-path PigeonRelay/Cargo.toml
 uv run --group docs mkdocs build --strict
 ```
 
@@ -37,9 +38,9 @@ Formatting and linting:
 
 ```sh
 swiftlint lint --strict
-swift-format lint --recursive --parallel Pigeon PigeonCrypto PigeonMesh
-cargo fmt --check --manifest-path PigeonRelay/Cargo.toml
-cargo clippy --manifest-path PigeonRelay/Cargo.toml --all-targets -- -D warnings
+swift-format lint --recursive --parallel Pigeon PigeonCore PigeonMesh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 ## Security expectations

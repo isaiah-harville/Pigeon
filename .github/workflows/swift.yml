@@ -34,50 +34,110 @@ jobs:
 
       - name: Check formatting
         run: |
-          swift-format lint --recursive --parallel Pigeon PigeonCrypto PigeonMesh
+          swift-format lint --recursive --parallel Pigeon PigeonCore PigeonMesh
           if [ $? -ne 0 ]; then
-            echo "Run 'swift-format format --recursive --in-place Pigeon PigeonCrypto PigeonMesh' locally to fix."
+            echo "Run 'swift-format format --recursive --in-place Pigeon PigeonCore PigeonMesh' locally to fix."
             exit 1
           fi
 
-  crypto-tests:
-    name: Swift Package Tests
+  package-tests:
+    name: Swift Package Tests (${{ matrix.package }})
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - PigeonMesh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test ${{ matrix.package }}
+        run: swift test --package-path "${{ matrix.package }}"
+
+  # Build the gitignored PigeonCore XCFramework + generated bindings once from
+  # the Rust crate, then share them with every job that links PigeonCore so the
+  # expensive Rust/UniFFI build runs a single time per workflow. The build
+  # output is cached across runs keyed on its inputs, so unchanged core/ffi/proto
+  # sources skip the rebuild (toolchain install, brew, and cargo) entirely.
+  xcframework:
+    name: Build PigeonCore XCFramework
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
-      - name: Test PigeonCrypto
-        run: swift test --package-path PigeonCrypto
+      # Cache the produced XCFramework + bindings. The key changes only when an
+      # input that affects the output changes (sources, the wire schema, or the
+      # locked dependency set). Bump the v1 salt to force a rebuild manually.
+      - name: Cache PigeonCore build output
+        id: xcframework-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            PigeonCore/PigeonCoreFFI.xcframework
+            PigeonCore/Sources/PigeonCore/Generated
+          key: pigeon-core-xcframework-v1-${{ runner.os }}-${{ hashFiles('pigeon-core/**', 'pigeon-core-ffi/**', 'proto/**', 'Cargo.lock') }}
 
-  mesh-tests:
-    name: Swift Package Tests
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.xcframework-cache.outputs.cache-hit != 'true'
+      - name: Cache cargo build (target + registry)
+        if: steps.xcframework-cache.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@v2
+      - name: Install protobuf tooling
+        if: steps.xcframework-cache.outputs.cache-hit != 'true'
+        run: brew install protobuf swift-protobuf
+
+      - name: Build PigeonCore XCFramework
+        if: steps.xcframework-cache.outputs.cache-hit != 'true'
+        run: bash pigeon-core-ffi/build-xcframework.sh
+
+      - name: Upload PigeonCore build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pigeon-core-xcframework
+          if-no-files-found: error
+          path: |
+            PigeonCore/PigeonCoreFFI.xcframework
+            PigeonCore/Sources/PigeonCore/Generated
+
+  core-tests:
+    name: PigeonCore XCFramework Tests
     runs-on: macos-26
+    needs: xcframework
     steps:
       - uses: actions/checkout@v4
 
-      - name: Test PigeonMesh
-        run: swift test --package-path PigeonMesh
+      - name: Download PigeonCore build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: pigeon-core-xcframework
+          path: PigeonCore
 
+      - name: Test PigeonCore
+        run: swift test --package-path PigeonCore
 
-  app-build:
-    name: iOS App Build
+  app:
+    name: iOS App Build & Tests
     runs-on: macos-26
+    needs: xcframework
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Pigeon
+      - name: Download PigeonCore build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: pigeon-core-xcframework
+          path: PigeonCore
+
+      # Confirm the app compiles for a real device (no signing), then run the
+      # PigeonTests suite on the simulator. xcodebuild test reuses the build, so
+      # this is one device-compile check plus the test run, not two full builds.
+      - name: Build Pigeon (device)
         run: |
           xcodebuild build \
             -project Pigeon/Pigeon.xcodeproj \
             -scheme Pigeon \
             -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO
-
-  app-tests:
-    name: iOS App Tests
-    runs-on: macos-26
-    steps:
-      - uses: actions/checkout@v4
 
       - name: Test Pigeon (PigeonTests)
         run: |

@@ -7,9 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		C0FFEE0000000000000000A3 /* PigeonCrypto in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE0000000000000000A2 /* PigeonCrypto */; };
 		C0FFEE0000000000000000B3 /* PigeonMesh in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE0000000000000000B2 /* PigeonMesh */; };
-		D1150000000000000000000D /* PigeonCrypto in Frameworks */ = {isa = PBXBuildFile; productRef = D1150000000000000000000C /* PigeonCrypto */; };
+		C0FFEE0000000000000000C3 /* PigeonCore in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE0000000000000000C2 /* PigeonCore */; };
+		D1150000000000000000001D /* PigeonCore in Frameworks */ = {isa = PBXBuildFile; productRef = D1150000000000000000001C /* PigeonCore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -58,8 +58,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				C0FFEE0000000000000000A3 /* PigeonCrypto in Frameworks */,
 				C0FFEE0000000000000000B3 /* PigeonMesh in Frameworks */,
+				C0FFEE0000000000000000C3 /* PigeonCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -67,7 +67,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				D1150000000000000000000D /* PigeonCrypto in Frameworks */,
+				D1150000000000000000001D /* PigeonCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,8 +112,8 @@
 			);
 			name = Pigeon;
 			packageProductDependencies = (
-				C0FFEE0000000000000000A2 /* PigeonCrypto */,
 				C0FFEE0000000000000000B2 /* PigeonMesh */,
+				C0FFEE0000000000000000C2 /* PigeonCore */,
 			);
 			productName = Pigeon;
 			productReference = BFCCC6E52FE0108F000F4D70 /* Pigeon.app */;
@@ -137,7 +137,7 @@
 			);
 			name = PigeonTests;
 			packageProductDependencies = (
-				D1150000000000000000000C /* PigeonCrypto */,
+				D1150000000000000000001C /* PigeonCore */,
 			);
 			productName = PigeonTests;
 			productReference = D11500000000000000000001 /* PigeonTests.xctest */;
@@ -172,8 +172,8 @@
 			mainGroup = BFCCC6DC2FE0108E000F4D70;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				C0FFEE0000000000000000A1 /* XCLocalSwiftPackageReference "../PigeonCrypto" */,
 				C0FFEE0000000000000000B1 /* XCLocalSwiftPackageReference "../PigeonMesh" */,
+				C0FFEE0000000000000000C1 /* XCLocalSwiftPackageReference "../PigeonCore" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BFCCC6E62FE0108F000F4D70 /* Products */;
@@ -530,28 +530,28 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		C0FFEE0000000000000000A1 /* XCLocalSwiftPackageReference "../PigeonCrypto" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../PigeonCrypto;
-		};
 		C0FFEE0000000000000000B1 /* XCLocalSwiftPackageReference "../PigeonMesh" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../PigeonMesh;
 		};
+		C0FFEE0000000000000000C1 /* XCLocalSwiftPackageReference "../PigeonCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../PigeonCore;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		C0FFEE0000000000000000A2 /* PigeonCrypto */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = PigeonCrypto;
-		};
 		C0FFEE0000000000000000B2 /* PigeonMesh */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = PigeonMesh;
 		};
-		D1150000000000000000000C /* PigeonCrypto */ = {
+		C0FFEE0000000000000000C2 /* PigeonCore */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = PigeonCrypto;
+			productName = PigeonCore;
+		};
+		D1150000000000000000001C /* PigeonCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PigeonCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -77,17 +77,17 @@ device; there is nothing to register with a central Pigeon service.
 │   • Relay (opt-in): blind ciphertext mailbox     │
 │   moves opaque ciphertext only · runs concurrently│
 ├──────────────────────────────────────────────┤
-│ PigeonCrypto (package)  identity-agnostic crypto │
-│   SecureSession → Noise_XX handshake +           │
-│   Double Ratchet, over CryptoKit primitives      │
+│ pigeon-core (Rust, via PigeonCore XCFramework)   │
+│   Olm session establishment + Double Ratchet     │
+│   (vodozemac) · identity binding on top           │
 ├──────────────────────────────────────────────┤
 │ Identity (app)  Ed25519 key in Keychain,         │
 │                 fingerprint, safety number       │
 └──────────────────────────────────────────────┘
 ```
 
-End-to-end encryption is performed by the two conversation endpoints
-(`PigeonCrypto.SecureSession`). The mesh layer relays opaque ciphertext;
+End-to-end encryption is performed by the two conversation endpoints (the Olm
+sessions in `pigeon-core`). The mesh layer relays opaque ciphertext;
 **relays learn routing/metadata but never plaintext.**
 
 ---
@@ -102,7 +102,7 @@ End-to-end encryption is performed by the two conversation endpoints
 - **Background delivery (opt-out, on by default).** To notify the user of new
   messages while the device is locked, a background relaunch must read the
   identity key to authenticate to the relay. When background delivery is
-  enabled, the identity and Noise-static keys use
+  enabled, the identity key uses
   `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` (readable while locked after
   the first unlock since boot); when disabled, they use the stricter
   `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` (readable only while unlocked).
@@ -121,159 +121,139 @@ End-to-end encryption is performed by the two conversation endpoints
 - **Identity reset** generates a fresh key, irreversibly invalidating all
   existing trust relationships. This is, and must remain, user-visible.
 
-> **Identity ↔ Noise-static binding (implemented):** the Noise handshake uses an
-> **X25519 static** key while the *identity* is **Ed25519**. These are bound via
-> `IdentityBundle` — the X25519 static key is signed by the Ed25519 identity, and
-> the signed bundle is the QR payload. At session establishment, the handshake's
-> `remoteStaticKey` is checked against the verified bundle, so comparing safety
-> numbers authenticates the encrypted channel. (Still in scope for the overall
-> audit.) See [Audit Readiness](#audit-readiness-pre-audit-notes).
+> **Identity ↔ Olm-key binding:** Olm authenticates a session by its
+> **Curve25519** identity key, while Pigeon's *identity* is **Ed25519**. These are
+> bound via `IdentityBundle` — the Curve25519 identity key is signed by the
+> Ed25519 identity, and the signed bundle is the QR payload. At establishment,
+> the session's reported peer identity is checked against the verified bundle, so
+> comparing safety numbers authenticates the encrypted channel. (Still in scope
+> for the overall audit.) See [Audit Readiness](#audit-readiness-pre-audit-notes).
 
 ---
 
 ## 5. Cryptographic Design
 
-All primitives come from Apple **CryptoKit** (constant-time, audited). Pigeon
-code composes them into protocols; it **never implements primitive algorithms**.
+The pairwise messaging protocol is **Olm**, provided by the audited
+[`vodozemac`](https://github.com/matrix-org/vodozemac) Rust crate and reached
+from the app through the `pigeon-core` / `PigeonCore` XCFramework. Pigeon does
+**not** implement the ratchet, session establishment, or any primitive
+algorithm; it adds exactly one piece of protocol trust on top of Olm — the
+identity binding — and otherwise drives Olm's account/session API. App-side
+identity signing and at-rest storage use Apple **CryptoKit**.
 
-### 5.1 Primitives (`Primitives.swift`)
-- **X25519** key agreement (`DHKeyPair`).
-- **HKDF-SHA256** for the Double Ratchet root KDF (`KDF_RK`).
-- **HMAC-SHA256** for the symmetric-key chain KDF (`KDF_CK`).
-- **AES-256-GCM** for ratchet message encryption; each one-time message key is
-  expanded via HKDF to a fresh 32-byte key + 12-byte nonce (so the (key,nonce)
-  pair never repeats). The ratchet header is bound as associated data.
+### 5.1 Primitives
+Olm's cipher suite, as implemented by `vodozemac`:
+- **X25519 (Curve25519)** ECDH for session establishment and the Double Ratchet's
+  DH steps.
+- **HKDF-SHA256** for root/chain key derivation.
+- **HMAC-SHA256** for chain-key advancement and message authentication.
+- **AES-256-CBC** for message encryption (Encrypt-then-MAC with HMAC-SHA256).
 
-### 5.2 Handshake — `Noise_XX_25519_ChaChaPoly_SHA256` (`NoiseHandshake.swift`)
-- Clean-room implementation of the Noise Protocol framework state machine
-  (CipherState, SymmetricState, HandshakeState), pattern **XX**.
-- **XX** chosen for mutual authentication without pre-shared knowledge of the
-  peer's static key; both static keys are exchanged (initiator's encrypted) and
-  exposed for verification against the QR identity.
-- Cipher suite: **X25519** DH, **ChaCha20-Poly1305** AEAD, **SHA-256** hash,
-  Noise's HKDF (HMAC-SHA256 extract/expand).
-- Output: directional transport ciphers, the peer's static public key, and the
-  handshake transcript hash.
+App-side, via CryptoKit:
+- **Ed25519** signatures for the identity binding and relay-challenge auth.
+- **AES-256-GCM** for at-rest storage (`SecretBox`).
+- **SHA-256 / SHA-512** for fingerprints and safety-number derivation.
 
-### 5.3 Conversation — Double Ratchet (`DoubleRatchet.swift`)
-- Clean-room implementation of the Signal Double Ratchet.
-- Provides **forward secrecy** and **post-compromise security**.
-- Tolerates **out-of-order and dropped** messages via bounded skipped-message-key
-  storage (`maxSkip`, default 1000) — essential over a lossy BLE mesh.
-- 40-byte authenticated header (DH ratchet key ‖ previous-chain length ‖ message
-  number), folded into AEAD associated data, so header tampering breaks
-  decryption.
+### 5.2 Identity binding (`pigeon-core` `identity.rs`)
+Olm authenticates sessions by **Curve25519** keys, but does not by itself tie a
+peer's Curve25519 identity key to a stable, human-verifiable identity. Pigeon's
+root of trust is a long-term **Ed25519** identity key (the safety-number root).
+That identity key **signs Olm's Curve25519 identity key**, producing the
+`IdentityBundle` carried in the QR card. Verifying a peer's safety number
+therefore authenticates the whole channel. The Ed25519 identity is independent of
+the Olm account, so re-pickling or rotating Olm keys never churns safety numbers.
 
-### 5.4 Composition — `SecureSession.swift`
-- Drives the Noise XX handshake, then transitions into a ratchet-backed channel.
-- The responder ships its **initial ratchet public key** inside handshake message
-  2's encrypted payload.
-- The ratchet **root secret** is derived from the Noise transcript hash via
-  HKDF-SHA256 (domain separated, info `"Pigeon.SessionRoot"`).
-- Application wire format: `40-byte ratchet header ‖ AES-256-GCM ciphertext+tag`.
-- Exposes `remoteStaticKey` for verification against the QR identity.
+### 5.3 Sessions & the Double Ratchet (Olm)
+- Each device owns one Olm **account** (its Curve25519 identity key, a pool of
+  one-time keys, and a fallback key). Each conversation is one Olm **session**.
+- The session provides **forward secrecy**, **post-compromise security**, and
+  **out-of-order / skipped-message** tolerance — all from vodozemac's Double
+  Ratchet, essential over a lossy BLE mesh.
+- `pigeon-core`'s `Session` wraps the Olm session only to enforce the identity
+  binding at establishment and to report the peer's verified Ed25519 key for the
+  safety-number check; after that, encrypt/decrypt are straight Olm.
 
-### 5.5 Why clean-room instead of libsignal
-- **Fit:** libsignal is coupled to Signal's server-mediated model (registration,
-  prekey servers, sealed sender) — a poor match for Pigeon's transport-flexible
-  mesh and federated relay architecture.
-- **Auditability:** a focused Swift package over CryptoKit is something
-  contributors can actually read, unlike a vendored Rust/C blob.
-- **Risk boundary:** we implement *protocol composition*, not primitives, which
-  is a far smaller and more checkable surface than implementing curve math.
-  This does **not** remove the need for an external audit (§Audit Readiness).
-- **License:** the app and the packages it links (`PigeonCrypto`, `PigeonMesh`)
-  are **MIT** — permissive and App Store–compatible. The standalone **`relay`
-  server is AGPL-3.0-only** (it isn't linked into the app, so AGPL's network
-  copyleft applies only to relay operators). libsignal is AGPL-3.0; pulling it
-  into the app would force the app to AGPL and reintroduce the App Store conflict
-  (VLC precedent) — so license is now a reason the clean-room packages stay MIT,
-  alongside fit, auditability, and the risk boundary above.
+### 5.4 Wire format
+All bundles and messages use the shared **`pigeon.wire.v1`** Protocol Buffer
+schema (`proto/pigeon/wire/v1/pigeon_wire.proto`), encoded identically by the
+Rust core and the Swift app. An Olm message crosses the wire as
+`pigeon.wire.v1.OlmMessage` (its type tag + ciphertext); first contact crosses as
+`pigeon.wire.v1.Initiation` (the initiator's identity bundle + the first Olm
+pre-key message).
 
-### 5.6 Constant-time comparisons & key zeroization
+### 5.5 Why Olm/vodozemac
+- **Audited ratchet and primitives.** `vodozemac` is a focused, audited Rust
+  implementation of Olm/Megolm, so the ratchet and session establishment are not
+  Pigeon's own code to get right. This does **not** remove the need for an
+  external audit of Pigeon's *use* of it (§Audit Readiness).
+- **Cross-platform core.** A Rust core can back future non-Apple clients without
+  re-implementing the protocol per platform.
+- **Async-first.** Olm establishes from published prekeys without an interactive
+  round trip — a natural fit for a mesh/relay network where peers are often
+  offline (§5.7).
+- **License:** the reusable messaging-core, mesh, and relay packages should
+  remain open and copyleft, not source-visible-but-closable.
+  **`pigeon-core`, `pigeon-core-ffi`, `PigeonMesh`, and `pigeon-relay` are
+  AGPL-3.0-only**, so modified versions offered to users, including over a
+  network, must keep their source available. The iOS app and app-specific code
+  are source-available for transparency, local development, and security review,
+  but are not open source; commercial use, redistribution as an app, and
+  App Store/TestFlight publication require permission from the Pigeon
+  maintainers.
 
-**Constant-time comparisons.** All secret/authentication comparisons that matter
-go through CryptoKit and are already constant-time: AEAD tag verification
-(`AES.GCM.open`, `ChaChaPoly.open`) and Ed25519 signature checks. The one
-authentication decision Pigeon makes over raw bytes in its own code — the
-**binding check** that the handshake's static key equals the verified contact
-bundle's static key — uses `ConstantTime.equals` (`ConstantTime.swift`), a
-length-checked XOR-accumulate with no early exit. Both operands there are
-*public* keys, so this is defense-in-depth (it avoids leaking how many leading
-bytes a forged key matched), not a confidentiality fix. Remaining `==`
-comparisons in the crypto/session paths are over **public** values — DH ratchet
-public keys, handshake transcript bytes, identity public keys, and field lengths
-— and are intentionally left as ordinary comparisons.
+### 5.6 Constant-time comparisons & key handling
 
-**Key zeroization.** Secret byte buffers that Pigeon uniquely owns are wiped
-after use on a best-effort basis via `SecureMemory.zero` (`SecureMemory.swift`,
-`memset_s` where available): per-message keys in the ratchet (after encrypt /
-decrypt / skipped-key use) and the HKDF intermediate buffers in `Primitives`.
-Limitations are documented in `SecureMemory.swift` and are real: Swift
-`Data`/`[UInt8]` are copy-on-write value types, so wiping only works while the
-buffer is uniquely referenced, and the runtime/OS may retain copies we cannot
-reach. Long-lived chain/root keys are held as `Data` for the protocol's shape
-and are **not** explicitly zeroed today (they are released to ARC); CryptoKit's
-own `SymmetricKey`, `SharedSecret`, and private-key types do zero their storage
-on deallocation. Fuller zeroization would mean keeping all ratchet state inside
-CryptoKit secure containers — a larger refactor tracked for audit prep.
+Secret comparisons happen inside vetted code. Olm tag verification and the
+ratchet live in `vodozemac`; Ed25519 signature checks (the identity binding and
+prekey signatures) run in `ed25519-dalek` (Rust core) and CryptoKit (app). The
+one authentication decision Pigeon makes in its own code — that a session's
+reported peer identity equals the verified contact's identity key — is a
+comparison of **public** Ed25519 keys, so it is defense-in-depth rather than a
+confidentiality-critical secret comparison.
 
-### 5.7 Async first contact — X3DH prekeys (`X3DH.swift`)
+Secret key material (the Olm account, session state, message and chain keys) is
+owned and zeroized by `vodozemac`. Pigeon's own secret handling is limited to the
+32-byte Ed25519 identity seed (Keychain) and the sealed Olm account pickle
+(vault); it does not keep ratchet state in long-lived app buffers.
 
-The Noise XX handshake above is **interactive**: it needs both peers online to
-complete its round trips. To message a peer who is *not currently reachable*
-(out of range, offline, or only on a relay), Pigeon adds an **X3DH-style** key
-agreement that establishes a session and a first message from prekeys the
-recipient published ahead of time. After the first message the normal Double
-Ratchet (§5.3) takes over unchanged. This is **opt-in to the moment** — when the
-peer is online, XX is still used; X3DH covers the asynchronous case.
+### 5.7 Async first contact — Olm prekeys
+
+Olm is **async-first**: a sender can open a session and send a first message to a
+peer who is offline, using prekeys the recipient published ahead of time (in its
+QR card, or via mesh/relay). There is no interactive handshake to complete; the
+normal Double Ratchet (§5.3) takes over once the peer replies.
 
 **Reuse of existing trust.** No new root of trust is introduced. The recipient's
-`IdentityBundle` (§4) is reused verbatim: the Ed25519 identity key signs the
-X25519 static key, and that **same static key is X3DH's identity DH key (IK)**.
-So verifying a peer's safety number authenticates every DH below it. The
-recipient additionally publishes:
-- a **signed prekey (SPK)** — an X25519 key, rotated periodically, signed by the
-  identity key and bound to a numeric id; and
-- optionally a **one-time prekey (OPK)** — likewise signed and id-bound.
+identity bundle (§5.2) is reused verbatim, and every published prekey is signed
+by the same Ed25519 identity, so verifying a peer's safety number authenticates
+first contact too. The recipient publishes:
+- a **signed fallback prekey** — a long-lived Curve25519 prekey, signed by the
+  identity key, always available; and
+- a pool of **one-time prekeys (OPKs)** — likewise signed, each consumed once.
 
-Each prekey signature covers `id ‖ key`, so a relay or mesh forwarder cannot
-substitute its own key or relabel an id without breaking verification
-(`X3DHPrekeyBundle.isValid()` checks the identity binding *and* every prekey
-signature before any DH runs).
+`pigeon-core` verifies the identity binding *and* the prekey signature before any
+session is opened, so a relay or mesh forwarder cannot substitute a key.
 
-**Agreement.** The initiator computes
-`DH1 = DH(IK_A, SPK_B)`, `DH2 = DH(EK_A, IK_B)`, `DH3 = DH(EK_A, SPK_B)`, and
-(when an OPK is offered) `DH4 = DH(EK_A, OPK_B)`, where `EK_A` is a fresh
-ephemeral. The shared secret is `HKDF-SHA256` over `0xFF×32 ‖ DH1 ‖ DH2 ‖ DH3 [‖
-DH4]` (domain-separated, info `"Pigeon.X3DH.SharedSecret"`). It seeds the Double
-Ratchet with the recipient's **signed prekey as the recipient's initial ratchet
-key** — the Signal X3DH→ratchet bootstrap, which reuses the existing
-`DoubleRatchetSession.initiator`/`responder` paths with no new ratchet code. The
-initiator transmits an `X3DHInitiation` header (its identity bundle, the
-ephemeral public key, and which SPK/OPK ids it consumed) ahead of the first
-ratchet message; the recipient looks up the named private prekeys and recomputes
-the same secret.
+**Establishment.** The initiator runs Olm's outbound session against the
+recipient's identity + prekey, encrypts the first plaintext into an Olm **pre-key
+message**, and transmits a single `pigeon.wire.v1.Initiation` (its identity
+bundle + that pre-key message). The recipient creates the matching inbound
+session from the pre-key message, recovering the first plaintext; consuming the
+named one-time key is the replay defense.
 
-**Tradeoffs (deliberate).**
-- **Replay.** A one-time prekey is the replay defense: the recipient deletes an
-  OPK once used, so a replayed initiation yields a different shared secret and
-  fails to decrypt. **Without** an OPK (exhausted, see below) a captured first
-  message can be replayed to re-establish *the same* initial session state until
-  the SPK rotates — so replay resistance for first contact degrades to the SPK
-  rotation window. Application-level message dedup/freshness is still required;
-  X3DH does not by itself make the *first* message single-delivery once OPKs run
-  out. Tracked as an audit item.
-- **Exhaustion / availability.** OPKs are a finite published pool. When they are
-  gone the protocol still works SPK-only (no DH4), trading the per-session replay
-  resistance above for availability — chosen over refusing first contact. The
-  SPK is rotated to bound the exposure window; the recipient must replenish OPKs
-  when it next comes online.
-- **Weaker forward secrecy at rest than interactive XX.** Until the recipient
-  comes online and the ratchet performs its first DH step, the session's secrecy
-  rests on the long-lived SPK (and OPK). A compromise of the unrotated SPK
-  private key exposes sessions opened against it. This is inherent to async
-  setup and is why SPK rotation + OPK consumption matter.
+**Tradeoffs (deliberate, inherent to Olm).**
+- **Replay.** A one-time prekey makes first contact single-use: once consumed the
+  recipient cannot re-derive the same inbound session, so a replayed initiation
+  fails. When the OPK pool is exhausted Olm falls back to the **fallback key**,
+  and first-contact replay resistance degrades to the fallback-key rotation
+  window — so application-level dedup/freshness is still required. Pigeon
+  replenishes OPKs and rotates the fallback key when next online.
+- **Exhaustion / availability.** Olm uses the fallback key rather than refusing
+  first contact when OPKs run out — availability chosen over denying delivery.
+- **Weaker forward secrecy at rest until the first reply.** Until the recipient
+  replies and the ratchet performs its first DH step, secrecy rests on the
+  long-lived fallback key (or the consumed OPK). This is inherent to async setup
+  and is why fallback rotation + OPK consumption matter.
 - **No forward secrecy for the prekey-publication metadata** itself; prekeys are
   public by construction.
 
@@ -293,11 +273,12 @@ once.
 - **Mesh:** packet format with TTL, duplicate-suppression (seen-cache), and
   **store-and-forward** relaying so messages hop toward out-of-range peers.
   Relays handle ciphertext only.
-- **Session establishment is interactive for now:** two contacts must be in mesh
-  contact to run the Noise handshake; thereafter ratchet messages relay
-  asynchronously. **Async first contact** (X3DH-style prekeys shared through QR,
-  mesh gossip, or relays) is a planned later enhancement, with its own
-  replay/exhaustion considerations.
+- **Session establishment is async-first:** Olm establishes a session from the
+  recipient's published prekeys (signed prekey + a one-time prekey carried in the
+  QR card or shared over mesh/relay), so the first encrypted message can be sent
+  without the recipient being online. There is no interactive handshake. The
+  prekey path has its own replay/exhaustion considerations, handled inside Olm's
+  one-time-key accounting (see §5.7).
 
 ### 6.1 Relay transport (remote delivery) — opt-in
 
@@ -324,10 +305,10 @@ Pigeon keeps the trust cost minimal:
   sender deposits only on *that recipient's* relays. Independent relays, chosen
   per user, like email or Nostr relays — no single central party, no
   server-to-server protocol.
-- **Relay URLs in the card are signed delivery hints.** The 128-byte identity
-  bundle signs the identity ↔ Noise-static binding; the relay URL list is signed
-  separately by the same Ed25519 identity key so old cards remain parseable and
-  `PigeonCrypto` stays identity-agnostic. A scanner only honors relay URLs if
+- **Relay URLs in the card are signed delivery hints.** The identity bundle signs
+  the identity ↔ Olm Curve25519 binding; the relay URL list is signed separately
+  by the same Ed25519 identity key so cards remain parseable and `pigeon-core`
+  stays identity-agnostic about transport. A scanner only honors relay URLs if
   that URL signature verifies. A wrong or malicious relay can observe that
   ciphertext for a key exists, or drop it (a DoS), but it cannot read content or
   affect trust, which live in the signed bundle and the ratchet. Reading a
@@ -341,8 +322,8 @@ Pigeon keeps the trust cost minimal:
 > A relay is **untrusted infrastructure**. Compromising or operating one yields
 > metadata and the ability to drop/delay/replay ciphertext (a denial-of-service
 > and traffic-analysis position), but **never plaintext, impersonation, or a
-> trusted session** — those are gated by the identity↔Noise-static binding and
-> the AEAD/ratchet authentication, which the relay cannot forge.
+> trusted session** — those are gated by the identity ↔ Olm Curve25519 binding
+> and the Olm message authentication, which the relay cannot forge.
 
 ---
 
@@ -378,12 +359,11 @@ Pigeon keeps the trust cost minimal:
   padding, and Tor routing to blunt this are planned, not implemented. Local
   transports avoid relay metadata; relay transports provide remote reach.
 - **Endpoint trust.** A compromised/unlocked device defeats all guarantees.
-- **No async first contact** (see §6).
 - **No audit** (see below).
-- **Key zeroization is limited** by CryptoKit/Swift value semantics. Per-message
-  keys and HKDF intermediates are now wiped best-effort (`SecureMemory`), but
-  long-lived chain/root keys are released to ARC rather than explicitly zeroed
-  (§5.6).
+- **Key zeroization is limited at the FFI seam.** Ratchet and message keys live
+  inside `vodozemac`, which zeroizes its own secrets on drop; but the seed and
+  Olm account pickle cross the UniFFI boundary as plain bytes before being sealed
+  at rest, and those transient copies are not yet explicitly wiped (§5.6).
 
 ---
 
@@ -395,33 +375,33 @@ what an auditor should examine and what must be resolved first. It is the
 authoritative to-do list for reaching audit readiness.
 
 ### Must-fix before an audit is meaningful
-1. ~~**Bind Noise static ↔ Ed25519 identity.**~~ ✅ **Implemented.** `IdentityBundle`
-   carries the X25519 static key signed by the Ed25519 identity; the QR payload
-   is the signed bundle; `SessionManager` rejects any established session whose
-   handshake `remoteStaticKey` does not equal the verified bundle's static key.
-   (Still subject to overall audit, but the gap is closed.)
-2. **Cross-validate Noise against the official test vectors.** Current tests
-   prove our two ends interoperate (self-consistency); they do **not** prove
-   byte-level conformance to `Noise_XX_25519_ChaChaPoly_SHA256`. Add the
-   published vectors to the test suite.
-3. **Handshake replay / freshness.** Define and test behavior for replayed or
-   reordered handshake messages, including across the mesh's store-and-forward.
-3a. **X3DH first-contact validation (§5.7).** Cross-validate
-   the X3DH key schedule against reference behavior
-   SPK-only (OPK-exhausted) replay window is acceptable and that the app enforces OPK delete-on-use and SPK rotation once integration lands.
+1. ~~**Bind the Olm identity key ↔ Ed25519 identity.**~~ ✅ **Implemented.**
+   `IdentityBundle` carries Olm's Curve25519 identity key signed by the Ed25519
+   identity; the QR payload is the signed bundle; `pigeon-core` rejects any
+   established session whose Olm identity key does not equal the verified bundle's
+   key. (Still subject to overall audit, but the gap is closed.)
+2. **Audit the FFI/wire seam, not the ratchet primitives.** The Double Ratchet,
+   session establishment, and message format are Olm as implemented by the
+   audited `vodozemac` crate, so the audit target is Pigeon's *use* of it: the
+   `pigeon-core` ↔ `vodozemac` boundary, the protobuf wire encode/decode in
+   `wire.rs`, and the UniFFI bridge — not a re-audit of Olm itself.
+3. **Prekey replay / freshness.** Define and test behavior for replayed prekey
+   initiations across the mesh's store-and-forward, confirming Olm's
+   one-time-key delete-on-use closes the window and that the signed-prekey-only
+   (one-time-key-exhausted) fallback replay window is acceptable and documented.
 
 ### Should-address
-4. **Skipped-key DoS bound.** Review `maxSkip` (currently 1000) and the memory
-   cost of stored skipped message keys under adversarial gaps.
-5. **Key lifetime & zeroization.** ⚠️ **Partially addressed** (§5.6):
-   per-message keys and HKDF intermediates are wiped best-effort via
-   `SecureMemory`. Still open: long-lived chain/root keys are released to ARC
-   rather than zeroed; minimizing copies / moving ratchet state into CryptoKit
-   secure containers remains.
-6. **Constant-time comparisons.** ⚠️ **Partially addressed** (§5.6): the binding
-   check uses `ConstantTime.equals`; AEAD/signature checks are constant-time via
-   CryptoKit. Remaining identity/public-key equality checks are over public
-   values and left as ordinary comparisons (documented).
+4. **Skipped-key DoS bound.** Review Olm's bound on stored skipped message keys
+   and the memory cost under adversarial gaps, as exposed through `pigeon-core`.
+5. **Key lifetime & zeroization.** ⚠️ **Partially addressed** (§5.6): ratchet
+   and message keys live inside `vodozemac`, which zeroizes its own secret
+   material on drop. Still open on the Pigeon side: the seed and Olm account
+   pickle cross the FFI boundary as plain bytes before being sealed at rest, so
+   minimizing and wiping those transient copies remains.
+6. **Constant-time comparisons.** ⚠️ **Partially addressed** (§5.6): Olm message
+   authentication and signature checks are constant-time inside `vodozemac`.
+   Remaining identity/public-key equality checks (the binding check) are over
+   public values and left as ordinary comparisons (documented).
 7. **Logging discipline.** Guarantee no key material, plaintext, or
    safety-relevant state reaches logs, crash reports, previews, or test output.
 8. **Keychain access control.** Consider biometric/passcode gating
@@ -441,7 +421,7 @@ authoritative to-do list for reaching audit readiness.
     ciphertext addressed by recipient key, with no field it can use to read,
     link, or tamper with content beyond drop/delay/replay.
 14. **Replay/freshness across the relay.** Store-and-forward over a relay must
-    not widen the handshake/message replay surface (ties to item 3).
+    not widen the prekey/message replay surface (ties to item 3).
 15. **Relay abuse & retention.** Authentication-free mailboxes invite spam/DoS
     and unbounded storage; define rate-limiting, per-recipient quotas, and
     ciphertext age expiry. No plaintext, keys, or linkable logs server-side.
@@ -449,10 +429,12 @@ authoritative to-do list for reaching audit readiness.
     "delivered" state or inject packets that bypass mesh dedup/auth.
 
 ### What an auditor should focus on
-- Correctness of the Noise XX state machine and the Double Ratchet (especially
-  DH-ratchet steps, skipped-key handling, and AEAD nonce derivation).
-- Domain separation of all derived keys.
-- The identity ↔ Noise-static binding (item 1) and the trust-establishment UX.
+- Pigeon's *use* of Olm via `vodozemac`: the `pigeon-core` session API, the
+  protobuf wire encode/decode, and the UniFFI bridge — rather than re-auditing
+  the Olm ratchet primitives themselves.
+- Domain separation of Pigeon's own derived values (identity binding signature,
+  safety-number derivation).
+- The identity ↔ Olm Curve25519 binding (item 1) and the trust-establishment UX.
 - That every field influencing decryption, trust, routing, or replay is
   authenticated.
 
