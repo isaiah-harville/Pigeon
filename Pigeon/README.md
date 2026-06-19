@@ -30,5 +30,5 @@ require permission from the Pigeon maintainers.
 
 The app links the `PigeonCore` package (the Rust `pigeon-core` messaging core,
 bridged via UniFFI and shipped as an XCFramework) and the Swift `PigeonMesh`
-package. `pigeon-core`, `PigeonMesh`, and `PigeonRelay` are AGPL-3.0-only so
+package. `pigeon-core`, `PigeonMesh`, and `pigeon-relay` are AGPL-3.0-only so
 reusable messaging core code cannot be taken closed.

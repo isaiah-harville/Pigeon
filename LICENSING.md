@@ -9,7 +9,7 @@ license grant.
 | `pigeon-core/` | [GNU AGPL-3.0-only](pigeon-core/LICENSE) | Reusable Rust messaging core (Olm via `vodozemac`). Open source and copyleft so modified versions offered to users stay source-available. |
 | `pigeon-core-ffi/` | GNU AGPL-3.0-only (`license` field in `pigeon-core-ffi/Cargo.toml`) | UniFFI bridge for `pigeon-core`; same copyleft terms as the core it wraps. |
 | `PigeonMesh/` | [GNU AGPL-3.0-only](PigeonMesh/LICENSE) | Reusable mesh/transport package. Open source and copyleft so modified versions offered to users stay source-available. |
-| `PigeonRelay/` | [GNU AGPL-3.0-only](PigeonRelay/LICENSE) | Reusable relay server. Open source and copyleft, including AGPL network source availability for modified network services. |
+| `pigeon-relay/` | [GNU AGPL-3.0-only](pigeon-relay/LICENSE) | Reusable relay server. Open source and copyleft, including AGPL network source availability for modified network services. |
 
 Files outside those directories are covered by the nearest applicable license
 notice when one exists. If a file has no applicable license notice, no additional

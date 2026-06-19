@@ -58,7 +58,7 @@ concurrently):
   a thin Swift facade); this is what the iOS app links for messaging crypto.
 - `PigeonMesh/` - standalone Swift package for fragmentation, mesh packets,
   deduplication, TTL, and session envelopes.
-- `PigeonRelay/` - Rust zero-knowledge relay server.
+- `pigeon-relay/` - Rust zero-knowledge relay server.
 - `docs/` - MkDocs source for design, security, roadmap, and API docs.
 
 ## Common Commands
@@ -71,7 +71,7 @@ swift test --package-path PigeonCore
 swift test --package-path PigeonMesh
 xcodebuild -list -project Pigeon/Pigeon.xcodeproj
 xcodebuild build -project Pigeon/Pigeon.xcodeproj -scheme Pigeon -destination 'generic/platform=iOS'
-cargo test --manifest-path PigeonRelay/Cargo.toml
+cargo test --manifest-path pigeon-relay/Cargo.toml
 uv run --group docs mkdocs build --strict
 ```
 

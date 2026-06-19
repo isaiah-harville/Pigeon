@@ -6,7 +6,7 @@ GitHub Pages workflow.
 <p>
   <a class="md-button md-button--primary" href="../api/pigeon-core/doc/pigeon_core/">pigeon-core rustdoc</a>
   <a class="md-button md-button--primary" href="../api/PigeonMesh/documentation/pigeonmesh/">PigeonMesh DocC</a>
-  <a class="md-button md-button--primary" href="../api/PigeonRelay/doc/pigeon_relay/">PigeonRelay rustdoc</a>
+  <a class="md-button md-button--primary" href="../api/pigeon-relay/doc/pigeon_relay/">pigeon-relay rustdoc</a>
 </p>
 
 The generated references are built after MkDocs and copied under `public/api/`

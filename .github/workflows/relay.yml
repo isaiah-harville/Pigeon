@@ -1,13 +1,13 @@
-name: PigeonRelay
+name: pigeon-relay
 
 on:
   push:
     branches: [main]
-    paths: ["PigeonRelay/**", ".github/workflows/relay.yml"]
+    paths: ["pigeon-relay/**", ".github/workflows/relay.yml"]
     tags: ["relay-v*"]
   pull_request:
     branches: [main]
-    paths: ["PigeonRelay/**", ".github/workflows/relay.yml"]
+    paths: ["pigeon-relay/**", ".github/workflows/relay.yml"]
   workflow_dispatch:
 
 concurrency:
@@ -66,7 +66,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: PigeonRelay
+          context: pigeon-relay
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

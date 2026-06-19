@@ -6,7 +6,7 @@ on:
     paths:
       - "pigeon-core/**"
       - "pigeon-core-ffi/**"
-      - "PigeonRelay/**"
+      - "pigeon-relay/**"
       - "proto/**"
       - ".github/actions/rust-crate-ci/**"
       - ".github/workflows/rust.yml"
@@ -15,7 +15,7 @@ on:
     paths:
       - "pigeon-core/**"
       - "pigeon-core-ffi/**"
-      - "PigeonRelay/**"
+      - "pigeon-relay/**"
       - "proto/**"
       - ".github/actions/rust-crate-ci/**"
       - ".github/workflows/rust.yml"
@@ -46,7 +46,7 @@ jobs:
           package: pigeon-core-ffi
 
   pigeon-relay:
-    name: PigeonRelay
+    name: pigeon-relay
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

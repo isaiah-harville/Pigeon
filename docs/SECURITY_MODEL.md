@@ -193,7 +193,7 @@ pre-key message).
   offline (§5.7).
 - **License:** the reusable messaging-core, mesh, and relay packages should
   remain open and copyleft, not source-visible-but-closable.
-  **`pigeon-core`, `pigeon-core-ffi`, `PigeonMesh`, and `PigeonRelay` are
+  **`pigeon-core`, `pigeon-core-ffi`, `PigeonMesh`, and `pigeon-relay` are
   AGPL-3.0-only**, so modified versions offered to users, including over a
   network, must keep their source available. The iOS app and app-specific code
   are source-available for transparency, local development, and security review,

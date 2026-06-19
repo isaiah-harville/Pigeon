@@ -13,7 +13,7 @@ auditable code over clever abstractions.
 ## Licensing Policy
 
 Keep the reusable protocol, cryptography, mesh, and relay packages open source
-and copyleft. `pigeon-core`, `PigeonMesh`, and `PigeonRelay` are
+and copyleft. `pigeon-core`, `PigeonMesh`, and `pigeon-relay` are
 `AGPL-3.0-only` so modified protocol/network code offered to users cannot be
 taken closed. The iOS app and app-specific code are source-available but not
 open source; commercial use, redistribution as an app, and App Store/TestFlight
@@ -22,7 +22,7 @@ publication require permission from the Pigeon maintainers.
 ## Current Architecture
 
 The repo has the **app** (`Pigeon/`) plus three packages — `pigeon-core/`
-(Rust), `PigeonMesh/` (Swift), and `PigeonRelay/` (Rust) — and `PigeonCore/`,
+(Rust), `PigeonMesh/` (Swift), and `pigeon-relay/` (Rust) — and `PigeonCore/`,
 the thin Swift package that vends the generated FFI bindings + XCFramework.
 
 **Rust migration (#79–#83):** the pairwise messaging core is the Rust
@@ -40,7 +40,7 @@ follow-ups (#82–#83).
   messaging core built on Olm/`vodozemac`. It keeps Pigeon's identity binding (a
   long-term Ed25519 key signs Olm's Curve25519 identity key) on top of Olm's
   session establishment + Double Ratchet. It is NOT a Cargo-workspace member of
-  `PigeonRelay`.
+  `pigeon-relay`.
 - `pigeon-core-ffi/` is the UniFFI crate (the only crate that links UniFFI, so
   `pigeon-core` stays binding-free). `build-xcframework.sh` builds the Apple
   static libs, generates the Swift bindings + protobuf, and assembles
@@ -54,7 +54,7 @@ follow-ups (#82–#83).
   transport/mesh logic (packet framing, fragmentation/reassembly over small BLE
   MTUs, store-and-forward routing). The CoreBluetooth driver lives in the app and
   feeds bytes through this package — `PigeonMesh` itself has no radio dependency.
-- `PigeonRelay/` is the Rust (axum/tokio) zero-knowledge relay server; ships as a
+- `pigeon-relay/` is the Rust (axum/tokio) zero-knowledge relay server; ships as a
   Docker image. See the Remote Delivery section below.
 
 ### Repository map (where things live)
@@ -137,7 +137,7 @@ bash pigeon-core-ffi/build-xcframework.sh              # regenerate bindings + X
 swift test --package-path PigeonCore                   # Swift round-trip across the FFI
 swift test --package-path PigeonMesh
 xcodebuild build -project Pigeon/Pigeon.xcodeproj -scheme Pigeon -destination 'generic/platform=iOS'
-cargo test --manifest-path PigeonRelay/Cargo.toml      # relay (Rust)
+cargo test --manifest-path pigeon-relay/Cargo.toml      # relay (Rust)
 ```
 
 Useful discovery command:
@@ -170,7 +170,7 @@ architecture for reaching peers out of local range (decision recorded
 2026-06-16). It is a blind ciphertext mailbox: clients address delivery to a
 recipient's advertised relay(s); the relay never sees plaintext and is never
 trusted for confidentiality, authentication, or integrity. The relay server
-lives in this repo (`PigeonRelay/`), ships as a Docker image, and is federated from the
+lives in this repo (`pigeon-relay/`), ships as a Docker image, and is federated from the
 start (many independent relays, chosen per user — no server-to-server protocol).
 Local delivery and relay delivery are both first-class transports carrying the
 same end-to-end ciphertext. See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md)

@@ -34,15 +34,15 @@ swift package \
   --transform-for-static-hosting \
   --hosting-base-path "$DOCC_HOSTING_BASE_PATH/PigeonMesh"
 
-echo "Building PigeonRelay rustdoc..."
-rm -rf "$RELAY_DOC_TARGET" "$PUBLIC_DIR/api/PigeonRelay"
+echo "Building pigeon-relay rustdoc..."
+rm -rf "$RELAY_DOC_TARGET" "$PUBLIC_DIR/api/pigeon-relay"
 cargo doc \
-  --manifest-path PigeonRelay/Cargo.toml \
+  --manifest-path pigeon-relay/Cargo.toml \
   --no-deps \
   --document-private-items \
   --target-dir "$RELAY_DOC_TARGET"
-mkdir -p "$PUBLIC_DIR/api/PigeonRelay"
-cp -R "$RELAY_DOC_TARGET/doc" "$PUBLIC_DIR/api/PigeonRelay/doc"
+mkdir -p "$PUBLIC_DIR/api/pigeon-relay"
+cp -R "$RELAY_DOC_TARGET/doc" "$PUBLIC_DIR/api/pigeon-relay/doc"
 
 cat <<EOF
 
@@ -52,7 +52,7 @@ Docs are ready:
 API docs:
   http://localhost:$PORT/api/pigeon-core/doc/pigeon_core/
   http://localhost:$PORT/api/PigeonMesh/documentation/pigeonmesh/
-  http://localhost:$PORT/api/PigeonRelay/doc/pigeon_relay/
+  http://localhost:$PORT/api/pigeon-relay/doc/pigeon_relay/
 
 Press Ctrl-C to stop the server.
 EOF

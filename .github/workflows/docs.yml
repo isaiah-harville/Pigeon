@@ -7,8 +7,8 @@ on:
       - "docs/**"
       - "PigeonMesh/Package.swift"
       - "PigeonMesh/Package.resolved"
-      - "PigeonRelay/Cargo.toml"
-      - "PigeonRelay/Cargo.lock"
+      - "pigeon-relay/Cargo.toml"
+      - "pigeon-relay/Cargo.lock"
       - "Cargo.toml"
       - "Cargo.lock"
       - "pigeon-core/Cargo.toml"
@@ -21,10 +21,10 @@ on:
       - "PigeonMesh/CONTRIBUTING.md"
       - "PigeonMesh/docs/**"
       - "PigeonMesh/mkdocs.yml"
-      - "PigeonRelay/README.md"
-      - "PigeonRelay/CONTRIBUTING.md"
-      - "PigeonRelay/docs/**"
-      - "PigeonRelay/mkdocs.yml"
+      - "pigeon-relay/README.md"
+      - "pigeon-relay/CONTRIBUTING.md"
+      - "pigeon-relay/docs/**"
+      - "pigeon-relay/mkdocs.yml"
       - "pigeon-core/src/**"
       - "CONTRIBUTING.md"
       - "README.md"
@@ -38,8 +38,8 @@ on:
       - "docs/**"
       - "PigeonMesh/Package.swift"
       - "PigeonMesh/Package.resolved"
-      - "PigeonRelay/Cargo.toml"
-      - "PigeonRelay/Cargo.lock"
+      - "pigeon-relay/Cargo.toml"
+      - "pigeon-relay/Cargo.lock"
       - "Cargo.toml"
       - "Cargo.lock"
       - "pigeon-core/Cargo.toml"
@@ -52,10 +52,10 @@ on:
       - "PigeonMesh/CONTRIBUTING.md"
       - "PigeonMesh/docs/**"
       - "PigeonMesh/mkdocs.yml"
-      - "PigeonRelay/README.md"
-      - "PigeonRelay/CONTRIBUTING.md"
-      - "PigeonRelay/docs/**"
-      - "PigeonRelay/mkdocs.yml"
+      - "pigeon-relay/README.md"
+      - "pigeon-relay/CONTRIBUTING.md"
+      - "pigeon-relay/docs/**"
+      - "pigeon-relay/mkdocs.yml"
       - "pigeon-core/src/**"
       - "CONTRIBUTING.md"
       - "README.md"
@@ -141,14 +141,14 @@ jobs:
 
       - name: Build relay API docs
         run: |
-          rm -rf "$RUNNER_TEMP/pigeon-relay-docs" "$PWD/public/api/PigeonRelay"
+          rm -rf "$RUNNER_TEMP/pigeon-relay-docs" "$PWD/public/api/pigeon-relay"
           cargo doc \
-            --manifest-path PigeonRelay/Cargo.toml \
+            --manifest-path pigeon-relay/Cargo.toml \
             --no-deps \
             --document-private-items \
             --target-dir "$RUNNER_TEMP/pigeon-relay-docs"
-          mkdir -p "$PWD/public/api/PigeonRelay"
-          cp -R "$RUNNER_TEMP/pigeon-relay-docs/doc" "$PWD/public/api/PigeonRelay/doc"
+          mkdir -p "$PWD/public/api/pigeon-relay"
+          cp -R "$RUNNER_TEMP/pigeon-relay-docs/doc" "$PWD/public/api/pigeon-relay/doc"
 
       - name: Build pigeon-core API docs
         run: |

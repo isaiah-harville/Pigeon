@@ -51,4 +51,4 @@ nav:
   - Contributing: CONTRIBUTING.md
   - Pigeon App: "!include Pigeon/mkdocs.yml"
   - PigeonMesh: "!include PigeonMesh/mkdocs.yml"
-  - PigeonRelay: "!include PigeonRelay/mkdocs.yml"
+  - pigeon-relay: "!include pigeon-relay/mkdocs.yml"

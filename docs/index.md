@@ -25,6 +25,6 @@ certification.
 
 - [Security Model](SECURITY_MODEL.md) for the threat model and audit blockers.
 - [Roadmap](ROADMAP.md) for shipped, active, planned, and horizon work.
-- [API Reference](API.md) for generated pigeon-core, PigeonMesh, and PigeonRelay
+- [API Reference](API.md) for generated pigeon-core, PigeonMesh, and pigeon-relay
   API docs.
 - [Contributing](CONTRIBUTING.md) for local checks and review expectations.

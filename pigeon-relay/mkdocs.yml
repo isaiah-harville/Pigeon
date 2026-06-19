@@ -1,4 +1,4 @@
-site_name: PigeonRelay
+site_name: pigeon-relay
 docs_dir: docs
 nav:
   - Overview: index.md

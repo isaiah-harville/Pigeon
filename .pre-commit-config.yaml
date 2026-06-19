@@ -42,11 +42,11 @@ repos:
         language: system
         entry: cargo fmt --all
         pass_filenames: false
-        files: ^(Cargo\.(toml|lock)|(pigeon-core|pigeon-core-ffi|PigeonRelay)/.*\.(rs|toml|lock))$
+        files: ^(Cargo\.(toml|lock)|(pigeon-core|pigeon-core-ffi|pigeon-relay)/.*\.(rs|toml|lock))$
 
       - id: cargo-clippy
         name: cargo clippy
         language: system
         entry: cargo clippy --workspace --all-targets -- -D warnings
         pass_filenames: false
-        files: ^(Cargo\.(toml|lock)|(pigeon-core|pigeon-core-ffi|PigeonRelay)/.*\.(rs|toml|lock))$
+        files: ^(Cargo\.(toml|lock)|(pigeon-core|pigeon-core-ffi|pigeon-relay)/.*\.(rs|toml|lock))$

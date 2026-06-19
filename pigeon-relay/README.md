@@ -84,7 +84,7 @@ cargo fmt --check
 ```
 
 CI (`.github/workflows/relay.yml`) runs fmt/clippy/test and builds & pushes the
-multi-arch image to GHCR on pushes to `main` (paths under `PigeonRelay/`) and on
+multi-arch image to GHCR on pushes to `main` (paths under `pigeon-relay/`) and on
 `relay-v*` tags.
 
 ## Roadmap (this component)
