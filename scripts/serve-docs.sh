@@ -5,6 +5,7 @@ PORT="${1:-8000}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PUBLIC_DIR="$ROOT/public"
 RELAY_DOC_TARGET="${TMPDIR:-/tmp}/pigeon-relay-docs"
+CORE_DOC_TARGET="${TMPDIR:-/tmp}/pigeon-core-docs"
 DOCC_HOSTING_BASE_PATH="${DOCC_HOSTING_BASE_PATH:-api}"
 
 cd "$ROOT"
@@ -12,16 +13,15 @@ cd "$ROOT"
 echo "Building MkDocs..."
 uv run --group docs mkdocs build --strict
 
-echo "Building PigeonCrypto DocC..."
-mkdir -p "$PUBLIC_DIR/api/PigeonCrypto"
-swift package \
-  --package-path PigeonCrypto \
-  --allow-writing-to-directory "$PUBLIC_DIR/api/PigeonCrypto" \
-  generate-documentation \
-  --target PigeonCrypto \
-  --output-path "$PUBLIC_DIR/api/PigeonCrypto" \
-  --transform-for-static-hosting \
-  --hosting-base-path "$DOCC_HOSTING_BASE_PATH/PigeonCrypto"
+echo "Building pigeon-core rustdoc..."
+rm -rf "$CORE_DOC_TARGET" "$PUBLIC_DIR/api/pigeon-core"
+cargo doc \
+  --manifest-path pigeon-core/Cargo.toml \
+  --no-deps \
+  --document-private-items \
+  --target-dir "$CORE_DOC_TARGET"
+mkdir -p "$PUBLIC_DIR/api/pigeon-core"
+cp -R "$CORE_DOC_TARGET/doc" "$PUBLIC_DIR/api/pigeon-core/doc"
 
 echo "Building PigeonMesh DocC..."
 mkdir -p "$PUBLIC_DIR/api/PigeonMesh"
@@ -50,7 +50,7 @@ Docs are ready:
   http://localhost:$PORT/
 
 API docs:
-  http://localhost:$PORT/api/PigeonCrypto/documentation/pigeoncrypto/
+  http://localhost:$PORT/api/pigeon-core/doc/pigeon_core/
   http://localhost:$PORT/api/PigeonMesh/documentation/pigeonmesh/
   http://localhost:$PORT/api/PigeonRelay/doc/pigeon_relay/
 

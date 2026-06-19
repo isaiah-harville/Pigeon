@@ -50,6 +50,5 @@ nav:
   - API Reference: API.md
   - Contributing: CONTRIBUTING.md
   - Pigeon App: "!include Pigeon/mkdocs.yml"
-  - PigeonCrypto: "!include PigeonCrypto/mkdocs.yml"
   - PigeonMesh: "!include PigeonMesh/mkdocs.yml"
   - PigeonRelay: "!include PigeonRelay/mkdocs.yml"

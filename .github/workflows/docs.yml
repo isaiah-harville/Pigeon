@@ -5,8 +5,6 @@ on:
     branches: [main]
     paths:
       - "docs/**"
-      - "PigeonCrypto/Package.swift"
-      - "PigeonCrypto/Package.resolved"
       - "PigeonMesh/Package.swift"
       - "PigeonMesh/Package.resolved"
       - "PigeonRelay/Cargo.toml"
@@ -19,10 +17,6 @@ on:
       - "Pigeon/CONTRIBUTING.md"
       - "Pigeon/docs/**"
       - "Pigeon/mkdocs.yml"
-      - "PigeonCrypto/README.md"
-      - "PigeonCrypto/CONTRIBUTING.md"
-      - "PigeonCrypto/docs/**"
-      - "PigeonCrypto/mkdocs.yml"
       - "PigeonMesh/README.md"
       - "PigeonMesh/CONTRIBUTING.md"
       - "PigeonMesh/docs/**"
@@ -42,8 +36,6 @@ on:
     branches: [main]
     paths:
       - "docs/**"
-      - "PigeonCrypto/Package.swift"
-      - "PigeonCrypto/Package.resolved"
       - "PigeonMesh/Package.swift"
       - "PigeonMesh/Package.resolved"
       - "PigeonRelay/Cargo.toml"
@@ -56,10 +48,6 @@ on:
       - "Pigeon/CONTRIBUTING.md"
       - "Pigeon/docs/**"
       - "Pigeon/mkdocs.yml"
-      - "PigeonCrypto/README.md"
-      - "PigeonCrypto/CONTRIBUTING.md"
-      - "PigeonCrypto/docs/**"
-      - "PigeonCrypto/mkdocs.yml"
       - "PigeonMesh/README.md"
       - "PigeonMesh/CONTRIBUTING.md"
       - "PigeonMesh/docs/**"
@@ -140,16 +128,7 @@ jobs:
 
       - name: Build Swift API docs
         run: |
-          mkdir -p "$PWD/public/api/PigeonCrypto" "$PWD/public/api/PigeonMesh"
-
-          swift package \
-            --package-path PigeonCrypto \
-            --allow-writing-to-directory "$PWD/public/api/PigeonCrypto" \
-            generate-documentation \
-            --target PigeonCrypto \
-            --output-path "$PWD/public/api/PigeonCrypto" \
-            --transform-for-static-hosting \
-            --hosting-base-path "$DOCC_HOSTING_BASE_PATH/PigeonCrypto"
+          mkdir -p "$PWD/public/api/PigeonMesh"
 
           swift package \
             --package-path PigeonMesh \
