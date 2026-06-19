@@ -35,17 +35,25 @@ channel that someone may be watching.
 
 The simplest encryption uses **one** secret key to both lock and unlock, like a
 physical key that works in both directions. This is **symmetric** encryption.
-Pigeon's symmetric workhorse is **ChaCha20-Poly1305**, a modern cipher
-standardized for internet use ([RFC 8439][rfc8439]).
+Pigeon's symmetric workhorse is **AES-256**, the Advanced Encryption Standard at
+its 256-bit key size ([FIPS 197][fips197]) — the most widely deployed block
+cipher in the world.
 
-It's specifically an **AEAD** — *Authenticated Encryption with Associated Data*
-([Rogaway 2002][aead]). AEAD gives you two guarantees at once:
+But a cipher alone only hides content; it doesn't stop tampering. Every secret
+Pigeon stores or sends is therefore **authenticated** too:
 
 - **Confidentiality:** without the key, the ciphertext is indistinguishable from
   random noise.
-- **Integrity/authenticity:** if anyone flips even one bit of the ciphertext (or
-  of the unencrypted headers "associated" with it), decryption *fails loudly*
-  rather than returning garbage. You cannot tamper undetected.
+- **Integrity/authenticity:** if anyone flips even one bit, decryption *fails
+  loudly* rather than returning garbage — you cannot tamper undetected.
+
+Two standard constructions provide that second guarantee. Messages between peers
+use **AES-256-CBC encrypt-then-MAC**: encrypt with AES, then stamp the ciphertext
+with **HMAC-SHA256** (a keyed hash) so any change is detected — the classic
+authenticated-encryption recipe ([Bellare & Namprempre 2000][etm]). At-rest
+storage on the device uses **AES-256-GCM**, a single-pass **AEAD** mode —
+*Authenticated Encryption with Associated Data* ([Rogaway 2002][aead]) — that
+locks content and authenticity together in one operation.
 
 The catch: symmetric encryption needs both parties to already share the secret
 key. Which raises the central question of all messaging crypto — *how do two
@@ -66,17 +74,19 @@ curves ([Bernstein 2006][curve25519]). It's used in two distinct roles, with two
 separate keys:
 
 - **X25519** — for *key agreement* (Diffie–Hellman on Curve25519),
-  standardized in [RFC 7748][rfc7748]. This is the **static key** on the diagrams.
+  standardized in [RFC 7748][rfc7748]. This is the key the **Olm** session
+  protocol (below) uses as a device's **Curve25519 identity key** and for every
+  ratchet step.
 - **Ed25519** — for *digital signatures* (the EdDSA scheme), standardized in
-  [RFC 8032][rfc8032] (paper: [Bernstein et al. 2012][ed25519]). This is the
-  **identity key**.
+  [RFC 8032][rfc8032] (paper: [Bernstein et al. 2012][ed25519]). This is Pigeon's
+  long-term **identity key** — the root of who you are.
 
 > **Why two keys, not one?** Signing and key-agreement are different jobs with
-> different math, and good hygiene keeps them on separate keys. Pigeon's identity
-> key *signs* (proves "this came from me") and its static key *agrees on secrets*
-> (used to derive shared keys). Apple's Secure Enclave can't hold these — it only
-> supports the NIST P-256 curve, not Curve25519 — which is the deliberate
-> trade-off noted in the [Security Model](SECURITY_MODEL.md) §4.
+> different math, and good hygiene keeps them on separate keys. Pigeon's Ed25519
+> identity key *signs* (proves "this came from me") while the Curve25519 key
+> *agrees on secrets* (used to derive shared keys). Apple's Secure Enclave can't
+> hold these — it only supports the NIST P-256 curve, not Curve25519 — which is
+> the deliberate trade-off noted in the [Security Model](SECURITY_MODEL.md) §4.
 
 The two operations public keys enable:
 
@@ -88,9 +98,9 @@ The two operations public keys enable:
    secret — without that secret ever crossing the wire (mechanism below).
 
 On every diagram in this doc, the red **"Keychain · private keys"** badge under
-each phone names these keys and their jobs: *Ed25519 identity → sign*, *X25519
-static → ECDH*, *ratchet keys → decrypt*. Red is a running reminder: **this
-material never leaves the device.**
+each phone names these keys and their jobs: *Ed25519 identity → sign*, *Curve25519
+key → ECDH*, *ratchet keys → decrypt*. Red is a running reminder: **this material
+never leaves the device.**
 
 ### Hashes and key derivation
 
@@ -140,16 +150,19 @@ Pigeon has no accounts, phone numbers, or central directory. **You are your key
 pair**, addressed by your fingerprint. Trust is established the hard-to-fool way:
 **in person.**
 
-1. **Each phone generates its keys** (Ed25519 identity + X25519 static) on first
+1. **Each phone generates its keys** (an Ed25519 identity key, plus an Olm
+   account holding a Curve25519 identity key and a pool of prekeys) on first
    launch and stores the private halves in the **Keychain** (details in
    [Where the secrets live](#where-the-secrets-live)).
 2. **You show each other a QR code** encoding a **ContactCard**: your *public*
-   identity key, *public* static key, display name, and any relay addresses. It's
-   all public — safe even if photographed by a stranger.
+   Ed25519 identity key, your *public* Olm Curve25519 key, a signed *prekey*
+   bundle (so people can message you while you're offline — see Step 2), a display
+   name, and any relay addresses. It's all public — safe even if photographed by a
+   stranger.
 3. **Each phone verifies the card is internally consistent.** The card carries an
-   Ed25519 signature, made by the identity key, over the static key. Checking it
-   proves the two keys belong together — an attacker can't staple their own static
-   key onto your identity.
+   Ed25519 signature, made by the identity key, over the Curve25519 key. Checking
+   it proves the two keys belong together — an attacker can't staple their own
+   Curve25519 key onto your identity.
 4. **You compare a safety number.** Pigeon derives one 60-digit number from *both*
    public identity keys — identical on both phones — and you confirm they match
    (read aloud or scanned). This mirrors Signal's "safety number" design
@@ -173,37 +186,44 @@ After this, your friend is a **verified contact**, permanently.
 
 ---
 
-## Step 2 — Opening a channel: the Noise XX handshake
+## Step 2 — Opening a channel: an Olm session
 
 Now both phones must derive a shared secret *and* each confirm **who** the other
-is. Pigeon uses a handshake from the **Noise Protocol Framework**
-([Perrin, Noise spec][noise]) — a well-analyzed toolkit for building exactly these
-exchanges. Pigeon's specific suite is **`Noise_XX_25519_ChaChaPoly_SHA256`**
-(Security Model §5.2): the `XX` *pattern* over `X25519` key agreement,
-`ChaCha20-Poly1305` AEAD, and `SHA-256` hashing.
+is. Pigeon does this with **Olm**, the session protocol from the Matrix project,
+as implemented by the audited [`vodozemac`][vodozemac] Rust crate. Pigeon does
+**not** re-implement the ratchet or the key math — it drives Olm's account and
+session API and adds exactly one thing of its own: the identity check at the end.
 
-The `XX` pattern uses two kinds of keys per side:
+Olm is **asynchronous**: the sender does **not** need the recipient online. That
+matters enormously for a mesh — peers are out of range all the time. It works
+through **prekeys**: keys the recipient publishes *ahead of time* in its
+ContactCard so anyone can start a session with them later.
 
-- an **ephemeral** key — fresh, random, thrown away after the handshake; and
-- the long-term **static** key — the identity established in Step 1.
+- Each device's Olm account holds a long-term **Curve25519 identity key**, a
+  rotating **signed prekey**, and a pool of **one-time prekeys** — all public,
+  all carried in the QR card from Step 1, and each one signed by the Ed25519
+  identity key.
+- To open a session, the sender generates a fresh **ephemeral** key and performs
+  several Diffie–Hellman operations against the recipient's published keys —
+  ephemeral-with-identity, ephemeral-with-signed-prekey, ephemeral-with-one-time
+  — and folds the results together (via **HKDF-SHA256**) into a shared root
+  secret. This is the same multi-DH idea pioneered by Signal's X3DH
+  ([Marlinspike & Perrin][x3dh]); Olm uses it as its session-setup step.
+- That first encrypted message carries the sender's ephemeral and one-time-key
+  choices, so the recipient — whenever it next comes online — can run the
+  matching DHs and arrive at the *same* root secret. The one-time prekey is then
+  **deleted**, so it can never be reused.
 
-Across three messages, the parties perform several Diffie–Hellman operations,
-mixing ephemeral-with-ephemeral, ephemeral-with-static, and static-with-static.
-Each DH result is folded (via the KDF) into a running secret, and a running
-**transcript hash** binds every byte exchanged so a tampered handshake can't
-succeed. The outcome:
+The outcome is the same as any good handshake: **a shared secret** no
+eavesdropper can reconstruct (they only saw public points), with **forward
+secrecy** from the ephemeral and one-time keys, plus each side learning the
+other's Curve25519 identity key.
 
-- **a shared secret** no eavesdropper can reconstruct (they only saw public
-  points), with **forward secrecy** from the ephemeral keys — recording the
-  traffic and stealing the static keys *later* still won't reveal it; and
-- **mutual authentication**: each side proves possession of its static private
-  key, so each learns the other's verified static public key.
-
-Then Pigeon adds one project-specific check — the **binding check**: it confirms
-the static key proven in the handshake **equals the static key in the ContactCard
-you verified in person** (Security Model §4). This staples the encrypted channel
-to the specific human you checked, so "encrypted" also means "encrypted *to the
-right person*."
+Then Pigeon adds its one project-specific check — the **binding check**: it
+confirms the Curve25519 identity key in the session **equals the one in the
+ContactCard you verified in person**, which the Ed25519 identity signed (Security
+Model §5.2). This staples the encrypted channel to the specific human you checked,
+so "encrypted" also means "encrypted *to the right person*."
 
 ---
 
@@ -238,12 +258,12 @@ Together they provide two properties worth naming:
 On the diagrams this is the *"ratchet message key → decrypt"* step — and it's why
 stealing one key can never unlock your whole history.
 
-> **Async first contact (planned).** The Noise XX handshake above needs both
-> parties to exchange handshake messages (possibly via store-and-forward). To let
-> you message a brand-new contact who is currently offline, the
-> [Roadmap](ROADMAP.md) includes **X3DH**-style prekeys
-> ([Marlinspike & Perrin][x3dh]) — published one-time public keys that let a
-> sender start a session without the recipient online.
+> **You can message someone who's offline.** Because the Olm session in Step 2 is
+> built from the recipient's *published* prekeys, you never need both phones awake
+> at once. Your first message ships as a self-contained "pre-key message" — it
+> carries everything the recipient needs to derive the shared secret whenever they
+> next come online, over Bluetooth or via a relay. From their reply onward, the
+> Double Ratchet above takes over.
 
 ---
 
@@ -257,7 +277,8 @@ can read the box.
 
 ![Bluetooth LE mesh](diagrams/pigeon_02_bluetooth.png)
 
-*The full Noise handshake and an encrypted message over Bluetooth — no server.*
+*An Olm session opened from published prekeys and an encrypted message over
+Bluetooth — no server.*
 
 In range, two phones talk directly with no internet or account. If a peer is just
 out of range, nearby Pigeon devices forward the still-locked box onward — a
@@ -296,8 +317,8 @@ deliberately dumb, **zero-knowledge** mailbox. What makes trusting it unnecessar
   forwards** it (up to 7 days) until you fetch it, then deletes it once your phone
   acknowledges receipt.
 - The relay **never** sees plaintext, holds no keys, and cannot forge a message
-  (integrity/authenticity are guaranteed end-to-end by the AEAD and the session).
-  See its gray badge: *"Holds no keys."*
+  (integrity/authenticity are guaranteed end-to-end by the Olm session's message
+  authentication). See its gray badge: *"Holds no keys."*
 
 What a relay *can* observe is **metadata** — that some ciphertext was deposited for
 some public key, its size, and timing. That's not nothing, which is why relays are
@@ -364,7 +385,8 @@ notifications, strictly opt-in. Confidentiality remains end-to-end.
 
 **A snoop on the wire, a malicious or hacked relay, or your phone company *cannot*:**
 
-- read your messages — they only ever hold AEAD ciphertext ([RFC 8439][rfc8439]);
+- read your messages — they only ever hold authenticated ciphertext (AES-256 with
+  HMAC-SHA256, [Bellare & Namprempre 2000][etm]);
 - impersonate a contact you verified in person — the safety number + binding check
   expose a substituted key;
 - recover past messages from a key stolen later — the ratchet already deleted it
@@ -379,17 +401,19 @@ notifications, strictly opt-in. Confidentiality remains end-to-end.
   protect an unlocked device in someone else's hand.
 
 And the standing caveat: **Pigeon is pre-audit.** The building blocks (CryptoKit,
-Noise, the Double Ratchet) are well-studied, but the assembled system has not yet
-had an independent security audit and must not be treated as proven-secure. See
-the [Security Model](SECURITY_MODEL.md) and [Roadmap](ROADMAP.md).
+Olm via the audited `vodozemac`, the Double Ratchet) are well-studied, but
+Pigeon's *assembly* of them — and its glue code — has not yet had an independent
+security audit and must not be treated as proven-secure. See the
+[Security Model](SECURITY_MODEL.md) and [Roadmap](ROADMAP.md).
 
 ---
 
 ## Where the secrets live
 
-- **Private keys** (Ed25519 identity + X25519 static) are stored in the iPhone
-  **Keychain**, marked *this-device-only*: never synced to iCloud, never in
-  backups, never moved to another device. Their *lock-state* accessibility is
+- **Private keys** (the Ed25519 identity key and the Olm account: its Curve25519
+  identity key and prekeys) are stored in the iPhone **Keychain**, marked
+  *this-device-only*: never synced to iCloud, never in backups, never moved to
+  another device. Their *lock-state* accessibility is
   `WhenUnlocked` by default, or `AfterFirstUnlock` if you enable background
   delivery — both are Apple data-protection classes ([Apple Platform
   Security][appsec]).
@@ -399,10 +423,10 @@ the [Security Model](SECURITY_MODEL.md) and [Roadmap](ROADMAP.md).
 - **No key is ever sent to any server.** Servers handle locked boxes only.
 
 That's the whole system: verify a friend once, in person; agree on a secret no one
-else can compute (Diffie–Hellman); authenticate who you're talking to (Noise XX +
-the binding check); give every message its own disposable key (the Double
-Ratchet); and let any courier carry the locked box, because none of them hold the
-key to open it.
+else can compute, even when they're offline (an Olm session from published
+prekeys); authenticate who you're talking to (the identity binding check); give
+every message its own disposable key (the Double Ratchet); and let any courier
+carry the locked box, because none of them hold the key to open it.
 
 ---
 
@@ -414,14 +438,20 @@ Standards and specifications:
   agreement). <https://www.rfc-editor.org/rfc/rfc7748>
 - **RFC 8032** — *Edwards-Curve Digital Signature Algorithm (EdDSA)* (Ed25519).
   <https://www.rfc-editor.org/rfc/rfc8032>
-- **RFC 8439** — *ChaCha20 and Poly1305 for IETF Protocols* (the AEAD cipher).
-  <https://www.rfc-editor.org/rfc/rfc8439>
+- **M. Bellare & C. Namprempre**, *Authenticated Encryption: Relations among
+  Notions* (encrypt-then-MAC), ASIACRYPT 2000. <https://eprint.iacr.org/2000/025>
+- **FIPS 197** — *Advanced Encryption Standard (AES)*.
+  <https://csrc.nist.gov/pubs/fips/197/final>
+- **NIST SP 800-38D** — *Galois/Counter Mode (GCM) and GMAC* (the at-rest AEAD).
+  <https://csrc.nist.gov/pubs/sp/800/38/d/final>
 - **RFC 5869** — *HMAC-based Key Derivation Function (HKDF)*.
   <https://www.rfc-editor.org/rfc/rfc5869>
 - **FIPS 180-4** — *Secure Hash Standard* (SHA-256 / SHA-512).
   <https://csrc.nist.gov/pubs/fips/180-4/upd1/final>
-- **Noise Protocol Framework** — Trevor Perrin, Rev. 34, 2018.
-  <https://noiseprotocol.org/noise.html>
+- **Olm** — *Olm: A Cryptographic Ratchet* (the session protocol Pigeon uses).
+  <https://gitlab.matrix.org/matrix-org/olm/-/blob/master/docs/olm.md>
+- **vodozemac** — audited Rust implementation of Olm/Megolm.
+  <https://github.com/matrix-org/vodozemac>
 - **The Double Ratchet Algorithm** — Trevor Perrin & Moxie Marlinspike, 2016.
   <https://signal.org/docs/specifications/doubleratchet/>
 - **The X3DH Key Agreement Protocol** — Marlinspike & Perrin, 2016.
@@ -456,10 +486,11 @@ change.*
 
 [rfc7748]: https://www.rfc-editor.org/rfc/rfc7748
 [rfc8032]: https://www.rfc-editor.org/rfc/rfc8032
-[rfc8439]: https://www.rfc-editor.org/rfc/rfc8439
 [rfc5869]: https://www.rfc-editor.org/rfc/rfc5869
 [fips180]: https://csrc.nist.gov/pubs/fips/180-4/upd1/final
-[noise]: https://noiseprotocol.org/noise.html
+[fips197]: https://csrc.nist.gov/pubs/fips/197/final
+[etm]: https://eprint.iacr.org/2000/025
+[vodozemac]: https://github.com/matrix-org/vodozemac
 [doubleratchet]: https://signal.org/docs/specifications/doubleratchet/
 [x3dh]: https://signal.org/docs/specifications/x3dh/
 [safetynum]: https://support.signal.org/hc/en-us/articles/360007060632

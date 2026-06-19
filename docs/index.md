@@ -13,8 +13,9 @@ certification.
 - On-device Ed25519 identity with Keychain storage.
 - QR-based contact exchange with display name, signed identity bundle, and
   signed relay endpoints.
-- Noise XX handshake and Double Ratchet in the standalone `PigeonCrypto`
-  package.
+- Olm session establishment and the Double Ratchet (async-first, via the audited
+  `vodozemac` crate) in the Rust `pigeon-core` package, bridged to the app
+  through the `PigeonCore` XCFramework.
 - BLE mesh transport, fragmentation, duplicate suppression, TTL, and local
   store-and-forward behavior.
 - Encrypted local storage and per-chat ephemeral mode.
@@ -24,6 +25,6 @@ certification.
 
 - [Security Model](SECURITY_MODEL.md) for the threat model and audit blockers.
 - [Roadmap](ROADMAP.md) for shipped, active, planned, and horizon work.
-- [API Reference](API.md) for generated PigeonCrypto, PigeonMesh, pigeon-core,
-  and PigeonRelay API docs.
+- [API Reference](API.md) for generated pigeon-core, PigeonMesh, and PigeonRelay
+  API docs.
 - [Contributing](CONTRIBUTING.md) for local checks and review expectations.

@@ -49,12 +49,13 @@ concurrently):
 - `Pigeon/` - SwiftUI app and Xcode project.
 - `Pigeon/Pigeon/Core/Identity/` - long-term device identity, Keychain storage,
   public key fingerprints, and safety-number derivation.
-- `PigeonCrypto/` - standalone Swift package for Noise, Double Ratchet, and
-  protocol primitives. The iOS app links this today; it is being replaced by
-  `pigeon-core/` (see below) and will be removed once the app cuts over via FFI.
 - `pigeon-core/` - Rust pairwise messaging core (Olm via the audited `vodozemac`
-  crate), the cross-platform successor to `PigeonCrypto`. Not yet wired into the
-  app (FFI/XCFramework is in progress).
+  crate): the identity binding, prekeys, session establishment, and the
+  `pigeon.wire.v1` protobuf wire format. The cross-platform messaging core.
+- `pigeon-core-ffi/` - UniFFI bridge crate; `build-xcframework.sh` builds the
+  Apple XCFramework and generates the Swift bindings the app links.
+- `PigeonCore/` - Swift package wrapping that XCFramework (a `binaryTarget` plus
+  a thin Swift facade); this is what the iOS app links for messaging crypto.
 - `PigeonMesh/` - standalone Swift package for fragmentation, mesh packets,
   deduplication, TTL, and session envelopes.
 - `PigeonRelay/` - Rust zero-knowledge relay server.
@@ -63,11 +64,13 @@ concurrently):
 ## Common Commands
 
 ```sh
-swift test --package-path PigeonCrypto
+cargo test --manifest-path pigeon-core/Cargo.toml
+cargo test --manifest-path pigeon-core-ffi/Cargo.toml
+bash pigeon-core-ffi/build-xcframework.sh   # regenerate bindings + XCFramework
+swift test --package-path PigeonCore
 swift test --package-path PigeonMesh
 xcodebuild -list -project Pigeon/Pigeon.xcodeproj
 xcodebuild build -project Pigeon/Pigeon.xcodeproj -scheme Pigeon -destination 'generic/platform=iOS'
-cargo test --manifest-path pigeon-core/Cargo.toml
 cargo test --manifest-path PigeonRelay/Cargo.toml
 uv run --group docs mkdocs build --strict
 ```

@@ -19,8 +19,8 @@ swift test --package-path PigeonMesh
 ## Design notes
 
 The package handles opaque bytes only. End-to-end encryption and identity live
-above it in the app and `PigeonCrypto`; radios, relays, and future transports
-live below it behind the app's `Transport` protocol.
+above it in the app and `pigeon-core` (via the `PigeonCore` XCFramework); radios,
+relays, and future transports live below it behind the app's `Transport` protocol.
 
 ## License
 
