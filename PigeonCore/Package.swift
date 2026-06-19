@@ -20,11 +20,17 @@ let package = Package(
   products: [
     .library(name: "PigeonCore", targets: ["PigeonCore"])
   ],
+  dependencies: [
+    .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.38.0")
+  ],
   targets: [
     .binaryTarget(name: "PigeonCoreFFI", path: "PigeonCoreFFI.xcframework"),
     .target(
       name: "PigeonCore",
-      dependencies: ["PigeonCoreFFI"],
+      dependencies: [
+        "PigeonCoreFFI",
+        .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+      ],
       swiftSettings: [
         .swiftLanguageMode(.v6)
       ]

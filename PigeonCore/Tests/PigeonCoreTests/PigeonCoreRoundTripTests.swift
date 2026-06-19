@@ -10,6 +10,7 @@
 //
 
 import Foundation
+import SwiftProtobuf
 import XCTest
 
 @testable import PigeonCore
@@ -30,8 +31,7 @@ final class PigeonCoreRoundTripTests: XCTestCase {
     let outbound = try alice.establishOutbound(
       peerBundle: bundle, firstPlaintext: Data("hello bob".utf8))
 
-    let inbound = try bob.establishInbound(
-      identityBundle: outbound.initiationIdentity, message: outbound.message)
+    let inbound = try bob.establishInbound(initiation: outbound.initiation)
     XCTAssertEqual(inbound.plaintext, Data("hello bob".utf8))
 
     // A reply settles the ratchet so both ends are fully converged.
@@ -55,8 +55,7 @@ final class PigeonCoreRoundTripTests: XCTestCase {
 
     let outbound = try alice.establishOutbound(
       peerBundle: bob.signedPrekeyBundle(), firstPlaintext: Data("async hi".utf8))
-    let inbound = try bob.establishInbound(
-      identityBundle: outbound.initiationIdentity, message: outbound.message)
+    let inbound = try bob.establishInbound(initiation: outbound.initiation)
     XCTAssertEqual(inbound.plaintext, Data("async hi".utf8))
   }
 
@@ -83,9 +82,9 @@ final class PigeonCoreRoundTripTests: XCTestCase {
     let identity = try parseIdentityBundle(encoded: account.identityBundle())
     XCTAssertEqual(identity.identityKey, account.identityPublicKey())
 
-    var tampered = account.identityBundle()
-    tampered[64] ^= 0x01  // flip a bit of the binding signature
-    XCTAssertThrowsError(try parseIdentityBundle(encoded: tampered)) { error in
+    var tampered = try Pigeon_Wire_V1_IdentityBundle(serializedBytes: account.identityBundle())
+    tampered.bindingSignature[0] ^= 0x01
+    XCTAssertThrowsError(try parseIdentityBundle(encoded: try tampered.serializedData())) { error in
       XCTAssertEqual(error as? PigeonError, .InvalidSignature)
     }
   }
