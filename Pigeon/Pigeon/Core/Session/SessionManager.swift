@@ -160,7 +160,8 @@ final class SessionManager {
     // import the persisted pickle so the published fallback prekey is stable.
     let seed = identity.identitySeed
     if let pickle = state.olmAccountPickle, let fallback = state.olmFallbackKey,
-      let restored = try? PigeonAccount.`import`(seed: seed, olmPickle: pickle, fallbackKey: fallback)
+      let restored = try? PigeonAccount.`import`(
+        seed: seed, olmPickle: pickle, fallbackKey: fallback)
     {
       account = restored
     } else {

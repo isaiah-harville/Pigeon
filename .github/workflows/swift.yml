@@ -79,6 +79,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The app links the PigeonCore XCFramework, a gitignored build artifact;
+      # build it from the Rust crate first (the script adds the Rust targets).
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install protobuf tooling
+        run: brew install protobuf swift-protobuf
+
+      - name: Build PigeonCore XCFramework
+        run: bash pigeon-core-ffi/build-xcframework.sh
+
       - name: Build Pigeon
         run: |
           xcodebuild build \
@@ -92,6 +101,15 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
+
+      # The app links the PigeonCore XCFramework, a gitignored build artifact;
+      # build it from the Rust crate first (the script adds the Rust targets).
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install protobuf tooling
+        run: brew install protobuf swift-protobuf
+
+      - name: Build PigeonCore XCFramework
+        run: bash pigeon-core-ffi/build-xcframework.sh
 
       - name: Test Pigeon (PigeonTests)
         run: |

@@ -131,7 +131,9 @@ extension SessionManager {
     pendingInitiation[contact.id] = nil
     // A message-id ack additionally clears that message's pending flag; the
     // establishment sentinel clears nothing further.
-    if let idString = String(data: plaintext, encoding: .utf8), let id = UUID(uuidString: idString) {
+    if let idString = String(data: plaintext, encoding: .utf8),
+      let id = UUID(uuidString: idString)
+    {
       setPending(false, messageID: id, contactID: contact.id)
     }
     persist()

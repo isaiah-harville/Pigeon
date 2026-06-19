@@ -21,7 +21,9 @@ final class ContactCardTests: XCTestCase {
   /// signature relies on: the Ed25519 seed reproduces the same public key in
   /// CryptoKit here and in `ed25519-dalek` inside pigeon-core, so `idKey` signs
   /// what the card later verifies against `bundle.identityKey`.
-  private func makeIdentity() throws -> (idKey: Curve25519.Signing.PrivateKey, bundle: PigeonIdentityBundle) {
+  private func makeIdentity() throws -> (
+    idKey: Curve25519.Signing.PrivateKey, bundle: PigeonIdentityBundle
+  ) {
     let account = try PigeonAccount.generate()
     let idKey = try Curve25519.Signing.PrivateKey(rawRepresentation: account.exportSeed())
     let bundle = try PigeonIdentityBundle(decoding: account.identityBundle())
