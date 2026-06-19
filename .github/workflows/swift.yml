@@ -56,18 +56,38 @@ jobs:
 
   # Build the gitignored PigeonCore XCFramework + generated bindings once from
   # the Rust crate, then share them with every job that links PigeonCore so the
-  # expensive Rust/UniFFI build runs a single time per workflow.
+  # expensive Rust/UniFFI build runs a single time per workflow. The build
+  # output is cached across runs keyed on its inputs, so unchanged core/ffi/proto
+  # sources skip the rebuild (toolchain install, brew, and cargo) entirely.
   xcframework:
     name: Build PigeonCore XCFramework
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
+      # Cache the produced XCFramework + bindings. The key changes only when an
+      # input that affects the output changes (sources, the wire schema, or the
+      # locked dependency set). Bump the v1 salt to force a rebuild manually.
+      - name: Cache PigeonCore build output
+        id: xcframework-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            PigeonCore/PigeonCoreFFI.xcframework
+            PigeonCore/Sources/PigeonCore/Generated
+          key: pigeon-core-xcframework-v1-${{ runner.os }}-${{ hashFiles('pigeon-core/**', 'pigeon-core-ffi/**', 'proto/**', 'Cargo.lock') }}
+
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.xcframework-cache.outputs.cache-hit != 'true'
+      - name: Cache cargo build (target + registry)
+        if: steps.xcframework-cache.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@v2
       - name: Install protobuf tooling
+        if: steps.xcframework-cache.outputs.cache-hit != 'true'
         run: brew install protobuf swift-protobuf
 
       - name: Build PigeonCore XCFramework
+        if: steps.xcframework-cache.outputs.cache-hit != 'true'
         run: bash pigeon-core-ffi/build-xcframework.sh
 
       - name: Upload PigeonCore build artifacts
