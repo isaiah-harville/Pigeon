@@ -171,6 +171,18 @@ impl FfiAccount {
         }))
     }
 
+    /// Creates a new Olm account bound to an **existing** 32-byte Ed25519
+    /// identity seed (the host app's long-term Keychain identity), rather than
+    /// minting a fresh identity like [`Self::generate`]. Used on first launch so
+    /// the Olm account attaches to the identity the safety number is built from.
+    #[uniffi::constructor]
+    pub fn from_identity_seed(seed: Vec<u8>) -> Result<Arc<Self>, PigeonError> {
+        let seed = to_array32(&seed)?;
+        Ok(Arc::new(Self {
+            inner: Mutex::new(Account::from_identity_seed(seed)),
+        }))
+    }
+
     /// Reconstructs an account from the host app's persisted parts: the 32-byte
     /// Ed25519 seed, the serialized Olm pickle (from [`Self::export_olm_pickle`]),
     /// and the fallback public key (from [`Self::export_fallback_key`]).
@@ -431,5 +443,34 @@ mod tests {
 
         let reloaded = FfiAccount::import(seed, pickle, fallback).unwrap();
         assert_eq!(reloaded.identity_public_key(), identity_before);
+    }
+
+    #[test]
+    fn from_identity_seed_keeps_the_identity_but_makes_a_fresh_olm_account() {
+        // Same seed -> same Ed25519 identity (so the safety number is stable),
+        // but a fresh Olm account each time (different Curve25519 identity key).
+        let original = FfiAccount::generate().unwrap();
+        let seed = original.export_seed();
+
+        let rebuilt = FfiAccount::from_identity_seed(seed.clone()).unwrap();
+        assert_eq!(
+            rebuilt.identity_public_key(),
+            original.identity_public_key()
+        );
+
+        let again = FfiAccount::from_identity_seed(seed).unwrap();
+        assert_eq!(again.identity_public_key(), original.identity_public_key());
+        // Distinct Olm accounts -> distinct identity bundles (different Curve key).
+        assert_ne!(rebuilt.identity_bundle(), again.identity_bundle());
+
+        // The rebuilt account can still be a session peer under that identity.
+        let alice = FfiAccount::generate().unwrap();
+        let outbound = alice
+            .establish_outbound(rebuilt.signed_prekey_bundle(), b"hi".to_vec())
+            .unwrap();
+        let inbound = rebuilt
+            .establish_inbound(outbound.initiation_identity, outbound.message)
+            .unwrap();
+        assert_eq!(inbound.plaintext, b"hi");
     }
 }

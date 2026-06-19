@@ -8,6 +8,7 @@ license = "AGPL-3.0-only"
 [dependencies]
 # Olm Account/Session: audited Double Ratchet + async-first prekey establishment.
 vodozemac = "0.10"
+prost = "0.14"
 # The identity<->static binding: an Ed25519 identity key signs Olm's Curve25519
 # identity key. This is the one piece of protocol trust we keep; everything
 # below it (ratchet, session setup, message format) is vodozemac's.
@@ -17,3 +18,7 @@ zeroize = { version = "1", features = ["zeroize_derive"] }
 # OS entropy for the Ed25519 identity seed (avoids the rand_core version skew
 # between the `rand` crate and ed25519-dalek 2.x).
 getrandom = "0.2"
+
+[build-dependencies]
+prost-build = "0.14"
+protoc-bin-vendored = "3"

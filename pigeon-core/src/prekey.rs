@@ -36,9 +36,6 @@ pub struct PrekeyBundle {
 }
 
 impl PrekeyBundle {
-    /// Fixed encoding length: `identity(128) ‖ one_time(1) ‖ prekey(32) ‖ sig(64)`.
-    pub const SIZE: usize = IdentityBundle::SIZE + 1 + 32 + 64;
-
     /// Verifies the identity binding and the prekey signature. Returns `Ok` only
     /// if the whole bundle is authentic under the advertised identity key. Must
     /// hold before [`crate::Session::establish_outbound`] trusts the bundle.
@@ -50,44 +47,5 @@ impl PrekeyBundle {
             &self.prekey,
             &self.prekey_signature,
         )
-    }
-
-    /// Deterministic fixed-length encoding (to be replaced by protobuf, #81).
-    pub fn encode(&self) -> [u8; Self::SIZE] {
-        let mut out = [0u8; Self::SIZE];
-        out[0..IdentityBundle::SIZE].copy_from_slice(&self.identity.encode());
-        let mut cursor = IdentityBundle::SIZE;
-        out[cursor] = self.one_time as u8;
-        cursor += 1;
-        out[cursor..cursor + 32].copy_from_slice(&self.prekey);
-        cursor += 32;
-        out[cursor..cursor + 64].copy_from_slice(&self.prekey_signature);
-        out
-    }
-
-    /// Decodes [`Self::encode`]. Does **not** verify; call [`Self::verify`].
-    pub fn decode(bytes: &[u8]) -> Result<Self, Error> {
-        if bytes.len() != Self::SIZE {
-            return Err(Error::MalformedBundle);
-        }
-        let identity = IdentityBundle::decode(&bytes[0..IdentityBundle::SIZE])?;
-        let mut cursor = IdentityBundle::SIZE;
-        let one_time = match bytes[cursor] {
-            0 => false,
-            1 => true,
-            _ => return Err(Error::MalformedBundle),
-        };
-        cursor += 1;
-        let mut prekey = [0u8; 32];
-        let mut prekey_signature = [0u8; 64];
-        prekey.copy_from_slice(&bytes[cursor..cursor + 32]);
-        cursor += 32;
-        prekey_signature.copy_from_slice(&bytes[cursor..cursor + 64]);
-        Ok(Self {
-            identity,
-            prekey,
-            prekey_signature,
-            one_time,
-        })
     }
 }

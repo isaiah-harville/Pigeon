@@ -110,9 +110,6 @@ pub struct IdentityBundle {
 }
 
 impl IdentityBundle {
-    /// Fixed encoding length: `identity_key(32) ‖ curve_identity_key(32) ‖ sig(64)`.
-    pub const SIZE: usize = 128;
-
     /// Verifies the Curve25519 identity key is genuinely bound to the Ed25519
     /// identity key. Uses strict verification (rejects malleable/non-canonical
     /// signatures). Must hold before a session derived from this bundle is
@@ -130,32 +127,5 @@ impl IdentityBundle {
     /// creation). Infallible: any 32 bytes are a valid X25519 public key.
     pub(crate) fn curve25519(&self) -> Curve25519PublicKey {
         Curve25519PublicKey::from_bytes(self.curve_identity_key)
-    }
-
-    /// Deterministic fixed-length encoding (to be replaced by protobuf, #81).
-    pub fn encode(&self) -> [u8; Self::SIZE] {
-        let mut out = [0u8; Self::SIZE];
-        out[0..32].copy_from_slice(&self.identity_key);
-        out[32..64].copy_from_slice(&self.curve_identity_key);
-        out[64..128].copy_from_slice(&self.binding_signature);
-        out
-    }
-
-    /// Decodes [`Self::encode`]. Does **not** verify; call [`Self::verify`].
-    pub fn decode(bytes: &[u8]) -> Result<Self, Error> {
-        if bytes.len() != Self::SIZE {
-            return Err(Error::MalformedBundle);
-        }
-        let mut identity_key = [0u8; 32];
-        let mut curve_identity_key = [0u8; 32];
-        let mut binding_signature = [0u8; 64];
-        identity_key.copy_from_slice(&bytes[0..32]);
-        curve_identity_key.copy_from_slice(&bytes[32..64]);
-        binding_signature.copy_from_slice(&bytes[64..128]);
-        Ok(Self {
-            identity_key,
-            curve_identity_key,
-            binding_signature,
-        })
     }
 }

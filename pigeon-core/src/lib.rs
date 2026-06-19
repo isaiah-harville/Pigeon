@@ -33,10 +33,8 @@
 //!    online, recovering the session and the first plaintext.
 //! 5. Both ends exchange traffic with [`Session::encrypt`] / [`Session::decrypt`].
 //!
-//! Wire serialization of Olm messages is intentionally out of scope here; it is
-//! handled by the protobuf work (issue #81). [`IdentityBundle`] and
-//! [`PrekeyBundle`] carry deterministic byte encodings (also slated to move to
-//! protobuf) so they can be transported today.
+//! Wire types are encoded with the shared `pigeon.wire.v1` Protocol Buffer
+//! schema in `proto/pigeon/wire/v1/pigeon_wire.proto`.
 
 #![forbid(unsafe_code)]
 
@@ -45,12 +43,14 @@ mod error;
 mod identity;
 mod prekey;
 mod session;
+mod wire;
 
 pub use account::Account;
 pub use error::Error;
 pub use identity::{IdentityBundle, IdentityKeypair};
 pub use prekey::PrekeyBundle;
 pub use session::{Initiation, Session};
+pub use wire::{decode_olm_message, encode_olm_message};
 
 /// The Olm message type that crosses pigeon-core's API surface. Re-exported so
 /// callers need not depend on `vodozemac` directly.

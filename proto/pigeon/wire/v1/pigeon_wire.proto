@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+package pigeon.wire.v1;
+
+message IdentityBundle {
+  bytes identity_key = 1;
+  bytes curve_identity_key = 2;
+  bytes binding_signature = 3;
+}
+
+message PrekeyBundle {
+  IdentityBundle identity = 1;
+  bytes prekey = 2;
+  bytes prekey_signature = 3;
+  bool one_time = 4;
+}
+
+message OlmMessage {
+  uint32 message_type = 1;
+  bytes ciphertext = 2;
+}
+
+// What an initiator transmits so the recipient can stand up the matching
+// session: the initiator's identity bundle (verified against its safety number
+// before the session is trusted) and the first Olm pre-key message. This is the
+// single blob carried in an X3DH_INIT envelope.
+message Initiation {
+  IdentityBundle identity = 1;
+  OlmMessage message = 2;
+}
+
+enum EnvelopeType {
+  ENVELOPE_TYPE_UNSPECIFIED = 0;
+  ENVELOPE_TYPE_HANDSHAKE = 1;
+  ENVELOPE_TYPE_MESSAGE = 2;
+  ENVELOPE_TYPE_REHANDSHAKE_REQUEST = 3;
+  ENVELOPE_TYPE_ACK = 4;
+  ENVELOPE_TYPE_CONTROL = 5;
+  ENVELOPE_TYPE_X3DH_INIT = 6;
+}
+
+message SessionEnvelope {
+  uint32 version = 1;
+  EnvelopeType type = 2;
+  bytes sender = 3;
+  bytes recipient = 4;
+  bytes payload = 5;
+}
+
+message ContactCard {
+  uint32 version = 1;
+  IdentityBundle identity = 2;
+  string name = 3;
+  repeated string relay_urls = 4;
+  bytes relay_signature = 5;
+  bytes prekey_bundle = 6;
+}
+
+message X3DHPrekeyBundle {
+  IdentityBundle identity = 1;
+  uint32 signed_prekey_id = 2;
+  bytes signed_prekey = 3;
+  bytes signed_prekey_signature = 4;
+  optional uint32 one_time_prekey_id = 5;
+  bytes one_time_prekey = 6;
+  bytes one_time_prekey_signature = 7;
+}
+
+message X3DHInitiation {
+  IdentityBundle initiator_identity = 1;
+  bytes ephemeral_key = 2;
+  uint32 signed_prekey_id = 3;
+  optional uint32 one_time_prekey_id = 4;
+}
+
+message RatchetHeader {
+  bytes dh_public = 1;
+  uint32 previous_chain_length = 2;
+  uint32 message_number = 3;
+}
+
+message RatchetMessage {
+  RatchetHeader header = 1;
+  bytes ciphertext = 2;
+}
+
+message AppMessagePayload {
+  string id = 1;
+  string text = 2;
+  string reply_snippet = 3;
+  double sent_at_unix = 4;
+}
+
+message ReactionPayload {
+  string message_id = 1;
+  string emoji = 2;
+}

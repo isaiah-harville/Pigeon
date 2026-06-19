@@ -29,17 +29,31 @@ impl Account {
     /// Creates a brand-new account: a fresh identity, a fresh Olm account, an
     /// initial pool of one-time keys, and a fallback key.
     pub fn new() -> Result<Self, Error> {
-        let identity = IdentityKeypair::generate()?;
+        Ok(Self::with_identity(IdentityKeypair::generate()?))
+    }
+
+    /// Creates a new Olm account bound to an **existing** Ed25519 identity (the
+    /// 32-byte seed), rather than minting a fresh identity like [`Account::new`].
+    /// The host app uses this on first launch to attach an Olm account to the
+    /// long-term identity it already holds in the Keychain, so the safety number
+    /// is unchanged. The caller-owned `identity_seed` is wiped after use.
+    pub fn from_identity_seed(identity_seed: [u8; 32]) -> Self {
+        Self::with_identity(IdentityKeypair::from_seed(identity_seed))
+    }
+
+    /// Shared builder: a fresh Olm account (initial one-time keys + fallback)
+    /// under the given identity.
+    fn with_identity(identity: IdentityKeypair) -> Self {
         let mut olm = OlmAccount::new();
         let count = INITIAL_ONE_TIME_KEYS.min(olm.max_number_of_one_time_keys());
         olm.generate_one_time_keys(count);
         olm.generate_fallback_key();
         let fallback_key = current_fallback_key(&olm);
-        Ok(Self {
+        Self {
             olm,
             identity,
             fallback_key,
-        })
+        }
     }
 
     /// Reconstructs an account from its persisted parts: the identity seed, the
