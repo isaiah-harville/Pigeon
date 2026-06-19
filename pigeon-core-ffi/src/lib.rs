@@ -14,7 +14,10 @@
 
 use std::sync::{Arc, Mutex};
 
-use pigeon_core::{Account, IdentityBundle, OlmMessage, PrekeyBundle, Session};
+use pigeon_core::{
+    decode_olm_message, encode_olm_message, Account, IdentityBundle, Initiation, PrekeyBundle,
+    Session,
+};
 use vodozemac::olm::AccountPickle;
 
 uniffi::setup_scaffolding!();
@@ -79,16 +82,14 @@ impl From<pigeon_core::Error> for PigeonError {
     }
 }
 
-/// Result of opening an outbound session: the live session plus the
-/// [`pigeon_core::Initiation`] to transmit (the sender's encoded identity bundle
-/// and the first Olm pre-key message, both as bytes).
+/// Result of opening an outbound session: the live session plus the single
+/// encoded [`pigeon_core::Initiation`] blob to transmit (the sender's identity
+/// bundle and the first Olm pre-key message, as one `pigeon.wire.v1.Initiation`).
 #[derive(uniffi::Record)]
 pub struct OutboundResult {
     pub session: Arc<FfiSession>,
-    /// The initiator's identity bundle, encoded (128 bytes).
-    pub initiation_identity: Vec<u8>,
-    /// The first Olm pre-key message, encoded (see [`olm_message_to_bytes`]).
-    pub message: Vec<u8>,
+    /// The initiation to transmit, encoded as `pigeon.wire.v1.Initiation`.
+    pub initiation: Vec<u8>,
 }
 
 /// Result of accepting an inbound initiation: the live session and the first
@@ -206,25 +207,15 @@ impl FfiAccount {
         self.inner.lock().unwrap().identity_public_key().to_vec()
     }
 
-    /// This device's signed identity bundle, encoded (128 bytes).
+    /// This device's signed identity bundle, encoded as `pigeon.wire.v1.IdentityBundle`.
     pub fn identity_bundle(&self) -> Vec<u8> {
-        self.inner
-            .lock()
-            .unwrap()
-            .identity_bundle()
-            .encode()
-            .to_vec()
+        self.inner.lock().unwrap().identity_bundle().encode()
     }
 
     /// The long-lived fallback (signed-prekey) bundle, encoded. Always available;
     /// no per-session replay defence on its own.
     pub fn signed_prekey_bundle(&self) -> Vec<u8> {
-        self.inner
-            .lock()
-            .unwrap()
-            .signed_prekey_bundle()
-            .encode()
-            .to_vec()
+        self.inner.lock().unwrap().signed_prekey_bundle().encode()
     }
 
     /// Takes every currently-unpublished one-time prekey bundle (each encoded)
@@ -235,7 +226,7 @@ impl FfiAccount {
             .unwrap()
             .take_one_time_prekey_bundles()
             .iter()
-            .map(|b| b.encode().to_vec())
+            .map(|b| b.encode())
             .collect()
     }
 
@@ -263,24 +254,20 @@ impl FfiAccount {
             Session::establish_outbound(&account, &bundle, &first_plaintext)?;
         Ok(OutboundResult {
             session: Arc::new(FfiSession::new(session)),
-            initiation_identity: initiation.identity.encode().to_vec(),
-            message: olm_message_to_bytes(&initiation.message),
+            initiation: initiation.encode(),
         })
     }
 
-    /// Accepts an inbound initiation: verifies the initiator's encoded identity
-    /// bundle, then creates the inbound session from the first pre-key message
+    /// Accepts an inbound initiation (a single encoded `pigeon.wire.v1.Initiation`
+    /// from [`Self::establish_outbound`]): verifies the initiator's identity
+    /// binding, then creates the inbound session from the first pre-key message
     /// and returns the recovered first plaintext. Consumes the matching one-time
     /// key (the replay defence).
-    pub fn establish_inbound(
-        &self,
-        identity_bundle: Vec<u8>,
-        message: Vec<u8>,
-    ) -> Result<InboundResult, PigeonError> {
-        let identity = IdentityBundle::decode(&identity_bundle)?;
-        let message = olm_message_from_bytes(&message)?;
+    pub fn establish_inbound(&self, initiation: Vec<u8>) -> Result<InboundResult, PigeonError> {
+        let initiation = Initiation::decode(&initiation)?;
         let mut account = self.inner.lock().unwrap();
-        let (session, plaintext) = Session::establish_inbound(&mut account, &identity, &message)?;
+        let (session, plaintext) =
+            Session::establish_inbound(&mut account, &initiation.identity, &initiation.message)?;
         Ok(InboundResult {
             session: Arc::new(FfiSession::new(session)),
             plaintext,
@@ -328,12 +315,12 @@ impl FfiSession {
     /// message bytes.
     pub fn encrypt(&self, plaintext: Vec<u8>) -> Result<Vec<u8>, PigeonError> {
         let message = self.inner.lock().unwrap().encrypt(&plaintext)?;
-        Ok(olm_message_to_bytes(&message))
+        Ok(encode_olm_message(&message))
     }
 
     /// Decrypts an encoded Olm message from the peer.
     pub fn decrypt(&self, message: Vec<u8>) -> Result<Vec<u8>, PigeonError> {
-        let message = olm_message_from_bytes(&message)?;
+        let message = decode_olm_message(&message)?;
         Ok(self.inner.lock().unwrap().decrypt(&message)?)
     }
 
@@ -347,26 +334,6 @@ impl FfiSession {
     pub fn session_id(&self) -> String {
         self.inner.lock().unwrap().session_id()
     }
-}
-
-// --- wire helpers (a #81 stopgap: the FFI boundary needs bytes today) ---------
-
-/// Encodes an [`OlmMessage`] as `type(1) ‖ ciphertext`, where `type` is Olm's
-/// message type (`0` = pre-key, `1` = normal). #81 moves this into pigeon-core's
-/// protobuf wire layer.
-fn olm_message_to_bytes(message: &OlmMessage) -> Vec<u8> {
-    let (message_type, ciphertext) = message.to_parts();
-    let mut out = Vec::with_capacity(ciphertext.len() + 1);
-    out.push(message_type as u8);
-    out.extend_from_slice(&ciphertext);
-    out
-}
-
-/// Inverse of [`olm_message_to_bytes`].
-fn olm_message_from_bytes(bytes: &[u8]) -> Result<OlmMessage, PigeonError> {
-    let (message_type, ciphertext) = bytes.split_first().ok_or(PigeonError::MalformedBundle)?;
-    OlmMessage::from_parts(*message_type as usize, ciphertext)
-        .map_err(|_| PigeonError::MalformedBundle)
 }
 
 fn to_array32(bytes: &[u8]) -> Result<[u8; 32], PigeonError> {
@@ -390,9 +357,7 @@ mod tests {
             .establish_outbound(bundle, b"hello bob".to_vec())
             .unwrap();
 
-        let inbound = bob
-            .establish_inbound(outbound.initiation_identity, outbound.message)
-            .unwrap();
+        let inbound = bob.establish_inbound(outbound.initiation).unwrap();
         assert_eq!(inbound.plaintext, b"hello bob");
 
         // The session reports the verified peer identity for the safety check.
@@ -425,10 +390,10 @@ mod tests {
         assert_eq!(prekey.identity_key, account.identity_public_key());
 
         // A tampered binding must fail verification, not return a view.
-        let mut bad = account.identity_bundle();
-        bad[64] ^= 0x01; // first byte of the binding signature
+        let mut bad = IdentityBundle::decode(&account.identity_bundle()).unwrap();
+        bad.binding_signature[0] ^= 0x01;
         assert!(matches!(
-            parse_identity_bundle(bad),
+            parse_identity_bundle(bad.encode()),
             Err(PigeonError::InvalidSignature)
         ));
     }
@@ -468,9 +433,7 @@ mod tests {
         let outbound = alice
             .establish_outbound(rebuilt.signed_prekey_bundle(), b"hi".to_vec())
             .unwrap();
-        let inbound = rebuilt
-            .establish_inbound(outbound.initiation_identity, outbound.message)
-            .unwrap();
+        let inbound = rebuilt.establish_inbound(outbound.initiation).unwrap();
         assert_eq!(inbound.plaintext, b"hi");
     }
 }

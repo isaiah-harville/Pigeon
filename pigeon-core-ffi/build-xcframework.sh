@@ -5,7 +5,7 @@
 #
 # Output:
 #   ../PigeonCore/PigeonCoreFFI.xcframework        (device + simulator static libs)
-#   ../PigeonCore/Sources/PigeonCore/Generated/    (pigeon_core_ffi.swift)
+#   ../PigeonCore/Sources/PigeonCore/Generated/    (UniFFI + protobuf Swift)
 #
 # Re-run whenever the FFI surface in src/lib.rs changes.
 set -euo pipefail
@@ -14,7 +14,7 @@ cd "$(dirname "$0")"
 CRATE_DIR="$(pwd)"
 LIB_NAME="libpigeon_core_ffi.a"
 PACKAGE_DIR="$CRATE_DIR/../PigeonCore"
-BUILD_DIR="$CRATE_DIR/target"
+BUILD_DIR="$CRATE_DIR/../target"
 GEN_DIR="$(mktemp -d)"
 trap 'rm -rf "$GEN_DIR"' EXIT
 
@@ -68,5 +68,11 @@ xcodebuild -create-xcframework \
 echo "==> Refreshing generated Swift bindings in PigeonCore"
 mkdir -p "$PACKAGE_DIR/Sources/PigeonCore/Generated"
 cp "$GEN_DIR"/*.swift "$PACKAGE_DIR/Sources/PigeonCore/Generated/"
+
+echo "==> Generating Swift protobuf bindings"
+protoc \
+  --proto_path="$CRATE_DIR/../proto" \
+  --swift_out="$PACKAGE_DIR/Sources/PigeonCore/Generated" \
+  "$CRATE_DIR/../proto/pigeon/wire/v1/pigeon_wire.proto"
 
 echo "==> Done: $PACKAGE_DIR/PigeonCoreFFI.xcframework"
