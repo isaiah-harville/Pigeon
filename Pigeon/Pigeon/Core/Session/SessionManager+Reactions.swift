@@ -6,7 +6,7 @@
 //
 
 import Foundation
-import PigeonCrypto
+import PigeonCore
 import PigeonMesh
 
 extension SessionManager {
@@ -28,7 +28,8 @@ extension SessionManager {
   /// and the peer simply won't see a reaction made while disconnected.
   private func sendReaction(_ emoji: String?, messageID: UUID, to contact: Contact) {
     guard let session = sessions[contact.id], establishedContactIDs.contains(contact.id),
-      let ciphertext = try? session.encrypt(Self.encodeReaction(messageID: messageID, emoji: emoji))
+      let ciphertext = try? session.encrypt(
+        plaintext: Self.encodeReaction(messageID: messageID, emoji: emoji))
     else {
       ensureEstablishing(contactID: contact.id)
       return

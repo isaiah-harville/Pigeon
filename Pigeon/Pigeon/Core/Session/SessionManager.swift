@@ -3,21 +3,22 @@
 //  Pigeon
 //
 //  Orchestrates end-to-end-encrypted messaging with verified contacts over the
-//  mesh: one SecureSession per contact, Noise handshakes routed through
-//  SessionEnvelopes, and the binding check that ties the handshake to a
-//  verified identity.
+//  mesh: one Olm session per contact, async-first establishment routed through
+//  SessionEnvelopes, and the binding check that ties a session to a verified
+//  identity.
 //
 
 import Foundation
-import PigeonCrypto
+import PigeonCore
 import PigeonMesh
 
 /// Owns encrypted sessions with contacts and bridges them to the mesh.
 ///
 /// Role assignment is deterministic so both ends agree without negotiation:
-/// the device whose identity key sorts first is the Noise **initiator**, the
-/// other is the **responder**. A periodic retry re-drives stalled handshakes,
-/// since either device may add the contact (scan the QR) at a different moment.
+/// the device whose identity key sorts first is the **initiator** (it opens the
+/// Olm session against the peer's published prekey), the other is the
+/// **responder**. A periodic retry re-drives stalled establishment, since either
+/// device may add the contact (scan the QR) at a different moment.
 @MainActor
 @Observable
 final class SessionManager {
@@ -66,22 +67,20 @@ final class SessionManager {
     let body: String
   }
 
-  var sessions: [Data: SecureSession] = [:]
-  /// The initiator's first handshake message, kept so retries resend the
-  /// *same* message (stable ephemeral) rather than starting over.
-  var pendingMsg1: [Data: Data] = [:]
-  /// Last handshake message received / sent per contact, for stop-and-wait
-  /// retransmission (resend our reply when the peer repeats its message).
-  var lastHandshakeIn: [Data: Data] = [:]
-  var lastHandshakeOut: [Data: Data] = [:]
-  /// The X3DH initiation header we sent per contact (async first contact),
-  /// retained so it can be resent until the peer drains it — analogous to
-  /// `pendingMsg1`. Cleared once the peer acks (proof it has the session).
-  var pendingX3DHInit: [Data: Data] = [:]
-  /// The last X3DH initiation header we processed as responder, to ignore
-  /// retransmits (re-running `X3DH.respond` would reset an advanced ratchet);
-  /// a *different* header signals a genuine peer restart.
-  var lastX3DHIn: [Data: Data] = [:]
+  /// This device's Olm account (Ed25519 identity + Olm keys), bound to the
+  /// long-term identity in `IdentityManager`. Built from the identity seed plus
+  /// the persisted Olm pickle in `attachStore` (so it is `nil` until unlock),
+  /// and re-sealed to the vault whenever it mutates.
+  var account: PigeonAccount?
+  var sessions: [Data: PigeonSession] = [:]
+  /// The initiation envelope payload (`identity ‖ first Olm pre-key message`) we
+  /// sent per contact, retained so it can be resent until the peer drains it.
+  /// Cleared once the peer acks (proof it stood up the session).
+  var pendingInitiation: [Data: Data] = [:]
+  /// The last initiation payload we processed as responder, to ignore retransmits
+  /// (re-running `establishInbound` would build a second session); a *different*
+  /// payload signals a genuine peer restart and triggers a rebuild.
+  var lastInitiationIn: [Data: Data] = [:]
   /// The on-disk mirror of conversations (excludes ephemeral-era messages).
   var persistedConversations: [Data: [ChatMessage]] = [:]
   var retryTimer: Timer?
@@ -155,15 +154,30 @@ final class SessionManager {
   func attachStore(_ store: EncryptedStore) {
     self.store = store
     let state = store.load()
+
+    // Build (or restore) the Olm account bound to our long-term Ed25519 identity.
+    // First launch: a fresh Olm account under the existing identity; thereafter:
+    // import the persisted pickle so the published fallback prekey is stable.
+    let seed = identity.identitySeed
+    if let pickle = state.olmAccountPickle, let fallback = state.olmFallbackKey,
+      let restored = try? PigeonAccount.`import`(seed: seed, olmPickle: pickle, fallbackKey: fallback)
+    {
+      account = restored
+    } else {
+      account = try? PigeonAccount.fromIdentitySeed(seed: seed)
+    }
+
     contacts = state.contacts.compactMap { persisted in
-      guard let bundle = try? IdentityBundle(decoding: persisted.bundle), bundle.isValid() else {
+      // Decoding a PigeonIdentityBundle verifies its binding signature; an
+      // invalid one yields nil and the contact is dropped.
+      guard let bundle = try? PigeonIdentityBundle(decoding: persisted.bundle) else {
         return nil
       }
-      // Honour a stored prekey bundle only if still valid and bound to this
+      // Honour a stored prekey bundle only if it verifies and is bound to this
       // identity (the same guard the QR scanner applies).
       let prekeyBundle = persisted.prekeyBundle
-        .flatMap { try? X3DHPrekeyBundle(decoding: $0) }
-        .flatMap { $0.isValid() && $0.identity.identityKey == bundle.identityKey ? $0 : nil }
+        .flatMap { try? PigeonPrekeyBundle(decoding: $0) }
+        .flatMap { $0.identityKey == bundle.identityKey ? $0 : nil }
       return Contact(
         bundle: bundle, displayName: persisted.name,
         relayURLs: persisted.relayURLs.compactMap { URL(string: $0) },
@@ -232,7 +246,7 @@ final class SessionManager {
     }
     let byte: UInt8 = ephemeralContactIDs.contains(contact.id) ? 1 : 0
     let command = Data([0x01, byte])  // 0x01 = ephemeral cmd
-    guard let ciphertext = try? session.encrypt(command) else { return }
+    guard let ciphertext = try? session.encrypt(plaintext: command) else { return }
     sendEnvelope(.control, payload: ciphertext, to: contact)
   }
 
@@ -246,19 +260,17 @@ final class SessionManager {
   /// face (scan) versus a code shared out of band (paste).
   @discardableResult
   func addContact(
-    _ bundle: IdentityBundle, name: String, relayURLs: [URL],
-    prekeyBundle: X3DHPrekeyBundle?, verifiedInPerson: Bool
+    _ bundle: PigeonIdentityBundle, name: String, relayURLs: [URL],
+    prekeyBundle: PigeonPrekeyBundle?, verifiedInPerson: Bool
   ) -> Bool {
-    guard bundle.isValid() else {
-      note("Rejected contact \"\(name)\": invalid identity binding")
-      return false
-    }
+    // The bundle's binding was already verified when it was decoded; here we only
+    // refuse our own identity.
     guard bundle.identityKey != myID else {
       note("That QR is your own identity")
       return false
     }
     // A prekey bundle is honoured only if bound to this same identity.
-    let prekeys = prekeyBundle.flatMap { $0.identity.identityKey == bundle.identityKey ? $0 : nil }
+    let prekeys = prekeyBundle.flatMap { $0.identityKey == bundle.identityKey ? $0 : nil }
     let contact = Contact(
       bundle: bundle, displayName: name, relayURLs: relayURLs,
       prekeyBundle: prekeys, verifiedInPerson: verifiedInPerson)
@@ -279,11 +291,8 @@ final class SessionManager {
 
   func resetSession(for contactID: Data) {
     sessions[contactID] = nil
-    pendingMsg1[contactID] = nil
-    lastHandshakeIn[contactID] = nil
-    lastHandshakeOut[contactID] = nil
-    pendingX3DHInit[contactID] = nil
-    lastX3DHIn[contactID] = nil
+    pendingInitiation[contactID] = nil
+    lastInitiationIn[contactID] = nil
     resendGate[contactID] = nil  // a fresh session should flush pending promptly
     establishedContactIDs.remove(contactID)
   }
@@ -316,7 +325,7 @@ final class SessionManager {
   func transmit(_ message: ChatMessage, to contact: Contact) {
     guard let session = sessions[contact.id],
       let payload = Self.encodeMessage(message),
-      let ciphertext = try? session.encrypt(payload)
+      let ciphertext = try? session.encrypt(plaintext: payload)
     else { return }
     let channel = outboundChannel(for: contact)
     if message.transport != channel {

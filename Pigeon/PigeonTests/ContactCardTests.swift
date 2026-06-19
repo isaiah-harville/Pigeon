@@ -8,7 +8,7 @@
 //
 
 import CryptoKit
-import PigeonCrypto
+import PigeonCore
 import XCTest
 
 @testable import Pigeon
@@ -16,20 +16,21 @@ import XCTest
 @MainActor
 final class ContactCardTests: XCTestCase {
 
-  /// A fresh identity key plus a valid, signed identity bundle bound to it.
-  private func makeIdentity() -> (idKey: Curve25519.Signing.PrivateKey, bundle: IdentityBundle) {
-    let idKey = Curve25519.Signing.PrivateKey()
-    let staticKey = Curve25519.KeyAgreement.PrivateKey()
-    let staticPub = staticKey.publicKey.rawRepresentation
-    let signature = try! idKey.signature(for: staticPub)
-    let bundle = IdentityBundle(
-      identityKey: idKey.publicKey.rawRepresentation, staticKey: staticPub, signature: signature)
-    XCTAssertTrue(bundle.isValid())
+  /// A fresh identity plus its valid, signed identity bundle. Built from a real
+  /// `PigeonAccount`, which also exercises the byte-stability invariant the relay
+  /// signature relies on: the Ed25519 seed reproduces the same public key in
+  /// CryptoKit here and in `ed25519-dalek` inside pigeon-core, so `idKey` signs
+  /// what the card later verifies against `bundle.identityKey`.
+  private func makeIdentity() throws -> (idKey: Curve25519.Signing.PrivateKey, bundle: PigeonIdentityBundle) {
+    let account = try PigeonAccount.generate()
+    let idKey = try Curve25519.Signing.PrivateKey(rawRepresentation: account.exportSeed())
+    let bundle = try PigeonIdentityBundle(decoding: account.identityBundle())
+    XCTAssertEqual(idKey.publicKey.rawRepresentation, bundle.identityKey)
     return (idKey, bundle)
   }
 
-  func testMinimalCardRoundTrip() {
-    let (_, bundle) = makeIdentity()
+  func testMinimalCardRoundTrip() throws {
+    let (_, bundle) = try makeIdentity()
     let card = ContactCard(
       name: "Alice", bundle: bundle, relayURLs: [], relaySignature: Data(), prekeyBundle: nil)
     let decoded = ContactCard(scanned: card.encoded())
@@ -38,10 +39,10 @@ final class ContactCardTests: XCTestCase {
     XCTAssertEqual(decoded?.relayURLs, [])
   }
 
-  func testSignedRelayURLsAreHonoured() {
-    let (idKey, bundle) = makeIdentity()
+  func testSignedRelayURLsAreHonoured() throws {
+    let (idKey, bundle) = try makeIdentity()
     let urls = [URL(string: "wss://a.example/ws")!, URL(string: "wss://b.example/ws")!]
-    let signature = try! idKey.signature(for: ContactCard.relayPayload(urls))
+    let signature = try idKey.signature(for: ContactCard.relayPayload(urls))
     let card = ContactCard(
       name: "Bob", bundle: bundle, relayURLs: urls, relaySignature: signature, prekeyBundle: nil)
 
@@ -50,9 +51,9 @@ final class ContactCardTests: XCTestCase {
     XCTAssertEqual(decoded?.relayURLs, urls)
   }
 
-  func testUnsignedRelayURLsAreDropped() {
+  func testUnsignedRelayURLsAreDropped() throws {
     // Built with an empty relay signature: a scanner must not honour the URLs.
-    let (_, bundle) = makeIdentity()
+    let (_, bundle) = try makeIdentity()
     let urls = [URL(string: "wss://a.example/ws")!]
     let card = ContactCard(
       name: "Bob", bundle: bundle, relayURLs: urls, relaySignature: Data(), prekeyBundle: nil)
@@ -61,12 +62,12 @@ final class ContactCardTests: XCTestCase {
     XCTAssertEqual(decoded?.relayURLs, [])
   }
 
-  func testRelayURLsSignedByAnotherIdentityAreDropped() {
-    let (_, bundle) = makeIdentity()
-    let (attackerKey, _) = makeIdentity()
+  func testRelayURLsSignedByAnotherIdentityAreDropped() throws {
+    let (_, bundle) = try makeIdentity()
+    let (attackerKey, _) = try makeIdentity()
     let urls = [URL(string: "wss://evil.example/ws")!]
     // Signed by a *different* identity than the card's bundle — must be rejected.
-    let forged = try! attackerKey.signature(for: ContactCard.relayPayload(urls))
+    let forged = try attackerKey.signature(for: ContactCard.relayPayload(urls))
     let card = ContactCard(
       name: "Bob", bundle: bundle, relayURLs: urls, relaySignature: forged, prekeyBundle: nil)
 

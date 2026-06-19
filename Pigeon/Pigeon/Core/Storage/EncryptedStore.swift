@@ -9,7 +9,7 @@
 import CryptoKit
 import Foundation
 
-/// A contact in persisted form (the IdentityBundle stored as its 128-byte encoding).
+/// A contact in persisted form (the identity bundle stored as its protobuf encoding).
 struct PersistedContact: Codable {
   var name: String
   var bundle: Data
@@ -19,8 +19,8 @@ struct PersistedContact: Codable {
   /// The relay the user prefers for this conversation (absolute URL string), or
   /// `nil` for automatic. Defaults nil so older stores still decode (#18).
   var preferredRelayURL: String?
-  /// The contact's published X3DH prekey bundle, as its wire encoding. `nil` for
-  /// legacy contacts / cards without prekeys. Defaults nil so older stores decode.
+  /// The contact's published Olm prekey bundle, as its wire encoding. `nil` for
+  /// contacts / cards without prekeys. Defaults nil so older stores decode.
   var prekeyBundle: Data?
   /// Whether the contact was verified in person (scanned vs pasted). Defaults
   /// true so contacts saved before this field read as verified (§5.7 trust UX).
@@ -39,6 +39,13 @@ struct PersistedState: Codable {
   var bluetoothContactIDs: [String] = []
   /// The local user's own display name, shared in their QR card.
   var myName: String = ""
+  /// The Olm account pickle (secret), sealed at rest with everything else here.
+  /// Persisted so the device's Olm identity/fallback prekey (advertised in the
+  /// QR) survives relaunch. `nil` before the account is first built.
+  var olmAccountPickle: Data?
+  /// The Olm account's current fallback public key (public), needed to rebuild
+  /// the account since Olm cannot report it after publishing.
+  var olmFallbackKey: Data?
 }
 
 /// Reads and writes `PersistedState` as an encrypted blob in Application Support.
