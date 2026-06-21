@@ -39,33 +39,38 @@ enum ChatTimelineIcon {
   }
 }
 
-/// A chat's current reachability: local Bluetooth peers and/or the relay (with
-/// its host), so users can see the path messages take (#15).
+/// The chat's chosen link and whether it can carry a message *right now*, shown
+/// live in the header so users can tell at a glance if they're reachable over
+/// the transport this chat uses — relay or Bluetooth (#24). Reads observable
+/// transport state, so the trailing dot and text refresh as links come and go.
 struct ConnectionSummary: View {
-  let peers: Int
-  let relayHosts: [String]
+  @Environment(SessionManager.self) private var session
+  let contact: Contact
 
   var body: some View {
+    let bluetooth = session.usesBluetooth(contact)
+    let reachable = session.chosenLinkReachable(for: contact)
     HStack(spacing: 6) {
-      Image(systemName: icon)
-      Text(text)
+      Image(systemName: bluetooth ? "dot.radiowaves.left.and.right" : "globe")
+      Text(detail(bluetooth: bluetooth, reachable: reachable))
       Spacer()
+      Circle()
+        .fill(reachable ? Color.green : Color.secondary)
+        .frame(width: 6, height: 6)
+        .accessibilityLabel(reachable ? "Connected" : "Not connected")
     }
     .font(.caption2)
     .foregroundStyle(.secondary)
   }
 
-  private var icon: String {
-    if peers > 0 { return "dot.radiowaves.left.and.right" }
-    if !relayHosts.isEmpty { return "globe" }
-    return "wifi.slash"
-  }
-
-  private var text: String {
-    var parts: [String] = []
-    if peers > 0 { parts.append("Bluetooth · \(peers) peer\(peers == 1 ? "" : "s")") }
-    if let host = relayHosts.first { parts.append("Relay · \(host)") }
-    return parts.isEmpty ? "Offline" : parts.joined(separator: "   ")
+  private func detail(bluetooth: Bool, reachable: Bool) -> String {
+    if bluetooth {
+      let peers = session.connectedPeerCount
+      return reachable
+        ? "Bluetooth · \(peers) peer\(peers == 1 ? "" : "s")" : "Bluetooth · waiting for peer"
+    }
+    if let host = session.relayHosts.first { return "Relay · \(host)" }
+    return "Relay · connecting…"
   }
 }
 

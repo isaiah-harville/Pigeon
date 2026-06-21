@@ -38,13 +38,12 @@ final class RelayTransport: Transport {
   private(set) var log: [String] = []
 
   /// Hosts of our own relays we're currently authenticated to (can receive on),
-  /// for display in the UI. Empty when offline.
-  var onlineRelayHosts: [String] {
-    myRelays.compactMap { url in
-      guard connections[url]?.ready == true else { return nil }
-      return host(url)
-    }
-  }
+  /// for display in the UI. Empty when offline. Stored (not computed) so it is
+  /// observed by SwiftUI: readiness lives on the `Connection` reference type
+  /// inside `connections`, whose mutations `@Observable` can't see, so the chat
+  /// header would otherwise never refresh when a relay comes up or drops.
+  /// Recomputed from `connections` on every readiness change in `refreshLinkState`.
+  private(set) var onlineRelayHosts: [String] = []
 
   // Relays are not "peers"; the headline status/peer-count stay BLE's.
   var status: TransportStatus { .idle }
@@ -279,12 +278,15 @@ final class RelayTransport: Transport {
 
   // MARK: - Helpers
 
-  /// Link state reflects our own mailbox relays (whether we can *receive*);
-  /// publish-only connections to contacts' relays don't change it.
+  /// Recomputes the observable link state from `connections`. Called on every
+  /// readiness change (a relay coming up or dropping, reconfigure), so the UI
+  /// stays live. Link state reflects our own mailbox relays (whether we can
+  /// *receive*); publish-only connections to contacts' relays don't change it.
   private func refreshLinkState() {
+    onlineRelayHosts = myRelays.compactMap { connections[$0]?.ready == true ? host($0) : nil }
     if myRelays.isEmpty {
       linkState = .disabled
-    } else if myRelays.contains(where: { connections[$0]?.ready == true }) {
+    } else if !onlineRelayHosts.isEmpty {
       linkState = .online
     } else {
       linkState = .connecting

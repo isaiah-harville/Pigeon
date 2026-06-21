@@ -146,7 +146,7 @@ struct ChatView: View {
         }
         .buttonStyle(.plain)
       }
-      ConnectionSummary(peers: session.connectedPeerCount, relayHosts: session.relayHosts)
+      ConnectionSummary(contact: contact)
     }
     .font(.footnote)
     .padding(.horizontal)
