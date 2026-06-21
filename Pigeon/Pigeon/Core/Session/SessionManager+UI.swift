@@ -78,6 +78,23 @@ extension SessionManager {
   /// The full configured relay list (endpoints + enabled flags) for the settings UI.
   var relayEntries: [RelayEntry] { RelaySettings.entries() }
 
+  /// Whether the user has opted into APNs push wake-ups (off by default).
+  var pushEnabled: Bool { RelaySettings.pushEnabled }
+
+  /// Opts into or out of push wake-ups: persists the choice and starts or stops
+  /// APNs registration. Opting out clears the device token from our relays (the
+  /// relay setter sees a nil token); opting in registers it once a token arrives.
+  func setPushEnabled(_ enabled: Bool) {
+    RelaySettings.pushEnabled = enabled
+    #if os(iOS)
+      if enabled {
+        RemoteNotificationManager.shared.enable()
+      } else {
+        RemoteNotificationManager.shared.disable()
+      }
+    #endif
+  }
+
   /// Whether Pigeon may receive messages while the device is locked. On by
   /// default; backed by the identity keys' keychain accessibility.
   var backgroundDeliveryEnabled: Bool { BackgroundDelivery.isEnabled }

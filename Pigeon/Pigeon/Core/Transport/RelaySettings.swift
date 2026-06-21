@@ -20,6 +20,18 @@ struct RelayEntry: Equatable, Hashable {
 enum RelaySettings {
   private static let key = "pigeon.relay.urls"
   private static let disabledKey = "pigeon.relay.disabled"
+  private static let pushKey = "pigeon.relay.push"
+
+  /// Whether APNs push wake-ups are enabled (**on by default**; the user can turn
+  /// them off). When on, the app registers for remote notifications and binds its
+  /// device token to its mailbox on the official relay so a suspended/terminated
+  /// app gets woken to drain it. A deliberate privacy tradeoff — see
+  /// SECURITY_MODEL §6.1. Defaults on by treating an unset value as `true`, so
+  /// only an explicit opt-out turns it off.
+  static var pushEnabled: Bool {
+    get { UserDefaults.standard.object(forKey: pushKey) as? Bool ?? true }
+    set { UserDefaults.standard.set(newValue, forKey: pushKey) }
+  }
 
   static var recommendedURL: URL {
     guard let url = URL(string: "wss://relay.pigeonwire.app/ws") else {

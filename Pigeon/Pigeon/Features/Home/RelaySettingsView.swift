@@ -18,6 +18,7 @@ struct RelaySettingsView: View {
   @State private var entries: [RelayEntry] = []
   @State private var newURL = ""
   @State private var pinger = RelayPinger()
+  @State private var pushEnabled = RelaySettings.pushEnabled
 
   var body: some View {
     relayList
@@ -35,8 +36,30 @@ struct RelaySettingsView: View {
     List {
       statusSection
       relaysSection
+      pushSection
     }
     .animation(.default, value: sortedEntries)
+  }
+
+  private var pushSection: some View {
+    Section {
+      Toggle("Push wake-ups", isOn: $pushEnabled)
+        .onChange(of: pushEnabled) { _, on in session.setPushEnabled(on) }
+    } header: {
+      Text("Notifications")
+    } footer: {
+      Text(
+        """
+        Let the official Pigeon relay wake the app with a notification when a \
+        message is waiting, so it arrives even after the app is closed. The push \
+        is content-free — it carries no sender or message, just a prompt to open \
+        Pigeon. Your device gets a push token that the official relay (and Apple) \
+        can link to "this mailbox has mail" — more metadata than the relay alone. \
+        On by default; turn it off to rely on best-effort background reception. \
+        Self-hosted relays don't push.
+        """
+      )
+    }
   }
 
   private var statusSection: some View {
