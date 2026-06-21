@@ -115,6 +115,9 @@ extension SessionManager {
         ephemeralContactIDs: ephemeralContactIDs,
         bluetoothChatIDs: bluetoothChatIDs,
         myName: myName,
-        account: account))
+        account: account,
+        sessions: sessions,
+        pendingInitiation: pendingInitiation,
+        lastInitiationIn: lastInitiationIn))
   }
 }

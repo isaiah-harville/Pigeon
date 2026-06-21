@@ -144,11 +144,22 @@ final class SessionManager {
     ephemeralContactIDs = loaded.ephemeralContactIDs
     bluetoothChatIDs = loaded.bluetoothChatIDs
     myName = loaded.myName
+    // Restore established sessions so a relaunch continues the conversation
+    // instead of re-handshaking. A contact with a restored session is, by
+    // definition, established (the two are kept in lockstep everywhere else).
+    sessions = loaded.sessions
+    establishedContactIDs = Set(loaded.sessions.keys)
+    pendingInitiation = loaded.pendingInitiation
+    lastInitiationIn = loaded.lastInitiationIn
     isUnlocked = true
     lockedInbox.reset()
     refreshRelay()  // pick up loaded contacts' relays
+    // Drain anything buffered while locked *before* re-driving establishment, so
+    // a buffered initiation/rehandshake stands up the session itself and the
+    // `ensureEstablishing` pass below then no-ops — rather than both firing and
+    // racing into two competing initiations (the relaunch handshake bug).
+    drainLockedInbox()
     for contact in contacts { ensureEstablishing(contactID: contact.id) }
-    drainLockedInbox()  // process anything that arrived while locked
   }
 
   /// Recomputes the relay connection pool (our relays plus every contact's).

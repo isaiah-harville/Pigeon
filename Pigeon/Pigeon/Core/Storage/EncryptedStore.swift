@@ -25,6 +25,19 @@ struct PersistedContact: Codable {
   /// Whether the contact was verified in person (scanned vs pasted). Defaults
   /// true so contacts saved before this field read as verified (§5.7 trust UX).
   var verifiedInPerson: Bool = true
+  /// The live Olm session's sealed ratchet pickle (secret), so an established
+  /// conversation survives relaunch instead of forcing a fresh handshake every
+  /// cold start. `nil` when no session is established yet. Re-exported on every
+  /// persist so it never lags the live ratchet. Sealed at rest with the rest of
+  /// the store.
+  var sessionPickle: Data?
+  /// The initiation we sent this contact but haven't seen acked, retained so it
+  /// is resent after relaunch until the peer stands up its side. `nil` once acked.
+  var pendingInitiation: Data?
+  /// The last initiation we processed from this contact (responder-side dedup),
+  /// so a retransmit after relaunch doesn't rebuild a second session. `nil` until
+  /// we've accepted one.
+  var lastInitiationIn: Data?
 }
 
 /// The complete persisted app state. Conversation keys are contact identity

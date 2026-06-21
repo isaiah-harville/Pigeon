@@ -36,6 +36,11 @@ final class SessionPersistence {
     var ephemeralContactIDs: Set<Data>
     var bluetoothChatIDs: Set<Data>
     var myName: String
+    /// Restored live Olm sessions, keyed by contact id. A contact appearing here
+    /// is (re)established without a fresh handshake.
+    var sessions: [Data: PigeonSession]
+    var pendingInitiation: [Data: Data]
+    var lastInitiationIn: [Data: Data]
   }
 
   /// The live state the coordinator hands over to be sealed at rest.
@@ -46,6 +51,11 @@ final class SessionPersistence {
     var bluetoothChatIDs: Set<Data>
     var myName: String
     var account: PigeonAccount?
+    /// Live per-contact session state to seal alongside the account, so the
+    /// ratchet survives relaunch. Keyed by contact id.
+    var sessions: [Data: PigeonSession]
+    var pendingInitiation: [Data: Data]
+    var lastInitiationIn: [Data: Data]
   }
 
   /// Attaches the store and decodes persisted state, (re)building the Olm account
@@ -55,13 +65,17 @@ final class SessionPersistence {
   func attach(_ store: EncryptedStore, identitySeed: Data) -> Loaded {
     self.store = store
     let state = store.load()
+    let sessionState = Self.decodeSessionState(state.contacts)
     return Loaded(
       account: Self.buildAccount(seed: identitySeed, state: state),
       contacts: Self.decodeContacts(state.contacts),
       conversations: Self.decodeConversations(state.conversations),
       ephemeralContactIDs: Self.decodeIDs(state.ephemeralContactIDs),
       bluetoothChatIDs: Self.decodeIDs(state.bluetoothContactIDs),
-      myName: state.myName)
+      myName: state.myName,
+      sessions: sessionState.sessions,
+      pendingInitiation: sessionState.pending,
+      lastInitiationIn: sessionState.lastIn)
   }
 
   /// Writes contacts, the conversation mirror, ephemeral/Bluetooth flags, and the
@@ -78,9 +92,19 @@ final class SessionPersistence {
     // because Olm can't report it again after publishing.
     let olmPickle = snapshot.account.flatMap { try? $0.exportOlmPickle() }
     let olmFallbackKey = snapshot.account?.exportFallbackKey()
+    let contacts = snapshot.contacts.map { contact in
+      // The session pickle is re-exported here, on every persist, so the sealed
+      // ratchet state never lags the live one (a stale pickle would reuse Olm
+      // message indices on the next launch). Secret — only ever written sealed.
+      Self.encodeContact(
+        contact,
+        sessionPickle: try? snapshot.sessions[contact.id]?.exportPickle(),
+        pendingInitiation: snapshot.pendingInitiation[contact.id],
+        lastInitiationIn: snapshot.lastInitiationIn[contact.id])
+    }
     store.save(
       PersistedState(
-        contacts: snapshot.contacts.map(Self.encodeContact),
+        contacts: contacts,
         conversations: conversationsByKey,
         ephemeralContactIDs: snapshot.ephemeralContactIDs.map { $0.base64EncodedString() },
         bluetoothContactIDs: snapshot.bluetoothChatIDs.map { $0.base64EncodedString() },
@@ -103,13 +127,45 @@ final class SessionPersistence {
 
   // MARK: - Codec
 
-  private static func encodeContact(_ contact: Contact) -> PersistedContact {
+  private static func encodeContact(
+    _ contact: Contact, sessionPickle: Data?, pendingInitiation: Data?, lastInitiationIn: Data?
+  ) -> PersistedContact {
     PersistedContact(
       name: contact.displayName, bundle: contact.bundle.encoded,
       relayURLs: contact.relayURLs.map(\.absoluteString),
       preferredRelayURL: contact.preferredRelayURL?.absoluteString,
       prekeyBundle: contact.prekeyBundle?.encoded,
-      verifiedInPerson: contact.verifiedInPerson)
+      verifiedInPerson: contact.verifiedInPerson,
+      sessionPickle: sessionPickle,
+      pendingInitiation: pendingInitiation,
+      lastInitiationIn: lastInitiationIn)
+  }
+
+  /// Rebuilds the live session state from the persisted contacts: the restored
+  /// Olm sessions plus the two initiation blobs that drive async establishment,
+  /// keyed by contact id. A contact whose identity bundle or session pickle no
+  /// longer decodes is simply skipped (it re-establishes on next contact), never
+  /// crashing the unlock.
+  private static func decodeSessionState(_ persisted: [PersistedContact]) -> (
+    sessions: [Data: PigeonSession], pending: [Data: Data], lastIn: [Data: Data]
+  ) {
+    var sessions: [Data: PigeonSession] = [:]
+    var pending: [Data: Data] = [:]
+    var lastIn: [Data: Data] = [:]
+    for contact in persisted {
+      // The contact id is the verified Ed25519 identity key; decoding re-checks
+      // the binding, the same guard `decodeContacts` applies.
+      guard let bundle = try? PigeonIdentityBundle(decoding: contact.bundle) else { continue }
+      let id = bundle.identityKey
+      if let pickle = contact.sessionPickle,
+        let session = try? PigeonSession.import(pickle: pickle, remoteIdentityKey: id)
+      {
+        sessions[id] = session
+      }
+      if let initiation = contact.pendingInitiation { pending[id] = initiation }
+      if let initiation = contact.lastInitiationIn { lastIn[id] = initiation }
+    }
+    return (sessions, pending, lastIn)
   }
 
   private static func decodeContacts(_ persisted: [PersistedContact]) -> [Contact] {

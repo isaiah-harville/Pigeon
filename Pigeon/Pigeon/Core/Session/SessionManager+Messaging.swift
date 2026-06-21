@@ -45,10 +45,20 @@ extension SessionManager {
     // initiator we drive our own session and ignore a crossed initiation.
     guard !isInitiator(toward: contact.id) else { return }
 
-    // A retransmit of the initiation we already processed: ignore. Re-running
-    // `establishInbound` would build a second session. A *different* payload
-    // means the peer restarted — fall through and rebuild.
-    if payload == lastInitiationIn[contact.id] { return }
+    // A retransmit of the initiation we already processed: don't rebuild (that
+    // would make a second session), but re-send the establishment ack — the peer
+    // is resending precisely because our earlier ack was lost, and since we now
+    // persist `lastInitiationIn` across relaunch we can no longer rely on
+    // forgetting it to trigger a rebuild-and-reack. A *different* payload means
+    // the peer genuinely restarted — fall through and rebuild.
+    if payload == lastInitiationIn[contact.id] {
+      if let session = sessions[contact.id],
+        let ack = try? session.encrypt(plaintext: Self.establishmentAck)
+      {
+        sendEnvelope(.ack, payload: ack, to: contact)
+      }
+      return
+    }
 
     guard let account else { return }
 
@@ -213,8 +223,16 @@ extension SessionManager {
 
   func handleRehandshakeRequest(from contact: Contact) {
     guard isInitiator(toward: contact.id) else { return }  // only the initiator can start
-    // Re-establish only if we're established (peer lost it) or never started; if
-    // an initiation is already pending, let it land rather than clobber it.
+    // An initiation we sent is still in flight (not yet acked): just resend it
+    // rather than resetting the session we just stood up. Clobbering it would
+    // orphan any message the peer already encrypted against that session and
+    // restart the handshake race — the exact wedge behind the relaunch bug.
+    if pendingInitiation[contact.id] != nil {
+      sendPending(to: contact)
+      return
+    }
+    // Otherwise re-establish only if we're established (peer lost it) or never
+    // started.
     if establishedContactIDs.contains(contact.id) || sessions[contact.id] == nil {
       note("\"\(contact.displayName)\" requested re-establishment")
       resetSession(for: contact.id)
@@ -292,6 +310,12 @@ extension SessionManager {
     let channels: Set<TransportKind> =
       type == .message ? chatChannels(for: contact) : TransportKind.all
     mesh.send(envelope.encoded(), to: contact.id, over: channels)
+    // Every session-encrypted envelope (message/ack/control) and every initiation
+    // advances or creates ratchet state the caller just produced. Persist so the
+    // sealed session pickle never lags the live ratchet across a relaunch; a lag
+    // would reuse Olm message indices. Cheap and idempotent for the rare
+    // non-encrypting envelopes (e.g. rehandshake requests).
+    persist()
   }
 
   func sessionRejectedMessage(for contact: Contact) -> String {

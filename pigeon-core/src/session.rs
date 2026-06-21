@@ -8,7 +8,7 @@
 //! straight Olm: the Double Ratchet, forward secrecy, post-compromise security,
 //! and out-of-order / skipped-message handling all come from vodozemac.
 
-use vodozemac::olm::{OlmMessage, Session as OlmSession, SessionConfig};
+use vodozemac::olm::{OlmMessage, Session as OlmSession, SessionConfig, SessionPickle};
 
 use crate::account::Account;
 use crate::error::Error;
@@ -124,6 +124,28 @@ impl Session {
     /// The peer's Ed25519 identity key, verified out of band at establishment.
     pub fn remote_identity_key(&self) -> [u8; 32] {
         self.remote_identity_key
+    }
+
+    /// The Olm ratchet pickle (secret), for the host app to seal and persist so
+    /// the session — and thus the conversation's forward-secret state — survives
+    /// app relaunch instead of forcing a fresh handshake every cold start.
+    ///
+    /// The peer's Ed25519 identity key is **not** in this pickle (Olm only knows
+    /// the Curve25519 keys); persist it alongside and pass it back to
+    /// [`Session::from_pickle`]. The host app already holds it as the contact id.
+    pub fn pickle(&self) -> SessionPickle {
+        self.olm.pickle()
+    }
+
+    /// Restores a session from a persisted [`Session::pickle`] plus the peer's
+    /// Ed25519 identity key (the contact id the host app keyed the session by).
+    /// The binding was verified when the session was first established; restoring
+    /// re-attaches that already-verified identity to the ratchet state.
+    pub fn from_pickle(pickle: SessionPickle, remote_identity_key: [u8; 32]) -> Self {
+        Self {
+            olm: OlmSession::from_pickle(pickle),
+            remote_identity_key,
+        }
     }
 
     /// Olm's session id (stable, shared by both ends once converged).
