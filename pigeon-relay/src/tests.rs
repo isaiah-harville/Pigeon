@@ -2,8 +2,23 @@
 // Declared from `main.rs` as `#[cfg(test)] mod tests;` so it can reach the
 // crate-private mailbox operations.
 
-use super::*;
+use std::collections::HashMap;
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use base64::engine::general_purpose::STANDARD as B64;
+use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
+use tokio::sync::mpsc;
+
+use crate::mailbox::{
+    ack, expire_mailboxes, flush_queue, publish, register_push, register_subscriber,
+    remove_subscriber, verify_ownership,
+};
+use crate::protocol::ServerMsg;
+use crate::push::PushRegistry;
+use crate::state::{is_valid_address, AppState, Config, MAX_CIPHERTEXT_LEN, PUBKEY_LEN};
 
 fn state(ttl_secs: u64, max_queue: usize) -> AppState {
     AppState {
@@ -13,6 +28,8 @@ fn state(ttl_secs: u64, max_queue: usize) -> AppState {
             max_queue,
         },
         counter: Arc::new(AtomicU64::new(1)),
+        // No gateway: deposits never attempt a push in these tests.
+        push: Arc::new(PushRegistry::new(None, Duration::from_secs(30))),
     }
 }
 
@@ -186,6 +203,29 @@ fn publish_prunes_dead_subscribers() {
     drop(srx); // receiver gone -> live send fails
     publish(&st, &ptx, addr(1), "b25l".into());
     assert_eq!(subscriber_count(&st, &addr(1)), 0);
+}
+
+#[test]
+fn register_push_requires_authentication() {
+    // No authenticated mailbox: a token must never be bound (the auth gate fires
+    // before anything else), so only the mailbox owner can ever attach a token.
+    let st = state(3600, 100);
+    let (tx, mut rx) = channel();
+    register_push(&st, &tx, None, "aabbccdd".into());
+    assert!(matches!(rx.try_recv().unwrap(), ServerMsg::Error { .. }));
+}
+
+#[test]
+fn register_push_rejected_when_no_gateway() {
+    // A relay with no APNs gateway (every self-hosted / third-party relay)
+    // refuses registration outright rather than hoarding tokens it can't use.
+    let st = state(3600, 100);
+    let (tx, mut rx) = channel();
+    register_push(&st, &tx, Some(&addr(1)), "aabbccdd".into());
+    match rx.try_recv().unwrap() {
+        ServerMsg::Error { message } => assert_eq!(message, "push not supported"),
+        other => panic!("expected an Error reply, got {other:?}"),
+    }
 }
 
 #[test]

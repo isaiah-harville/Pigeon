@@ -16,6 +16,12 @@ import SwiftUI
 struct PigeonApp: App {
   @Environment(\.scenePhase) private var scenePhase
 
+  #if os(iOS)
+    // Receives the APNs device token (opt-in push wake-ups) and forwards it to
+    // `RemoteNotificationManager`; SwiftUI has no hook for these UIKit callbacks.
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+  #endif
+
   /// The device identity loads once at launch and is shared via the
   /// environment. It can fail on a background relaunch while the device is still
   /// locked (the identity keys aren't readable yet) — that's recoverable, not
@@ -83,6 +89,15 @@ struct PigeonApp: App {
       // event won't run view lifecycle, but must still post notifications.
       notifier.start()
       session.onIncomingNotification = { notifier.notifyIncomingMessage() }
+      #if os(iOS)
+        // Route the APNs device token to our relay, and (if the user opted in)
+        // start registration so a suspended/terminated app can be woken to drain
+        // its mailbox. Off by default — best-effort background reception as before.
+        RemoteNotificationManager.shared.onToken = { [weak session] token in
+          session?.relay?.setPushToken(token)
+        }
+        if RelaySettings.pushEnabled { RemoteNotificationManager.shared.enable() }
+      #endif
       return StartupResult(
         services: AppServices(identity: identity, session: session, notifier: notifier),
         errorMessage: nil)
@@ -98,6 +113,27 @@ private struct StartupResult {
   let services: AppServices?
   let errorMessage: String?
 }
+
+#if os(iOS)
+  /// Bridges UIKit's remote-notification registration callbacks (which SwiftUI
+  /// doesn't surface) to `RemoteNotificationManager`. Only used when the user
+  /// opts into push wake-ups.
+  final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+      _: UIApplication,
+      didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+      Task { @MainActor in RemoteNotificationManager.shared.didRegister(tokenData: deviceToken) }
+    }
+
+    func application(
+      _: UIApplication,
+      didFailToRegisterForRemoteNotificationsWithError error: Error
+    ) {
+      Task { @MainActor in RemoteNotificationManager.shared.didFail(error) }
+    }
+  }
+#endif
 
 /// Bundles the services built once identity is available, so they move together.
 private struct AppServices {

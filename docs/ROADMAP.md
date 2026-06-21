@@ -115,6 +115,10 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
   mail at time T") to the gateway and to Apple; **confidentiality is untouched**
   because the payload is empty. A deliberate, documented exception to "no new
   network services beyond the relay." See [SECURITY_MODEL.md §6.1](SECURITY_MODEL.md).
+  *Implemented:* relay token registration over the authenticated `/ws` handshake
+  (`register_push`/`unregister_push`), a config-gated APNs gateway that fires the
+  content-free alert on deposit (coalesced, with 410 token eviction); app-side
+  opt-in (Relays → Push wake-ups), APNs registration, and per-relay token binding.
 - **Local Wi-Fi transport** — Network.framework/Multipeer for same-network reach;
   another offline-capable `Transport` implementation.
 

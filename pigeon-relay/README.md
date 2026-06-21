@@ -37,6 +37,28 @@ Storage is **in-memory and ephemeral** by design — a relay is a transient
 rendezvous, not durable storage. Run more than one for redundancy (see
 Federation).
 
+### APNs push gateway (official deployment only)
+
+Optional, and only meaningful for the **official** Pigeon relay — an APNs push to
+the Pigeon bundle id can only be signed by the holder of the app's `.p8` key, so
+push **cannot be federated**. Leave these unset (the default) and the relay never
+pushes; it refuses `register_push` and behaves exactly as before. Set **all four**
+required vars to enable a content-free wake-up alert on deposit. See
+[SECURITY_MODEL.md §6.1](../docs/SECURITY_MODEL.md) for the metadata tradeoff.
+
+| Variable                       | Default              | Meaning                                              |
+| ------------------------------ | -------------------- | ---------------------------------------------------- |
+| `PIGEON_APNS_TEAM_ID`          | —                    | Apple Developer team id (JWT `iss`). **Required.**   |
+| `PIGEON_APNS_KEY_ID`           | —                    | APNs auth-key id (JWT `kid`). **Required.**          |
+| `PIGEON_APNS_TOPIC`            | —                    | App bundle id (APNs topic). **Required.**            |
+| `PIGEON_APNS_KEY_PATH`         | —                    | Path to the `.p8` auth key (PEM). **Required.**      |
+| `PIGEON_APNS_HOST`             | `api.push.apple.com` | Use `api.sandbox.push.apple.com` for development.    |
+| `PIGEON_APNS_MIN_INTERVAL_SECS`| `30`                 | Min gap between pushes to one mailbox (coalescing).  |
+
+The `.p8` is a secret: mount it read-only and keep it out of images and logs. The
+gateway holds only device tokens (in memory, like every other relay state); it
+never sees plaintext, and the push payload carries no sender, content, or count.
+
 ## Federation
 
 Relays are independent and **never talk to each other** — federation needs no
@@ -70,6 +92,19 @@ Health: `GET /healthz` → `ok`.
    …(queued, then live as they arrive)…
 { "type": "ack", "id": "<id>" }     // deletes the envelope
 ```
+
+**Push wake-up (recipient, after auth; official relay only):**
+
+```json
+{ "type": "register_push", "token": "<hex APNs device token>" }
+← { "type": "ok", "detail": "push registered" }
+{ "type": "unregister_push", "token": "<hex APNs device token>" }  // opt-out / rotation
+← { "type": "ok", "detail": "push unregistered" }
+```
+
+Only honored on an **authenticated** connection (so a token is bound to a mailbox
+solely by that mailbox's key holder) and only when an APNs gateway is configured;
+otherwise the relay replies `{ "type": "error", "message": "push not supported" }`.
 
 The challenge–response means the relay only ever learns *public* keys (which are
 the addresses anyway), and only the holder of a mailbox's private key can drain

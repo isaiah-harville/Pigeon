@@ -76,6 +76,14 @@ final class RelayTransport: Transport {
   /// retains its copy until we can process it after unlock. Set by the owner.
   var canConsume: () -> Bool = { true }
 
+  /// Our APNs device token (lowercase hex) when the user has opted into push
+  /// wake-ups, else nil. Bound to our mailbox on each of our *own* relays so the
+  /// official relay's gateway can wake a suspended or terminated app to drain
+  /// it. Never sent on publish-only contact relays — only relays we authenticate
+  /// to (which already know our mailbox) ever see it. Relays without a push
+  /// gateway reply with an error we ignore (best-effort, exactly as before).
+  private(set) var pushToken: String?
+
   /// Our own relays — where we subscribe to receive. We advertise these to
   /// contacts so they can deposit to us.
   private var myRelays: [URL] = []
@@ -230,6 +238,11 @@ final class RelayTransport: Transport {
       send(socket, ["type": "auth", "signature": signature.base64EncodedString()])
       let result = try await receive(socket)
       guard result["type"] as? String == "ok" else { throw RelayError.handshake }
+      // We can read our mailbox now; if push wake-up is opted in, bind our APNs
+      // device token so this relay can wake us while suspended/terminated.
+      if let token = pushToken {
+        send(socket, ["type": "register_push", "token": token])
+      }
     }
 
     connection.ready = true
@@ -393,6 +406,26 @@ extension RelayTransport {
       let alive = await group.next() ?? false
       group.cancelAll()
       return alive
+    }
+  }
+}
+
+// MARK: - Push wake-up registration
+
+extension RelayTransport {
+
+  /// Sets (or clears) our APNs device token and reconciles it across our live,
+  /// authenticated relay connections: a rotated or cleared token is unregistered
+  /// and the new one registered. New connections pick the current token up at
+  /// auth time in `serve`. Only authenticated (own-mailbox) relays are touched.
+  func setPushToken(_ token: String?) {
+    let old = pushToken
+    guard old != token else { return }
+    pushToken = token
+    for connection in connections.values where connection.authenticate && connection.ready {
+      guard let socket = connection.socket else { continue }
+      if let old { send(socket, ["type": "unregister_push", "token": old]) }
+      if let token { send(socket, ["type": "register_push", "token": token]) }
     }
   }
 }
