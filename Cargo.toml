@@ -2,6 +2,7 @@
 members = [
   "pigeon-core",
   "pigeon-core-ffi",
+  "pigeon-mesh",
   "pigeon-relay",
 ]
 resolver = "2"
