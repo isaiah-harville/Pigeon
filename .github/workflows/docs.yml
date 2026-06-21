@@ -5,8 +5,9 @@ on:
     branches: [main]
     paths:
       - "docs/**"
-      - "PigeonMesh/Package.swift"
-      - "PigeonMesh/Package.resolved"
+      - "pigeon-mesh/Cargo.toml"
+      - "pigeon-mesh/Cargo.lock"
+      - "pigeon-mesh/src/**"
       - "pigeon-relay/Cargo.toml"
       - "pigeon-relay/Cargo.lock"
       - "Cargo.toml"
@@ -17,10 +18,10 @@ on:
       - "Pigeon/CONTRIBUTING.md"
       - "Pigeon/docs/**"
       - "Pigeon/mkdocs.yml"
-      - "PigeonMesh/README.md"
-      - "PigeonMesh/CONTRIBUTING.md"
-      - "PigeonMesh/docs/**"
-      - "PigeonMesh/mkdocs.yml"
+      - "pigeon-mesh/README.md"
+      - "pigeon-mesh/CONTRIBUTING.md"
+      - "pigeon-mesh/docs/**"
+      - "pigeon-mesh/mkdocs.yml"
       - "pigeon-relay/README.md"
       - "pigeon-relay/CONTRIBUTING.md"
       - "pigeon-relay/docs/**"
@@ -36,8 +37,9 @@ on:
     branches: [main]
     paths:
       - "docs/**"
-      - "PigeonMesh/Package.swift"
-      - "PigeonMesh/Package.resolved"
+      - "pigeon-mesh/Cargo.toml"
+      - "pigeon-mesh/Cargo.lock"
+      - "pigeon-mesh/src/**"
       - "pigeon-relay/Cargo.toml"
       - "pigeon-relay/Cargo.lock"
       - "Cargo.toml"
@@ -48,10 +50,10 @@ on:
       - "Pigeon/CONTRIBUTING.md"
       - "Pigeon/docs/**"
       - "Pigeon/mkdocs.yml"
-      - "PigeonMesh/README.md"
-      - "PigeonMesh/CONTRIBUTING.md"
-      - "PigeonMesh/docs/**"
-      - "PigeonMesh/mkdocs.yml"
+      - "pigeon-mesh/README.md"
+      - "pigeon-mesh/CONTRIBUTING.md"
+      - "pigeon-mesh/docs/**"
+      - "pigeon-mesh/mkdocs.yml"
       - "pigeon-relay/README.md"
       - "pigeon-relay/CONTRIBUTING.md"
       - "pigeon-relay/docs/**"
@@ -71,9 +73,6 @@ permissions:
 concurrency:
   group: pages-${{ github.ref }}
   cancel-in-progress: true
-
-env:
-  DOCC_HOSTING_BASE_PATH: ${{ github.event.repository.name }}/api
 
 jobs:
   check:
@@ -126,18 +125,16 @@ jobs:
       - name: Build docs
         run: uv run --group docs mkdocs build --strict
 
-      - name: Build Swift API docs
+      - name: Build pigeon-mesh API docs
         run: |
-          mkdir -p "$PWD/public/api/PigeonMesh"
-
-          swift package \
-            --package-path PigeonMesh \
-            --allow-writing-to-directory "$PWD/public/api/PigeonMesh" \
-            generate-documentation \
-            --target PigeonMesh \
-            --output-path "$PWD/public/api/PigeonMesh" \
-            --transform-for-static-hosting \
-            --hosting-base-path "$DOCC_HOSTING_BASE_PATH/PigeonMesh"
+          rm -rf "$RUNNER_TEMP/pigeon-mesh-docs" "$PWD/public/api/pigeon-mesh"
+          cargo doc \
+            -p pigeon-mesh \
+            --no-deps \
+            --document-private-items \
+            --target-dir "$RUNNER_TEMP/pigeon-mesh-docs"
+          mkdir -p "$PWD/public/api/pigeon-mesh"
+          cp -R "$RUNNER_TEMP/pigeon-mesh-docs/doc" "$PWD/public/api/pigeon-mesh/doc"
 
       - name: Build relay API docs
         run: |

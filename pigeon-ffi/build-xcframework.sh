@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 #
-# Builds PigeonCoreFFI.xcframework from the pigeon-core-ffi crate and refreshes
-# the generated Swift bindings in the sibling PigeonCore package.
+# Builds PigeonFFIBindings.xcframework from the pigeon-ffi crate and refreshes
+# the generated Swift bindings in the sibling PigeonFFI package.
 #
 # Output:
-#   ../PigeonCore/PigeonCoreFFI.xcframework        (device + simulator static libs)
-#   ../PigeonCore/Sources/PigeonCore/Generated/    (UniFFI + protobuf Swift)
+#   ../Pigeon/PigeonFFI/PigeonFFIBindings.xcframework  (device + simulator static libs)
+#   ../Pigeon/PigeonFFI/Sources/PigeonFFI/Generated/   (UniFFI + protobuf Swift)
 #
 # Re-run whenever the FFI surface in src/lib.rs changes.
 set -euo pipefail
 
 cd "$(dirname "$0")"
 CRATE_DIR="$(pwd)"
-LIB_NAME="libpigeon_core_ffi.a"
-PACKAGE_DIR="$CRATE_DIR/../PigeonCore"
+LIB_NAME="libpigeon_ffi.a"
+PACKAGE_DIR="$CRATE_DIR/../Pigeon/PigeonFFI"
 BUILD_DIR="$CRATE_DIR/../target"
 GEN_DIR="$(mktemp -d)"
 trap 'rm -rf "$GEN_DIR"' EXIT
@@ -24,7 +24,7 @@ trap 'rm -rf "$GEN_DIR"' EXIT
 # x86_64 targets back here if Intel-simulator support is ever needed.
 DEVICE_TARGET="aarch64-apple-ios"
 SIM_TARGET="aarch64-apple-ios-sim"
-# The macOS slice exists only so `swift test --package-path PigeonCore` can link
+# The macOS slice exists only so `swift test --package-path Pigeon/PigeonFFI` can link
 # and run the round-trip tests on the host; the iOS app uses device/sim slices.
 MAC_TARGET="aarch64-apple-darwin"
 
@@ -48,31 +48,31 @@ cargo run --bin uniffi-bindgen -- generate \
   --language swift \
   --out-dir "$GEN_DIR"
 
-# uniffi emits: pigeon_core_ffi.swift, pigeon_core_ffiFFI.h, pigeon_core_ffiFFI.modulemap.
+# uniffi emits: pigeon_ffi.swift, pigeon_ffiFFI.h, pigeon_ffiFFI.modulemap.
 # The .h + .modulemap describe the C module the XCFramework vends; the .swift is
-# compiled as ordinary source in the PigeonCore SPM target.
+# compiled as ordinary source in the PigeonFFI SPM target.
 HEADERS_DIR="$GEN_DIR/headers"
 mkdir -p "$HEADERS_DIR"
 mv "$GEN_DIR"/*.h "$HEADERS_DIR/"
 # XCFramework requires the modulemap to be named module.modulemap.
 mv "$GEN_DIR"/*.modulemap "$HEADERS_DIR/module.modulemap"
 
-echo "==> Assembling PigeonCoreFFI.xcframework"
-rm -rf "$PACKAGE_DIR/PigeonCoreFFI.xcframework"
+echo "==> Assembling PigeonFFIBindings.xcframework"
+rm -rf "$PACKAGE_DIR/PigeonFFIBindings.xcframework"
 xcodebuild -create-xcframework \
   -library "$DEVICE_LIB" -headers "$HEADERS_DIR" \
   -library "$SIM_LIB" -headers "$HEADERS_DIR" \
   -library "$MAC_LIB" -headers "$HEADERS_DIR" \
-  -output "$PACKAGE_DIR/PigeonCoreFFI.xcframework"
+  -output "$PACKAGE_DIR/PigeonFFIBindings.xcframework"
 
-echo "==> Refreshing generated Swift bindings in PigeonCore"
-mkdir -p "$PACKAGE_DIR/Sources/PigeonCore/Generated"
-cp "$GEN_DIR"/*.swift "$PACKAGE_DIR/Sources/PigeonCore/Generated/"
+echo "==> Refreshing generated Swift bindings in PigeonFFI"
+mkdir -p "$PACKAGE_DIR/Sources/PigeonFFI/Generated"
+cp "$GEN_DIR"/*.swift "$PACKAGE_DIR/Sources/PigeonFFI/Generated/"
 
 echo "==> Generating Swift protobuf bindings"
 protoc \
   --proto_path="$CRATE_DIR/../proto" \
-  --swift_out="$PACKAGE_DIR/Sources/PigeonCore/Generated" \
+  --swift_out="$PACKAGE_DIR/Sources/PigeonFFI/Generated" \
   "$CRATE_DIR/../proto/pigeon/wire/v1/pigeon_wire.proto"
 
-echo "==> Done: $PACKAGE_DIR/PigeonCoreFFI.xcframework"
+echo "==> Done: $PACKAGE_DIR/PigeonFFIBindings.xcframework"

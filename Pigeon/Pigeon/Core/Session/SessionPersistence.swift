@@ -16,7 +16,7 @@
 //
 
 import Foundation
-import PigeonCore
+import PigeonFFI
 
 /// Reads and writes the coordinator's durable state through `EncryptedStore`,
 /// including building the bound Olm account. Not `@Observable`: persistence is a

@@ -13,7 +13,7 @@
 //
 
 import Foundation
-import PigeonCore
+import PigeonFFI
 
 /// Owns the live messaging-session state. `@Observable` so views observing
 /// establishment (e.g. the chat's lock indicator) refresh as sessions stand up.

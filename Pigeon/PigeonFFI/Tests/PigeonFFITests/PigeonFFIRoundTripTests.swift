@@ -1,6 +1,6 @@
 //
-//  PigeonCoreRoundTripTests.swift
-//  PigeonCoreTests
+//  PigeonFFIRoundTripTests.swift
+//  PigeonFFITests
 //
 //  Proves the Rust pigeon-core crate is reachable through the UniFFI/XCFramework
 //  bridge end-to-end from Swift. This is the Swift counterpart of pigeon-core's
@@ -13,9 +13,9 @@ import Foundation
 import SwiftProtobuf
 import XCTest
 
-@testable import PigeonCore
+@testable import PigeonFFI
 
-final class PigeonCoreRoundTripTests: XCTestCase {
+final class PigeonFFIRoundTripTests: XCTestCase {
 
   /// Alice opens a session to Bob from a one-time prekey bundle and sends a
   /// first message; Bob establishes the matching inbound session and recovers

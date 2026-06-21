@@ -1,6 +1,6 @@
 //
 //  PigeonCore.swift
-//  PigeonCore
+//  PigeonFFI
 //
 //  A thin ergonomic layer over the generated UniFFI bindings (Generated/). The
 //  generated types are already usable; these aliases just give the app

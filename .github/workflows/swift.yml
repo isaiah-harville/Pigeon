@@ -34,33 +34,19 @@ jobs:
 
       - name: Check formatting
         run: |
-          swift-format lint --recursive --parallel Pigeon PigeonCore PigeonMesh
+          swift-format lint --recursive --parallel Pigeon
           if [ $? -ne 0 ]; then
-            echo "Run 'swift-format format --recursive --in-place Pigeon PigeonCore PigeonMesh' locally to fix."
+            echo "Run 'swift-format format --recursive --in-place Pigeon' locally to fix."
             exit 1
           fi
 
-  package-tests:
-    name: Swift Package Tests (${{ matrix.package }})
-    runs-on: macos-26
-    strategy:
-      fail-fast: false
-      matrix:
-        package:
-          - PigeonMesh
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Test ${{ matrix.package }}
-        run: swift test --package-path "${{ matrix.package }}"
-
-  # Build the gitignored PigeonCore XCFramework + generated bindings once from
-  # the Rust crate, then share them with every job that links PigeonCore so the
+  # Build the gitignored PigeonFFI XCFramework + generated bindings once from
+  # the Rust crates, then share them with every job that links PigeonFFI so the
   # expensive Rust/UniFFI build runs a single time per workflow. The build
-  # output is cached across runs keyed on its inputs, so unchanged core/ffi/proto
-  # sources skip the rebuild (toolchain install, brew, and cargo) entirely.
+  # output is cached across runs keyed on its inputs, so unchanged core/mesh/ffi/
+  # proto sources skip the rebuild (toolchain install, brew, and cargo) entirely.
   xcframework:
-    name: Build PigeonCore XCFramework
+    name: Build PigeonFFI XCFramework
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -68,14 +54,14 @@ jobs:
       # Cache the produced XCFramework + bindings. The key changes only when an
       # input that affects the output changes (sources, the wire schema, or the
       # locked dependency set). Bump the v1 salt to force a rebuild manually.
-      - name: Cache PigeonCore build output
+      - name: Cache PigeonFFI build output
         id: xcframework-cache
         uses: actions/cache@v4
         with:
           path: |
-            PigeonCore/PigeonCoreFFI.xcframework
-            PigeonCore/Sources/PigeonCore/Generated
-          key: pigeon-core-xcframework-v1-${{ runner.os }}-${{ hashFiles('pigeon-core/**', 'pigeon-core-ffi/**', 'proto/**', 'Cargo.lock') }}
+            Pigeon/PigeonFFI/PigeonFFIBindings.xcframework
+            Pigeon/PigeonFFI/Sources/PigeonFFI/Generated
+          key: pigeon-ffi-xcframework-v1-${{ runner.os }}-${{ hashFiles('pigeon-core/**', 'pigeon-ffi/**', 'pigeon-mesh/**', 'proto/**', 'Cargo.lock') }}
 
       - uses: dtolnay/rust-toolchain@stable
         if: steps.xcframework-cache.outputs.cache-hit != 'true'
@@ -86,34 +72,34 @@ jobs:
         if: steps.xcframework-cache.outputs.cache-hit != 'true'
         run: brew install protobuf swift-protobuf
 
-      - name: Build PigeonCore XCFramework
+      - name: Build PigeonFFI XCFramework
         if: steps.xcframework-cache.outputs.cache-hit != 'true'
-        run: bash pigeon-core-ffi/build-xcframework.sh
+        run: bash pigeon-ffi/build-xcframework.sh
 
-      - name: Upload PigeonCore build artifacts
+      - name: Upload PigeonFFI build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: pigeon-core-xcframework
+          name: pigeon-ffi-xcframework
           if-no-files-found: error
           path: |
-            PigeonCore/PigeonCoreFFI.xcframework
-            PigeonCore/Sources/PigeonCore/Generated
+            Pigeon/PigeonFFI/PigeonFFIBindings.xcframework
+            Pigeon/PigeonFFI/Sources/PigeonFFI/Generated
 
   core-tests:
-    name: PigeonCore XCFramework Tests
+    name: PigeonFFI XCFramework Tests
     runs-on: macos-26
     needs: xcframework
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download PigeonCore build artifacts
+      - name: Download PigeonFFI build artifacts
         uses: actions/download-artifact@v4
         with:
-          name: pigeon-core-xcframework
-          path: PigeonCore
+          name: pigeon-ffi-xcframework
+          path: Pigeon/PigeonFFI
 
-      - name: Test PigeonCore
-        run: swift test --package-path PigeonCore
+      - name: Test PigeonFFI
+        run: swift test --package-path Pigeon/PigeonFFI
 
   app:
     name: iOS App Build & Tests
@@ -122,11 +108,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download PigeonCore build artifacts
+      - name: Download PigeonFFI build artifacts
         uses: actions/download-artifact@v4
         with:
-          name: pigeon-core-xcframework
-          path: PigeonCore
+          name: pigeon-ffi-xcframework
+          path: Pigeon/PigeonFFI
 
       # Confirm the app compiles for a real device (no signing), then run the
       # PigeonTests suite on the simulator. xcodebuild test reuses the build, so

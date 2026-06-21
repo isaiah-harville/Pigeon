@@ -923,7 +923,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pigeon-core-ffi"
+name = "pigeon-ffi"
 version = "0.1.0"
 dependencies = [
  "pigeon-core",

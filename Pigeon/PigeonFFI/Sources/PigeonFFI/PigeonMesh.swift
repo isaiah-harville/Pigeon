@@ -1,13 +1,13 @@
 //
 //  PigeonMesh.swift
-//  PigeonCore
+//  PigeonFFI
 //
 //  Ergonomic Swift facade over the generated mesh bindings (framing,
-//  fragmentation, routing, envelope). The generated value types carry their
-//  codecs as free functions and the binding spells the envelope tag `kind`;
-//  these extensions re-present them with throwing `init(decoding:)` /
-//  `encoded()` and the `type` spelling the app uses, so call sites read the same
-//  whether the mesh is Swift or, as now, the shared Rust `pigeon-mesh` crate.
+//  fragmentation, routing, envelope) from the shared Rust `pigeon-mesh` crate.
+//  The generated value types carry their codecs as free functions and the
+//  binding spells the envelope tag `kind`; these extensions re-present them with
+//  throwing `init(decoding:)` / `encoded()` and the `type` spelling the app
+//  uses, so call sites stay terse.
 //
 
 import Foundation

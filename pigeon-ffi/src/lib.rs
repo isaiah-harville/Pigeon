@@ -348,7 +348,7 @@ fn to_array32(bytes: &[u8]) -> Result<[u8; 32], PigeonError> {
 mod tests {
     use super::*;
 
-    /// The Swift round-trip in PigeonCoreTests mirrors this; keeping a Rust copy
+    /// The Swift round-trip in PigeonFFITests mirrors this; keeping a Rust copy
     /// here proves the byte-seam (bundle encode/decode, Olm message framing,
     /// pickle round-trip) independently of the bindings build.
     #[test]

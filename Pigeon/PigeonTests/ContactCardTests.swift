@@ -8,7 +8,7 @@
 //
 
 import CryptoKit
-import PigeonCore
+import PigeonFFI
 import XCTest
 
 @testable import Pigeon

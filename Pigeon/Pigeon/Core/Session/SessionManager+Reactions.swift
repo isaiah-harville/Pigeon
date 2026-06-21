@@ -6,7 +6,7 @@
 //
 
 import Foundation
-import PigeonCore
+import PigeonFFI
 
 extension SessionManager {
 

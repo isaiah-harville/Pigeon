@@ -64,7 +64,7 @@ implement custom cryptographic primitives.
 
 The pairwise messaging protocol (Olm: session establishment and the Double
 Ratchet) is provided by the audited `vodozemac` Rust crate, linked into the app
-through the `pigeon-core` / `PigeonCore` XCFramework. The app itself uses Apple's
+through the `pigeon-core` / `PigeonFFI` XCFramework. The app itself uses Apple's
 CryptoKit APIs for the remaining primitive operations: Ed25519 identity
 signatures, SHA hashing for safety numbers, and AES-GCM for at-rest storage.
 

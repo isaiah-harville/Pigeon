@@ -13,7 +13,7 @@
 //
 
 import Foundation
-import PigeonCore
+import PigeonFFI
 
 struct ContactCard {
   let name: String

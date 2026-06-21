@@ -1,16 +1,16 @@
 [package]
-name = "pigeon-core-ffi"
+name = "pigeon-ffi"
 version = "0.1.0"
 edition = "2021"
 # Matches the sibling pigeon-core crate's declared license.
 license = "AGPL-3.0-only"
-description = "UniFFI bindings exposing pigeon-core (Olm via vodozemac) to Swift."
+description = "UniFFI bindings exposing pigeon-core and pigeon-mesh to Swift."
 
 [lib]
 # staticlib/cdylib for the iOS XCFramework; lib so the uniffi-bindgen bin and
 # tests can link the crate.
 crate-type = ["staticlib", "cdylib", "lib"]
-name = "pigeon_core_ffi"
+name = "pigeon_ffi"
 
 [[bin]]
 # In-crate bindgen so the generator version always matches the linked uniffi.

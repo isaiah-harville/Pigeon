@@ -27,8 +27,8 @@ Run the narrowest checks that match your change:
 
 ```sh
 cargo test --workspace
-bash pigeon-core-ffi/build-xcframework.sh   # regenerate bindings + XCFramework
-swift test --package-path PigeonCore
+bash pigeon-ffi/build-xcframework.sh   # regenerate bindings + XCFramework
+swift test --package-path Pigeon/PigeonFFI
 xcodebuild build -project Pigeon/Pigeon.xcodeproj -scheme Pigeon -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO
 uv run --group docs mkdocs build --strict
 ```
@@ -37,7 +37,7 @@ Formatting and linting:
 
 ```sh
 swiftlint lint --strict
-swift-format lint --recursive --parallel Pigeon PigeonCore
+swift-format lint --recursive --parallel Pigeon
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```

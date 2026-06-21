@@ -1,7 +1,7 @@
 [workspace]
 members = [
   "pigeon-core",
-  "pigeon-core-ffi",
+  "pigeon-ffi",
   "pigeon-mesh",
   "pigeon-relay",
 ]
