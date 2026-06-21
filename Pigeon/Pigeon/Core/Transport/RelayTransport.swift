@@ -20,6 +20,7 @@
 //
 
 import Foundation
+import Network
 
 @MainActor
 @Observable
@@ -82,6 +83,14 @@ final class RelayTransport: Transport {
   private let urlSession = URLSession(configuration: .default)
   private var connections: [URL: Connection] = [:]
 
+  /// Watches the OS network path so relays reconnect the instant connectivity
+  /// returns (Wi-Fi ↔ cellular, airplane mode off), rather than waiting out the
+  /// supervise backoff (#76). `@ObservationIgnored` — it drives reconnects, not UI.
+  @ObservationIgnored private let pathMonitor = NWPathMonitor()
+  /// Whether the OS last reported a usable path. Tracked so we react only to the
+  /// *transition* back to reachable, ignoring interface flaps while already up.
+  @ObservationIgnored private var networkAvailable = true
+
   /// One relay endpoint: its socket plus the supervising reconnect task.
   /// `authenticate` is true for our own relays (we subscribe + prove ownership
   /// to read); false for contacts' relays we only deposit to.
@@ -96,7 +105,10 @@ final class RelayTransport: Transport {
   init(mailboxHex: String, sign: @escaping (Data) -> Data?) {
     self.mailboxHex = mailboxHex
     self.sign = sign
+    startPathMonitor()
   }
+
+  deinit { pathMonitor.cancel() }
 
   // MARK: - Configuration
 
@@ -302,6 +314,46 @@ final class RelayTransport: Transport {
 
   private static func hex(_ data: Data) -> String {
     data.map { String(format: "%02x", $0) }.joined()
+  }
+}
+
+// MARK: - Network path (proactive reconnect, #76)
+
+extension RelayTransport {
+
+  /// Starts watching the OS network path; a transition back to a usable path
+  /// reconnects any relay that's currently down.
+  func startPathMonitor() {
+    pathMonitor.pathUpdateHandler = { [weak self] path in
+      let available = path.status == .satisfied
+      Task { @MainActor in self?.handlePathChange(available: available) }
+    }
+    pathMonitor.start(queue: DispatchQueue(label: "com.isaiah-harville.Pigeon.relay.path"))
+  }
+
+  private func handlePathChange(available: Bool) {
+    defer { networkAvailable = available }
+    // Act only on the down→up transition; an interface change while already
+    // online doesn't warrant tearing healthy sockets down.
+    guard available, !networkAvailable else { return }
+    reconnectStalled()
+  }
+
+  /// Immediately restarts the supervise loop for every relay that isn't currently
+  /// connected, so a returning network reconnects now instead of after backoff.
+  /// Healthy connections are left untouched. Keys are snapshotted first so the
+  /// dictionary isn't mutated mid-iteration.
+  private func reconnectStalled() {
+    let stalled = connections.filter { !$0.value.ready }.map { ($0.key, $0.value.authenticate) }
+    guard !stalled.isEmpty else { return }
+    for (url, authenticate) in stalled {
+      connections[url]?.task?.cancel()
+      connections[url]?.socket?.cancel(with: .goingAway, reason: nil)
+      let fresh = Connection(authenticate: authenticate)
+      connections[url] = fresh
+      fresh.task = Task { [weak self] in await self?.supervise(url) }
+    }
+    note("Network restored; reconnecting \(stalled.count) relay(s)")
   }
 }
 
