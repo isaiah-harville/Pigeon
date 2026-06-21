@@ -80,7 +80,9 @@ final class SessionManager {
 
   /// Locked until the vault is unlocked with Face ID / Touch ID.
   private(set) var isUnlocked = false
-  var store: EncryptedStore?
+  /// Owns the encrypted store and the codec between the live state and disk
+  /// (including building the bound Olm account). See `SessionPersistence`.
+  let persistence = SessionPersistence()
 
   /// Configured relay endpoints, mirrored here so the value is observable —
   /// changing it refreshes anything that depends on it (e.g. the QR card, which
@@ -133,48 +135,16 @@ final class SessionManager {
   /// Attaches the encrypted store after unlock: load persisted state and begin
   /// establishing sessions for known contacts.
   func attachStore(_ store: EncryptedStore) {
-    self.store = store
-    let state = store.load()
-
-    // Build (or restore) the Olm account bound to our long-term Ed25519 identity.
-    // First launch: a fresh Olm account under the existing identity; thereafter:
-    // import the persisted pickle so the published fallback prekey is stable.
-    let seed = identity.identitySeed
-    if let pickle = state.olmAccountPickle, let fallback = state.olmFallbackKey,
-      let restored = try? PigeonAccount.`import`(
-        seed: seed, olmPickle: pickle, fallbackKey: fallback)
-    {
-      account = restored
-    } else {
-      account = try? PigeonAccount.fromIdentitySeed(seed: seed)
-    }
-
-    contacts = state.contacts.compactMap { persisted in
-      // Decoding a PigeonIdentityBundle verifies its binding signature; an
-      // invalid one yields nil and the contact is dropped.
-      guard let bundle = try? PigeonIdentityBundle(decoding: persisted.bundle) else {
-        return nil
-      }
-      // Honour a stored prekey bundle only if it verifies and is bound to this
-      // identity (the same guard the QR scanner applies).
-      let prekeyBundle = persisted.prekeyBundle
-        .flatMap { try? PigeonPrekeyBundle(decoding: $0) }
-        .flatMap { $0.identityKey == bundle.identityKey ? $0 : nil }
-      return Contact(
-        bundle: bundle, displayName: persisted.name,
-        relayURLs: persisted.relayURLs.compactMap { URL(string: $0) },
-        preferredRelayURL: persisted.preferredRelayURL.flatMap { URL(string: $0) },
-        prekeyBundle: prekeyBundle,
-        verifiedInPerson: persisted.verifiedInPerson)
-    }
-    var loaded: [Data: [ChatMessage]] = [:]
-    for (key, messages) in state.conversations {
-      if let id = Data(base64Encoded: key) { loaded[id] = messages }
-    }
-    conversationStore.load(loaded)  // in-memory view starts from what's on disk
-    ephemeralContactIDs = Set(state.ephemeralContactIDs.compactMap { Data(base64Encoded: $0) })
-    bluetoothChatIDs = Set(state.bluetoothContactIDs.compactMap { Data(base64Encoded: $0) })
-    myName = state.myName
+    // Decode persisted state and (re)build the bound Olm account off the identity
+    // seed. The codec/account logic lives in `SessionPersistence`; here we just
+    // apply the result to the live state and run the post-unlock orchestration.
+    let loaded = persistence.attach(store, identitySeed: identity.identitySeed)
+    account = loaded.account
+    contacts = loaded.contacts
+    conversationStore.load(loaded.conversations)  // in-memory view starts from disk
+    ephemeralContactIDs = loaded.ephemeralContactIDs
+    bluetoothChatIDs = loaded.bluetoothChatIDs
+    myName = loaded.myName
     isUnlocked = true
     lockedInbox.reset()
     refreshRelay()  // pick up loaded contacts' relays

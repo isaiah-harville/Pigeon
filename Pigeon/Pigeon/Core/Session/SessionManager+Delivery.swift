@@ -103,36 +103,19 @@ extension SessionManager {
     persist()
   }
 
-  /// Writes contacts, the on-disk conversation mirror, and ephemeral flags to
-  /// the encrypted store (no-op before unlock).
+  /// Snapshots the live state (contacts, conversation mirror, ephemeral/Bluetooth
+  /// flags, Olm account) and hands it to `SessionPersistence` to seal at rest.
+  /// No-op before unlock; the store handle inside `persistence` is the second
+  /// guard once attached.
   func persist() {
-    guard let store, isUnlocked else { return }
-    let persistedContacts = contacts.map { contact in
-      PersistedContact(
-        name: contact.displayName, bundle: contact.bundle.encoded,
-        relayURLs: contact.relayURLs.map(\.absoluteString),
-        preferredRelayURL: contact.preferredRelayURL?.absoluteString,
-        prekeyBundle: contact.prekeyBundle?.encoded,
-        verifiedInPerson: contact.verifiedInPerson)
-    }
-    var conversationsByKey: [String: [ChatMessage]] = [:]
-    for (id, messages) in conversationStore.persistedConversations {
-      conversationsByKey[id.base64EncodedString()] = messages
-    }
-    // Re-seal the Olm account alongside the rest of the state. Inbound
-    // establishment and prekey rotation/replenish mutate the account, so its
-    // pickle is exported on every persist; the fallback public key rides along
-    // because Olm can't report it again after publishing.
-    let olmPickle = account.flatMap { try? $0.exportOlmPickle() }
-    let olmFallbackKey = account?.exportFallbackKey()
-    store.save(
-      PersistedState(
-        contacts: persistedContacts,
-        conversations: conversationsByKey,
-        ephemeralContactIDs: ephemeralContactIDs.map { $0.base64EncodedString() },
-        bluetoothContactIDs: bluetoothChatIDs.map { $0.base64EncodedString() },
+    guard isUnlocked else { return }
+    persistence.save(
+      SessionPersistence.Snapshot(
+        contacts: contacts,
+        conversations: conversationStore.persistedConversations,
+        ephemeralContactIDs: ephemeralContactIDs,
+        bluetoothChatIDs: bluetoothChatIDs,
         myName: myName,
-        olmAccountPickle: olmPickle,
-        olmFallbackKey: olmFallbackKey))
+        account: account))
   }
 }
