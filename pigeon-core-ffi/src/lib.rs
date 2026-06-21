@@ -22,6 +22,10 @@ use vodozemac::olm::AccountPickle;
 
 uniffi::setup_scaffolding!();
 
+/// The transport-agnostic mesh surface (framing, fragmentation, routing,
+/// envelope), wrapping `pigeon-mesh`. Carries opaque bytes only — no crypto.
+mod mesh;
+
 /// Everything the FFI can fail with. Mirrors [`pigeon_core::Error`] plus the
 /// (de)serialization the FFI seam owns. Authentication-style failures are
 /// surfaced as hard errors — never papered over — matching pigeon-core.

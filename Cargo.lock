@@ -927,6 +927,7 @@ name = "pigeon-core-ffi"
 version = "0.1.0"
 dependencies = [
  "pigeon-core",
+ "pigeon-mesh",
  "serde_json",
  "uniffi",
  "vodozemac",
