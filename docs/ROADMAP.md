@@ -31,23 +31,18 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
   ephemeral (no-persistence) mode.
 - **Identity:** on-device Curve25519 keypair (no accounts/phone numbers); public
   key fingerprint is the address; trust via in-person QR exchange + safety number.
-- **Mesh implementation language (#83, 2026-06-20):** `PigeonMesh`
-  (framing/dedup/fragmentation/routing) stays **Swift**, not ported to Rust. It
-  carries opaque ciphertext and holds no crypto, so the multiplatform-core
-  rationale (shared audited crypto, protocol compatibility) doesn't apply;
-  porting would add an FFI hot path and stateful FFI objects for negligible gain
-  while iOS is the only client. Cross-platform interop is guaranteed by the
-  documented fixed-layout wire headers + shared test vectors, not by sharing the
-  implementation. Revisit only when a second native client is actually built —
-  and then as a `pigeon-mesh` crate, keeping the tiny fixed headers (not
-  protobuf, whose framing overhead is wasteful on small BLE MTUs).
+- **Mesh:** the transport layer (framing, dedup/TTL flood routing, BLE
+  fragmentation, session envelope) is the shared Rust `pigeon-mesh` crate,
+  reached from the app through the same FFI bridge as `pigeon-core`. It carries
+  opaque ciphertext and holds no crypto, and keeps tiny fixed-width wire headers
+  (not protobuf) so it fits small BLE MTUs and every client shares one format.
 
 ## Module layout
 
 - `PigeonCrypto/` — package: Primitives, DoubleRatchet, NoiseHandshake,
   SecureSession, IdentityBundle, SecretBox (identity-agnostic, CLI-tested).
-- `PigeonMesh/` — package: Fragmentation, MeshPacket (dedup/TTL/relay),
-  SessionEnvelope (dependency-free, CLI-tested).
+- `pigeon-mesh/` — Rust crate: Fragmentation, MeshPacket (dedup/TTL/relay),
+  SessionEnvelope (dependency-free, surfaced through the FFI).
 - `Pigeon/` (app) — Identity (Keychain), CoreBluetooth transport, MeshService,
   SessionManager, encrypted storage, notifications, and SwiftUI. Links both packages.
 

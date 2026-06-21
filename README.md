@@ -54,10 +54,11 @@ concurrently):
   `pigeon.wire.v1` protobuf wire format. The cross-platform messaging core.
 - `pigeon-core-ffi/` - UniFFI bridge crate; `build-xcframework.sh` builds the
   Apple XCFramework and generates the Swift bindings the app links.
+- `pigeon-mesh/` - standalone Rust crate for fragmentation, mesh packets,
+  deduplication, TTL, and session envelopes; carries opaque ciphertext only.
 - `PigeonCore/` - Swift package wrapping that XCFramework (a `binaryTarget` plus
-  a thin Swift facade); this is what the iOS app links for messaging crypto.
-- `PigeonMesh/` - standalone Swift package for fragmentation, mesh packets,
-  deduplication, TTL, and session envelopes.
+  a thin Swift facade); this is what the iOS app links for messaging crypto and
+  mesh.
 - `pigeon-relay/` - Rust zero-knowledge relay server.
 - `docs/` - MkDocs source for design, security, roadmap, and API docs.
 
@@ -65,10 +66,10 @@ concurrently):
 
 ```sh
 cargo test --manifest-path pigeon-core/Cargo.toml
+cargo test --manifest-path pigeon-mesh/Cargo.toml
 cargo test --manifest-path pigeon-core-ffi/Cargo.toml
 bash pigeon-core-ffi/build-xcframework.sh   # regenerate bindings + XCFramework
 swift test --package-path PigeonCore
-swift test --package-path PigeonMesh
 xcodebuild -list -project Pigeon/Pigeon.xcodeproj
 xcodebuild build -project Pigeon/Pigeon.xcodeproj -scheme Pigeon -destination 'generic/platform=iOS'
 cargo test --manifest-path pigeon-relay/Cargo.toml

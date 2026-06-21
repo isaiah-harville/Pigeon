@@ -28,7 +28,7 @@ under the source-available [LICENSE](LICENSE). It is not open source:
 commercial use, redistribution as an app, and App Store/TestFlight publication
 require permission from the Pigeon maintainers.
 
-The app links the `PigeonCore` package (the Rust `pigeon-core` messaging core,
-bridged via UniFFI and shipped as an XCFramework) and the Swift `PigeonMesh`
-package. `pigeon-core`, `PigeonMesh`, and `pigeon-relay` are AGPL-3.0-only so
-reusable messaging core code cannot be taken closed.
+The app links the `PigeonCore` package — the Rust `pigeon-core` messaging core
+and `pigeon-mesh` transport layer, both bridged via UniFFI and shipped as one
+XCFramework. `pigeon-core`, `pigeon-mesh`, and `pigeon-relay` are AGPL-3.0-only
+so reusable messaging-core code cannot be taken closed.

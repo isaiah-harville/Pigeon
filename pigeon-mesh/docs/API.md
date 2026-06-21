@@ -1,7 +1,7 @@
 # API Reference
 
 <p>
-  <a class="md-button md-button--primary" href="../../api/pigeon-relay/doc/pigeon_mesh/">Open pigeon-mesh rustdoc</a>
+  <a class="md-button md-button--primary" href="../../api/pigeon-mesh/doc/pigeon_mesh/">Open pigeon-mesh rustdoc</a>
 </p>
 
 The generated reference is built by the GitHub Pages workflow and copied into

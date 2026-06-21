@@ -11,5 +11,5 @@ The project is pre-release and not independently audited.
 
 - [How It Works](HOW_IT_WORKS.md) for a detailed explanation of Pigeon's privacy-first design.
 - [Security Model](SECURITY_MODEL.md) for the threat model and audit blockers.
-- [API Reference](API.md) for generated pigeon-core, PigeonMesh, and pigeon-relay
+- [API Reference](API.md) for generated pigeon-core, pigeon-mesh, and pigeon-relay
   API docs.
