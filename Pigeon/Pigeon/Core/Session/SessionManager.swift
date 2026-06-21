@@ -31,8 +31,6 @@ final class SessionManager {
   let relay: RelayTransport?
 
   var contacts: [Contact] = []
-  /// Identity ids of contacts with a fully established, verified session.
-  var establishedContactIDs: Set<Data> = []
   /// Conversation history and per-message edits (the in-memory view + disk mirror).
   let conversationStore = ConversationStore()
   /// Contacts whose chat is ephemeral — new messages are kept in memory only.
@@ -69,15 +67,10 @@ final class SessionManager {
   /// the persisted Olm pickle in `attachStore` (so it is `nil` until unlock),
   /// and re-sealed to the vault whenever it mutates.
   var account: PigeonAccount?
-  var sessions: [Data: PigeonSession] = [:]
-  /// The initiation envelope payload (`identity ‖ first Olm pre-key message`) we
-  /// sent per contact, retained so it can be resent until the peer drains it.
-  /// Cleared once the peer acks (proof it stood up the session).
-  var pendingInitiation: [Data: Data] = [:]
-  /// The last initiation payload we processed as responder, to ignore retransmits
-  /// (re-running `establishInbound` would build a second session); a *different*
-  /// payload signals a genuine peer restart and triggers a rebuild.
-  var lastInitiationIn: [Data: Data] = [:]
+
+  /// Per-contact Olm session state (sessions, established set, initiations),
+  /// surfaced through the facade in the extension below.
+  let sessionRegistry = SessionRegistry()
 
   /// Envelopes received while locked (we can't decrypt or persist yet), replayed
   /// once unlocked. See `LockedInbox`.
@@ -278,10 +271,7 @@ final class SessionManager {
   }
 
   func resetSession(for contactID: Data) {
-    sessions[contactID] = nil
-    pendingInitiation[contactID] = nil
-    lastInitiationIn[contactID] = nil
-    establishedContactIDs.remove(contactID)
+    sessionRegistry.reset(contactID)
   }
 
   // MARK: - Sending
@@ -322,4 +312,28 @@ final class SessionManager {
     sendEnvelope(.message, payload: ciphertext, to: contact)
   }
 
+}
+
+// MARK: - Session-state facade
+
+/// Stable property surface over `sessionRegistry`, so the establishment and
+/// messaging code is unchanged by the registry extraction. In an extension so it
+/// doesn't count against the coordinator's type-body length.
+extension SessionManager {
+  var sessions: [Data: PigeonSession] {
+    get { sessionRegistry.sessions }
+    set { sessionRegistry.sessions = newValue }
+  }
+  var establishedContactIDs: Set<Data> {
+    get { sessionRegistry.established }
+    set { sessionRegistry.established = newValue }
+  }
+  var pendingInitiation: [Data: Data] {
+    get { sessionRegistry.pendingInitiation }
+    set { sessionRegistry.pendingInitiation = newValue }
+  }
+  var lastInitiationIn: [Data: Data] {
+    get { sessionRegistry.lastInitiationIn }
+    set { sessionRegistry.lastInitiationIn = newValue }
+  }
 }
