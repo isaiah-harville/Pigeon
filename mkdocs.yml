@@ -44,7 +44,7 @@ markdown_extensions:
 nav:
   - Overview: index.md
   - Security Model: SECURITY_MODEL.md
-  - API Reference: API.md
+  - API Reference: api-reference.md
   - Pigeon iOS: "!include Pigeon/mkdocs.yml"
   - pigeon-core: "!include pigeon-core/mkdocs.yml"
   - pigeon-mesh: "!include pigeon-mesh/mkdocs.yml"
