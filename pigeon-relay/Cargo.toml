@@ -18,4 +18,4 @@ rand = "0.8"
 # APNs push gateway (official deployment only; runtime-gated via env). HTTP/2 to
 # APNs with an ES256 provider JWT signed by the app's `.p8` key.
 reqwest = { version = "0.12", default-features = false, features = ["http2", "rustls-tls"] }
-jsonwebtoken = "9"
+jsonwebtoken = "10"
