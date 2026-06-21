@@ -170,6 +170,20 @@ extension SessionManager {
     refreshRelay()
   }
 
+  /// Manually re-drives delivery to `contact`: (re)establish if needed and
+  /// resend every unacked message now, for when the user doesn't want to wait
+  /// for the next connectivity event (#82). Same work `flushOnConnectivity` does
+  /// per link-up, scoped to one chat and triggered from the pending-message
+  /// retry affordance.
+  func retryDelivery(to contact: Contact) {
+    if establishedContactIDs.contains(contact.id) {
+      sendPending(to: contact)
+    } else {
+      ensureEstablishing(contactID: contact.id)
+    }
+    note("Manual retry for \"\(contact.displayName)\"")
+  }
+
   /// Conversation history with `contact`.
   func messages(with contact: Contact) -> [ChatMessage] {
     conversations[contact.id] ?? []
