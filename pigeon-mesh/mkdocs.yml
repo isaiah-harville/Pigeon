@@ -1,4 +1,4 @@
-site_name: PigeonMesh
+site_name: pigeon-mesh
 docs_dir: docs
 nav:
   - Overview: index.md

@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		C0FFEE0000000000000000B3 /* PigeonMesh in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE0000000000000000B2 /* PigeonMesh */; };
 		C0FFEE0000000000000000C3 /* PigeonCore in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE0000000000000000C2 /* PigeonCore */; };
 		D1150000000000000000001D /* PigeonCore in Frameworks */ = {isa = PBXBuildFile; productRef = D1150000000000000000001C /* PigeonCore */; };
 /* End PBXBuildFile section */
@@ -58,7 +57,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				C0FFEE0000000000000000B3 /* PigeonMesh in Frameworks */,
 				C0FFEE0000000000000000C3 /* PigeonCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -112,7 +110,6 @@
 			);
 			name = Pigeon;
 			packageProductDependencies = (
-				C0FFEE0000000000000000B2 /* PigeonMesh */,
 				C0FFEE0000000000000000C2 /* PigeonCore */,
 			);
 			productName = Pigeon;
@@ -172,7 +169,6 @@
 			mainGroup = BFCCC6DC2FE0108E000F4D70;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				C0FFEE0000000000000000B1 /* XCLocalSwiftPackageReference "../PigeonMesh" */,
 				C0FFEE0000000000000000C1 /* XCLocalSwiftPackageReference "../PigeonCore" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -530,10 +526,6 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		C0FFEE0000000000000000B1 /* XCLocalSwiftPackageReference "../PigeonMesh" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../PigeonMesh;
-		};
 		C0FFEE0000000000000000C1 /* XCLocalSwiftPackageReference "../PigeonCore" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../PigeonCore;
@@ -541,10 +533,6 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		C0FFEE0000000000000000B2 /* PigeonMesh */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = PigeonMesh;
-		};
 		C0FFEE0000000000000000C2 /* PigeonCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = PigeonCore;

@@ -47,5 +47,5 @@ nav:
   - API Reference: API.md
   - Pigeon iOS: "!include Pigeon/mkdocs.yml"
   - pigeon-core: "!include pigeon-core/mkdocs.yml"
-  - PigeonMesh: "!include PigeonMesh/mkdocs.yml"
+  - pigeon-mesh: "!include pigeon-mesh/mkdocs.yml"
   - pigeon-relay: "!include pigeon-relay/mkdocs.yml"
