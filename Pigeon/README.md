@@ -1,4 +1,4 @@
-# Pigeon App
+# Pigeon iOS
 
 The `Pigeon/` directory contains the iOS SwiftUI app and Xcode project.
 

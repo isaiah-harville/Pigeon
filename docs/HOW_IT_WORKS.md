@@ -1,14 +1,9 @@
 # How Pigeon Works
 
-This is a thorough, plain-language tour of how Pigeon keeps your messages private.
-It's written for curious people who are **smart but new to cryptography**: every
-term is defined the first time it appears, intuition comes first, and then the
-*actual* mechanism — named primitives and all — follows. Where a claim rests on
-real cryptography that you might want to verify, it's **cited**; full sources are
-in [References](#references).
+This is a thorough tour of how Pigeon keeps your messages private.
 
 For the precise, audit-oriented treatment, read the
-[Security Model](SECURITY_MODEL.md). This is the long, friendly version.
+[Security Model](SECURITY_MODEL.md).
 
 ---
 

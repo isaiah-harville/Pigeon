@@ -43,12 +43,9 @@ markdown_extensions:
 
 nav:
   - Overview: index.md
-  - How It Works: HOW_IT_WORKS.md
   - Security Model: SECURITY_MODEL.md
-  - Roadmap: ROADMAP.md
-  - Apple Export Compliance: APPLE_EXPORT_COMPLIANCE.md
   - API Reference: API.md
-  - Contributing: CONTRIBUTING.md
-  - Pigeon App: "!include Pigeon/mkdocs.yml"
+  - Pigeon iOS: "!include Pigeon/mkdocs.yml"
+  - pigeon-core: "!include pigeon-core/mkdocs.yml"
   - PigeonMesh: "!include PigeonMesh/mkdocs.yml"
   - pigeon-relay: "!include pigeon-relay/mkdocs.yml"

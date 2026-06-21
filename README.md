@@ -1,6 +1,6 @@
 # Pigeon
 
-Pigeon is an end-to-end encrypted mesh messaging app for iOS.
+Pigeon is an end-to-end encrypted mesh messaging framework for federated servers.
 
 Pigeon's goal is extreme privacy and security across multiple delivery methods.
 Peers can exchange messages locally over a Bluetooth Low Energy mesh (with local

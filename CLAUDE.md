@@ -57,6 +57,22 @@ follow-ups (#82–#83).
 - `pigeon-relay/` is the Rust (axum/tokio) zero-knowledge relay server; ships as a
   Docker image. See the Remote Delivery section below.
 
+
+## vodozemac 0.10 API facts (save future spelunking)
+
+- `SessionConfig::version_2()` does **not** exist — use `SessionConfig::default()` (both sides).
+- `Session::encrypt` returns `Result<OlmMessage, EncryptionError>`; `decrypt(&OlmMessage)`.
+- `Curve25519PublicKey::from_bytes([u8;32])` is **infallible**.
+- `fallback_key()` / `one_time_keys()` return only **unpublished** keys (empty after
+  `mark_keys_as_published()` and after a pickle round-trip) — that's why `Account` stores
+  the fallback public bytes itself and `import()` takes them.
+- ed25519-dalek 2.x: `SigningKey::from_bytes(&[u8;32])`, `verify_strict`. Used `getrandom`
+  (not `rand`) for the seed to dodge the rand_core version skew.
+- Olm message wire encoding lives in `pigeon-core/src/wire.rs`
+  (`encode_olm_message`/`decode_olm_message`, `Initiation::encode/decode`); the
+  FFI just calls `.encode()`/`.decode()` — no hand-rolled bytes in the FFI.
+
+
 ### Repository map (where things live)
 
 App `Core/`:
