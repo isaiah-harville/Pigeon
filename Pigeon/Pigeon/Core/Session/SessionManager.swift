@@ -55,9 +55,6 @@ final class SessionManager {
   /// The chat currently on screen (its notifications are suppressed while active).
   var activeChatID: Data?
   var isAppActive = true
-  /// Whether we've already posted the "you have messages, unlock" notification
-  /// during the current locked session (reset on unlock).
-  var notifiedWhileLocked = false
 
   func setAppActive(_ active: Bool) { isAppActive = active }
   func dismissBanner() { banner = nil }
@@ -85,11 +82,9 @@ final class SessionManager {
   /// The on-disk mirror of conversations (excludes ephemeral-era messages).
   var persistedConversations: [Data: [ChatMessage]] = [:]
 
-  /// Envelopes received while locked (we can't decrypt or persist yet). Held in
-  /// memory only — never written to disk — and replayed once unlocked. The relay
-  /// also retains its copies (we don't ack while locked), so nothing is lost if
-  /// we're killed before unlock. Bounded to blunt flooding.
-  var lockedInbox: [(data: Data, channel: TransportChannel)] = []
+  /// Envelopes received while locked (we can't decrypt or persist yet), replayed
+  /// once unlocked. See `LockedInbox`.
+  var lockedInbox = LockedInbox()
 
   var myID: Data { identity.publicKey.rawRepresentation }
 
@@ -192,7 +187,7 @@ final class SessionManager {
     bluetoothChatIDs = Set(state.bluetoothContactIDs.compactMap { Data(base64Encoded: $0) })
     myName = state.myName
     isUnlocked = true
-    notifiedWhileLocked = false
+    lockedInbox.reset()
     refreshRelay()  // pick up loaded contacts' relays
     for contact in contacts { ensureEstablishing(contactID: contact.id) }
     drainLockedInbox()  // process anything that arrived while locked

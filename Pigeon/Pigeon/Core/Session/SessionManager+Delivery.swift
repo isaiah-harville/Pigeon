@@ -46,30 +46,17 @@ extension SessionManager {
 
   // MARK: - Locked receipt
 
-  /// Upper bound on envelopes buffered while locked (memory only).
-  private static let maxLockedInbox = 256
-
   /// Buffers an envelope received while locked and prompts the user to unlock.
   /// The notification is content-free and fires once per locked session
-  /// (coalesced) so a flood of deposits can't spam notifications.
+  /// (coalesced by `LockedInbox`) so a flood of deposits can't spam notifications.
   func bufferWhileLocked(_ data: Data, channel: TransportChannel) {
-    lockedInbox.append((data, channel))
-    if lockedInbox.count > Self.maxLockedInbox {
-      lockedInbox.removeFirst(lockedInbox.count - Self.maxLockedInbox)
-    }
-    if !notifiedWhileLocked {
-      notifiedWhileLocked = true
-      onIncomingNotification?()
-    }
+    if lockedInbox.buffer(data, channel: channel) { onIncomingNotification?() }
   }
 
   /// Replays envelopes buffered while locked, now that we can decrypt and
   /// persist. Called from `attachStore` once the vault is open.
   func drainLockedInbox() {
-    guard !lockedInbox.isEmpty else { return }
-    let buffered = lockedInbox
-    lockedInbox.removeAll()
-    for (data, channel) in buffered { handleInbound(data, channel: channel) }
+    for entry in lockedInbox.drain() { handleInbound(entry.data, channel: entry.channel) }
   }
 
   // MARK: - Store-and-forward
