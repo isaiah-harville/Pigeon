@@ -50,6 +50,9 @@ final class RelayTransport: Transport {
   var status: TransportStatus { .idle }
   var connectedPeerCount: Int { 0 }
   var onMessage: ((_ message: Data, _ peerID: String) -> Void)?
+  /// Fired when a relay connection comes up (we can publish to it now), so the
+  /// session layer flushes pending work on the event rather than on a timer (#82).
+  var onConnectivity: (() -> Void)?
 
   /// Our own mailbox address: lowercase hex of our Ed25519 identity public key.
   private let mailboxHex: String
@@ -221,6 +224,7 @@ final class RelayTransport: Transport {
     connection.ready = true
     note("Relay \(host(url)) \(connection.authenticate ? "online" : "ready")")
     refreshLinkState()
+    onConnectivity?()  // can publish to this relay now — flush pending work
 
     // Heartbeat alongside the blocking receive loop: a half-open socket (network
     // dropped and returned without a clean close) otherwise stays "ready" forever

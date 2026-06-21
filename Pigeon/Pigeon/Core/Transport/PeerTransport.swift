@@ -37,6 +37,10 @@ final class PeerTransport: NSObject, Transport {
 
   /// Invoked with each fully reassembled inbound message and its source id.
   var onMessage: ((_ message: Data, _ peerID: String) -> Void)?
+  /// Fired when a peer link becomes usable for sending (a write channel is
+  /// discovered, or a central subscribes), so the session layer flushes pending
+  /// work on the event rather than on a timer (#82).
+  var onConnectivity: (() -> Void)?
 
   @ObservationIgnored private var centralRef: CBCentralManager?
   @ObservationIgnored private var peripheralManagerRef: CBPeripheralManager?
@@ -312,6 +316,7 @@ extension PeerTransport: CBPeripheralDelegate {
       case BluetoothConstants.inbound:
         inboundCharacteristics[peripheral.identifier] = characteristic
         note("Found write channel for \(peripheral.identifier.uuidString.prefix(8))")
+        onConnectivity?()  // can write to this peer now — flush pending work
       case BluetoothConstants.outbound:
         peripheral.setNotifyValue(true, for: characteristic)  // receive peer → us
         note("Subscribed to \(peripheral.identifier.uuidString.prefix(8))")
@@ -406,6 +411,7 @@ extension PeerTransport: CBPeripheralManagerDelegate {
       subscribedCentrals.append(central)
     }
     note("Central \(central.identifier.uuidString.prefix(8)) subscribed")
+    onConnectivity?()  // can notify this central now — flush pending work
   }
 
   func peripheralManager(

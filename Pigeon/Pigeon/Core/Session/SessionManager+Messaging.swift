@@ -74,6 +74,9 @@ extension SessionManager {
     if let ack = try? inbound.session.encrypt(plaintext: Self.establishmentAck) {
       sendEnvelope(.ack, payload: ack, to: contact)
     }
+    // Session-established event (#82): flush anything we queued while waiting for
+    // the initiation, now that we can encrypt to this contact.
+    sendPending(to: contact)
   }
 
   func handleMessage(_ payload: Data, from contact: Contact, channel: TransportChannel) {
@@ -171,6 +174,12 @@ extension SessionManager {
       record(ChatMessage(mine: false, text: text, system: true), for: contactID)
     }
     persist()
+    // Transport-switched event (#82): resend unacked messages over the link this
+    // chat now uses, so a switch flushes pending immediately (replacing the
+    // timer's eventual retry). `sendPending` no-ops until the session exists.
+    if changed, let contact = contacts.first(where: { $0.id == contactID }) {
+      sendPending(to: contact)
+    }
   }
 
   /// Sends our current transport choice for this chat to the peer (encrypted).

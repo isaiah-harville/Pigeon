@@ -13,56 +13,24 @@ import PigeonMesh
 
 extension SessionManager {
 
-  // MARK: - Retry
+  // MARK: - Connectivity-driven delivery (#82)
 
-  func startRetryLoop() {
-    retryTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
-      guard let self else { return }
-      Task { @MainActor in self.tick() }
-    }
-  }
-
-  func tick() {
-    let now = Date()
+  /// Re-drives every contact when a link comes up: (re)establish stalled sessions
+  /// and flush unacked messages. This is the event-driven replacement for the old
+  /// 3s polling timer. It fires only on concrete connectivity events (a peer
+  /// connects, a relay authenticates) — not on a clock — so a peer that stays
+  /// offline no longer makes us re-encrypt on a cadence and outrun the ratchet's
+  /// skip limit. That makes the per-contact resend backoff stopgap unnecessary;
+  /// the relay still retains each deposited copy, so a later reconnect delivers.
+  func flushOnConnectivity() {
+    guard isUnlocked else { return }  // can't decrypt/sign or read contacts yet
     for contact in contacts {
       if establishedContactIDs.contains(contact.id) {
-        resendPendingIfDue(to: contact, now: now)
+        sendPending(to: contact)
       } else {
         ensureEstablishing(contactID: contact.id)
       }
     }
-  }
-
-  /// Retries unacked messages to one contact on a per-contact exponential
-  /// backoff. New sends and (re)establishment flush immediately by calling
-  /// `sendPending` directly; only these timed retries back off, so a peer that
-  /// stays offline for a long time doesn't make us re-encrypt every 3s (which
-  /// advances the ratchet and could outrun its skip limit). The relay retains
-  /// each deposited copy, so backing off the resend never costs delivery.
-  private func resendPendingIfDue(to contact: Contact, now: Date) {
-    let hasPending = conversations[contact.id]?.contains { $0.mine && $0.pending } ?? false
-    guard hasPending else {
-      resendGate[contact.id] = nil  // queue drained; the next message sends at once
-      return
-    }
-    if let gate = resendGate[contact.id], now < gate.nextAttempt { return }
-    sendPending(to: contact)
-    let step = (resendGate[contact.id]?.step ?? 0) + 1
-    resendGate[contact.id] = ResendGate(
-      nextAttempt: now.addingTimeInterval(Self.resendBackoff(step: step)), step: step)
-  }
-
-  /// Exponential backoff (seconds) for the Nth consecutive retry, capped so a
-  /// reconnect is still noticed within a bounded delay: 3, 6, 12, 24, 45, 45…
-  static func resendBackoff(step: Int) -> TimeInterval {
-    let factor = Double(1 << min(max(step - 1, 0), 8))
-    return min(3 * factor, 45)
-  }
-
-  /// Per-contact retry backoff state (see `resendGate`).
-  struct ResendGate {
-    var nextAttempt: Date
-    var step: Int
   }
 
   /// Drives (re)establishment for one contact according to our role: the

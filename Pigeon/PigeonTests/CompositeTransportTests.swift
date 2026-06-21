@@ -22,6 +22,7 @@ final class CompositeTransportTests: XCTestCase {
     var connectedPeerCount = 0
     var log: [String] = []
     var onMessage: ((Data, String) -> Void)?
+    var onConnectivity: (() -> Void)?
     private(set) var sent: [Data] = []
     private(set) var refreshCount = 0
 
@@ -83,5 +84,22 @@ final class CompositeTransportTests: XCTestCase {
 
     XCTAssertEqual(ble.refreshCount, 1)
     XCTAssertEqual(relay.refreshCount, 1)
+  }
+
+  /// Event-driven delivery (#82): a child link coming up must surface to the
+  /// composite's consumer, so the session layer can flush pending work without
+  /// polling. Either link firing should reach the single handler.
+  func testConnectivityFromAnyLinkReachesConsumer() {
+    let ble = FakeTransport(kind: .bluetooth)
+    let relay = FakeTransport(kind: .relay)
+    let composite = CompositeTransport([ble, relay])
+
+    var fired = 0
+    composite.onConnectivity = { fired += 1 }
+
+    ble.onConnectivity?()
+    relay.onConnectivity?()
+
+    XCTAssertEqual(fired, 2)
   }
 }

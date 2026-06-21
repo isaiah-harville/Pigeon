@@ -17,8 +17,9 @@ import PigeonMesh
 /// Role assignment is deterministic so both ends agree without negotiation:
 /// the device whose identity key sorts first is the **initiator** (it opens the
 /// Olm session against the peer's published prekey), the other is the
-/// **responder**. A periodic retry re-drives stalled establishment, since either
-/// device may add the contact (scan the QR) at a different moment.
+/// **responder**. Establishment and pending sends are re-driven by concrete
+/// connectivity events (a link coming up — #82), since either device may add the
+/// contact (scan the QR) or come online at a different moment.
 @MainActor
 @Observable
 final class SessionManager {
@@ -83,13 +84,6 @@ final class SessionManager {
   var lastInitiationIn: [Data: Data] = [:]
   /// The on-disk mirror of conversations (excludes ephemeral-era messages).
   var persistedConversations: [Data: [ChatMessage]] = [:]
-  var retryTimer: Timer?
-  /// Per-contact backoff gating *retries* of unacked messages. Each retry
-  /// re-encrypts (advancing the ratchet), so retrying every tick while a peer is
-  /// offline could, over a long outage, outrun the ratchet's skip limit. New
-  /// sends and (re)establishment still flush immediately; only timed retries back
-  /// off. Cleared when the queue drains or the session is reset.
-  var resendGate: [Data: ResendGate] = [:]
 
   /// Envelopes received while locked (we can't decrypt or persist yet). Held in
   /// memory only — never written to disk — and replayed once unlocked. The relay
@@ -146,7 +140,9 @@ final class SessionManager {
     self.mesh.onMessage = { [weak self] data, channel in
       self?.handleInbound(data, channel: channel)
     }
-    startRetryLoop()
+    // Event-driven delivery (#82): a link coming up re-drives establishment and
+    // flushes pending sends, replacing the old 3s polling timer.
+    self.mesh.onConnectivity = { [weak self] in self?.flushOnConnectivity() }
   }
 
   /// Attaches the encrypted store after unlock: load persisted state and begin
@@ -294,15 +290,15 @@ final class SessionManager {
     sessions[contactID] = nil
     pendingInitiation[contactID] = nil
     lastInitiationIn[contactID] = nil
-    resendGate[contactID] = nil  // a fresh session should flush pending promptly
     establishedContactIDs.remove(contactID)
   }
 
   // MARK: - Sending
 
   /// Sends `text` to `contact`. The message stays *pending* until the peer
-  /// acknowledges it; it is (re)sent on each tick while a session exists and
-  /// queued otherwise, so it is never silently dropped on a disconnect.
+  /// acknowledges it; it is sent at once when a session exists and queued
+  /// otherwise, then resent on the next connectivity event (#82), so it is never
+  /// silently dropped on a disconnect.
   func send(_ text: String, to contact: Contact) {
     send(text, replySnippet: nil, to: contact)
   }

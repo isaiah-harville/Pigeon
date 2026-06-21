@@ -22,14 +22,15 @@ extension SessionManager {
   var relayHosts: [String] { relay?.onlineRelayHosts ?? [] }
 
   /// Pull-to-refresh recovery for the chats screen: restart link discovery /
-  /// relay sockets, then immediately drive handshakes and pending sends instead
-  /// of waiting for the retry timer's next tick.
+  /// relay sockets, then immediately drive handshakes and pending sends. The
+  /// reconnect itself fires a connectivity event, but we also flush directly so
+  /// the refresh acts even when no link state actually changed.
   func refreshChats() async {
     note("Refreshing chats")
     mesh.refreshConnections()
-    tick()
+    flushOnConnectivity()
     try? await Task.sleep(for: .milliseconds(350))
-    tick()
+    flushOnConnectivity()
   }
 
   /// Whether a relay is configured at all, so the UI can offer the relay option.

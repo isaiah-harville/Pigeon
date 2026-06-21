@@ -28,6 +28,14 @@ final class CompositeTransport: Transport {
     }
   }
 
+  var onConnectivity: (() -> Void)? {
+    didSet {
+      for transport in transports {
+        transport.onConnectivity = onConnectivity
+      }
+    }
+  }
+
   func broadcast(_ message: Data, to recipient: Data?) {
     broadcast(message, to: recipient, over: TransportKind.all)
   }
