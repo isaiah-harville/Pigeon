@@ -100,22 +100,9 @@ extension SessionManager {
     received.transport = channel
     record(received, for: contact.id)
 
-    // Surface a notification unless the user is actively viewing this chat.
-    guard !(isAppActive && activeChatID == contact.id) else { return }
-    if isAppActive {
-      showBanner(title: contact.displayName, body: received.text)
-    } else {
-      onIncomingNotification?()  // local notification while backgrounded
-    }
-  }
-
-  func showBanner(title: String, body: String) {
-    let banner = InAppBanner(title: title, body: body)
-    self.banner = banner
-    Task {
-      try? await Task.sleep(for: .seconds(3))
-      if self.banner == banner { self.banner = nil }
-    }
+    // Surface a banner/notification unless the user is actively viewing this chat.
+    presenter.notifyIncoming(
+      contactID: contact.id, title: contact.displayName, body: received.text)
   }
 
   func sendAck(messageID: UUID, to contact: Contact) {

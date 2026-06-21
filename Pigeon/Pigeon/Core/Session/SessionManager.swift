@@ -46,24 +46,23 @@ final class SessionManager {
   var myName: String = ""
   var log: [String] = []
 
-  /// Called to surface a local notification when a message arrives while the
-  /// app is backgrounded.
-  var onIncomingNotification: (() -> Void)?
-  /// A transient in-app banner shown when a message arrives in the foreground
-  /// and the user isn't already viewing that chat.
-  var banner: InAppBanner?
-  /// The chat currently on screen (its notifications are suppressed while active).
-  var activeChatID: Data?
-  var isAppActive = true
+  /// Banners, the backgrounded-notification hook, and active-chat bookkeeping.
+  let presenter = ChatPresenter()
 
-  func setAppActive(_ active: Bool) { isAppActive = active }
-  func dismissBanner() { banner = nil }
-
-  struct InAppBanner: Equatable, Identifiable {
-    let id = UUID()
-    let title: String
-    let body: String
+  // Facade passthroughs so the app/views keep a stable surface over `presenter`.
+  typealias InAppBanner = ChatPresenter.InAppBanner
+  var banner: InAppBanner? { presenter.banner }
+  var isAppActive: Bool { presenter.isAppActive }
+  var activeChatID: Data? {
+    get { presenter.activeChatID }
+    set { presenter.activeChatID = newValue }
   }
+  var onIncomingNotification: (() -> Void)? {
+    get { presenter.onIncomingNotification }
+    set { presenter.onIncomingNotification = newValue }
+  }
+  func setAppActive(_ active: Bool) { presenter.setAppActive(active) }
+  func dismissBanner() { presenter.dismissBanner() }
 
   /// This device's Olm account (Ed25519 identity + Olm keys), bound to the
   /// long-term identity in `IdentityManager`. Built from the identity seed plus

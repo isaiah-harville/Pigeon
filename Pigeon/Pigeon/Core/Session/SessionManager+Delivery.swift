@@ -50,7 +50,7 @@ extension SessionManager {
   /// The notification is content-free and fires once per locked session
   /// (coalesced by `LockedInbox`) so a flood of deposits can't spam notifications.
   func bufferWhileLocked(_ data: Data, channel: TransportChannel) {
-    if lockedInbox.buffer(data, channel: channel) { onIncomingNotification?() }
+    if lockedInbox.buffer(data, channel: channel) { presenter.notifyLocal() }
   }
 
   /// Replays envelopes buffered while locked, now that we can decrypt and
