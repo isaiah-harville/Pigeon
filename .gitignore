@@ -24,14 +24,14 @@ rustc-ice-*.txt
 
 # Swift
 
-## Rust FFI build artifacts produced by pigeon-core-ffi/build-xcframework.sh:
+## Rust FFI build artifacts produced by pigeon-ffi/build-xcframework.sh:
 ## the compiled XCFramework and generated Swift bindings. These are
-## regenerated from pigeon-core-ffi/src/lib.rs and proto/ rather than
+## regenerated from pigeon-ffi/src/lib.rs and proto/ rather than
 ## version-controlled — run that script (CI does too) before building the app or
-## the PigeonCore package. Hand-written Swift in PigeonCore/Sources/PigeonCore/
+## the PigeonFFI package. Hand-written Swift in Pigeon/PigeonFFI/Sources/PigeonFFI/
 ## IS tracked.
-PigeonCore/PigeonCoreFFI.xcframework/
-PigeonCore/Sources/PigeonCore/Generated/
+Pigeon/PigeonFFI/PigeonFFIBindings.xcframework/
+Pigeon/PigeonFFI/Sources/PigeonFFI/Generated/
 
 ## User settings
 xcuserdata/

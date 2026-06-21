@@ -6,7 +6,7 @@
 //
 
 import Foundation
-import PigeonCore
+import PigeonFFI
 
 /// A verified peer. The `bundle` carries their Ed25519 identity, Olm Curve25519
 /// identity key, and the signature binding them; decoding a `PigeonIdentityBundle`

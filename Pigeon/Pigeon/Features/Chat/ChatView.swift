@@ -17,7 +17,6 @@ struct ChatView: View {
   @State private var newName = ""
   @State private var replyTarget: ChatMessage?
 
-  private var isSecure: Bool { session.establishedContactIDs.contains(contact.id) }
   private var messages: [ChatMessage] { session.messages(with: contact) }
 
   var body: some View {
@@ -42,7 +41,7 @@ struct ChatView: View {
 
   private var chatLayout: some View {
     VStack(spacing: 0) {
-      statusBanner
+      ChatStatusBanner(contact: contact, showSafetyNumber: $showSafetyNumber)
       messagesScroll
       composer
       if session.hasRelay {
@@ -121,40 +120,6 @@ struct ChatView: View {
   }
 
   @ViewBuilder
-  private var statusBanner: some View {
-    VStack(spacing: 2) {
-      HStack(spacing: 6) {
-        Image(systemName: isSecure ? "lock.fill" : "lock.open")
-        Text(isSecure ? "End-to-end encrypted" : "Establishing secure session…")
-        Spacer()
-        if session.isEphemeral(contact) {
-          Label("Ephemeral", systemImage: "clock.arrow.circlepath")
-            .foregroundStyle(.orange)
-        }
-      }
-      .foregroundStyle(isSecure ? .green : .secondary)
-      if !session.isVerifiedInPerson(contact) {
-        Button {
-          showSafetyNumber = true
-        } label: {
-          HStack(spacing: 6) {
-            Image(systemName: "exclamationmark.shield.fill")
-            Text("Not verified in person — compare the safety number")
-            Spacer()
-          }
-          .foregroundStyle(.orange)
-        }
-        .buttonStyle(.plain)
-      }
-      ConnectionSummary(peers: session.connectedPeerCount, relayHosts: session.relayHosts)
-    }
-    .font(.footnote)
-    .padding(.horizontal)
-    .padding(.vertical, 6)
-    .background(.bar)
-  }
-
-  @ViewBuilder
   private func bubble(_ message: ChatMessage) -> some View {
     if message.system {
       ChatTimelineMarker(text: message.text, systemImage: ChatTimelineIcon.name(for: message.text))
@@ -185,9 +150,15 @@ struct ChatView: View {
         messageText(message)
         if message.mine {
           if message.pending {
-            Image(systemName: "clock")
-              .font(.caption2)
-              .foregroundStyle(.secondary)
+            Button {
+              session.retryDelivery(to: contact)
+            } label: {
+              Image(systemName: "clock")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Retry sending")
           }
         } else {
           Spacer(minLength: 48)
@@ -212,7 +183,9 @@ struct ChatView: View {
         MessageContextMenu(
           message: message,
           onReact: { session.toggleReaction($0, for: message, in: contact) },
-          onReply: { reply(to: message) })
+          onReply: { reply(to: message) },
+          onRetry: message.mine && message.pending
+            ? { session.retryDelivery(to: contact) } : nil)
       }
   }
 

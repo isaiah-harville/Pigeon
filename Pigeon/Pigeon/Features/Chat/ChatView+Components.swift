@@ -39,106 +39,6 @@ enum ChatTimelineIcon {
   }
 }
 
-/// A chat's current reachability: local Bluetooth peers and/or the relay (with
-/// its host), so users can see the path messages take (#15).
-struct ConnectionSummary: View {
-  let peers: Int
-  let relayHosts: [String]
-
-  var body: some View {
-    HStack(spacing: 6) {
-      Image(systemName: icon)
-      Text(text)
-      Spacer()
-    }
-    .font(.caption2)
-    .foregroundStyle(.secondary)
-  }
-
-  private var icon: String {
-    if peers > 0 { return "dot.radiowaves.left.and.right" }
-    if !relayHosts.isEmpty { return "globe" }
-    return "wifi.slash"
-  }
-
-  private var text: String {
-    var parts: [String] = []
-    if peers > 0 { parts.append("Bluetooth · \(peers) peer\(peers == 1 ? "" : "s")") }
-    if let host = relayHosts.first { parts.append("Relay · \(host)") }
-    return parts.isEmpty ? "Offline" : parts.joined(separator: "   ")
-  }
-}
-
-/// A thin pill above the composer to pick the chat's link. Relay is the default
-/// (we encourage relays); Bluetooth is the opt-in second option. Tap a segment
-/// or swipe to switch; the choice is mirrored to the peer (#24).
-struct TransportPill: View {
-  @Environment(SessionManager.self) private var session
-  let contact: Contact
-
-  var body: some View {
-    let bluetooth = session.usesBluetooth(contact)
-    HStack(spacing: 2) {
-      segment("Relay", "globe", selected: !bluetooth) {
-        session.setChatUsesBluetooth(false, for: contact)
-      }
-      segment("Bluetooth", "dot.radiowaves.left.and.right", selected: bluetooth) {
-        session.setChatUsesBluetooth(true, for: contact)
-      }
-    }
-    .padding(3)
-    .background(Capsule().fill(.fill.tertiary))
-    .padding(.horizontal)
-    .gesture(
-      DragGesture(minimumDistance: 24).onEnded { value in
-        session.setChatUsesBluetooth(value.translation.width > 0, for: contact)
-      }
-    )
-    .animation(.easeInOut(duration: 0.15), value: bluetooth)
-  }
-
-  private func segment(
-    _ title: String, _ symbol: String, selected: Bool, action: @escaping () -> Void
-  ) -> some View {
-    Button(action: action) {
-      Label(title, systemImage: symbol)
-        .font(.caption2.weight(.medium))
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 5)
-        .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
-        .background(
-          selected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.clear), in: Capsule())
-    }
-    .buttonStyle(.plain)
-  }
-}
-
-/// Lets the user pin a conversation to one of the contact's advertised relays,
-/// or leave it automatic; hidden when the contact advertises none (#18).
-struct RelayPicker: View {
-  @Environment(SessionManager.self) private var session
-  let contact: Contact
-
-  var body: some View {
-    let relays = session.advertisedRelays(for: contact)
-    if !relays.isEmpty {
-      Picker("Relay for this chat", selection: selection) {
-        Text("Automatic").tag(URL?.none)
-        ForEach(relays, id: \.self) { url in
-          Text(url.host ?? url.absoluteString).tag(URL?.some(url))
-        }
-      }
-    }
-  }
-
-  private var selection: Binding<URL?> {
-    Binding(
-      get: { session.preferredRelay(for: contact) },
-      set: { session.setPreferredRelay($0, for: contact) }
-    )
-  }
-}
-
 /// A message's timestamp under its bubble. The link it travelled over is kept
 /// off the bubble and surfaced on long-press instead (see `MessageDetailMenu`).
 struct MessageFooter: View {
@@ -233,6 +133,9 @@ struct MessageContextMenu: View {
   let message: ChatMessage
   let onReact: (String) -> Void
   let onReply: () -> Void
+  /// Present only for a still-pending message of our own, so the user can force
+  /// a resend now instead of waiting for the next connectivity event (#82).
+  var onRetry: (() -> Void)?
 
   private let quickReactions = ["👍", "❤️", "😂"]
 
@@ -242,6 +145,13 @@ struct MessageContextMenu: View {
         ForEach(quickReactions, id: \.self) { reaction in
           reactionButton(reaction)
         }
+      }
+    }
+    if let onRetry {
+      Button {
+        onRetry()
+      } label: {
+        Label("Retry now", systemImage: "arrow.clockwise")
       }
     }
     Button {

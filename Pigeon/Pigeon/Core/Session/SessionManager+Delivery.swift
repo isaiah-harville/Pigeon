@@ -8,61 +8,28 @@
 //
 
 import Foundation
-import PigeonCore
-import PigeonMesh
+import PigeonFFI
 
 extension SessionManager {
 
-  // MARK: - Retry
+  // MARK: - Connectivity-driven delivery (#82)
 
-  func startRetryLoop() {
-    retryTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
-      guard let self else { return }
-      Task { @MainActor in self.tick() }
-    }
-  }
-
-  func tick() {
-    let now = Date()
+  /// Re-drives every contact when a link comes up: (re)establish stalled sessions
+  /// and flush unacked messages. This is the event-driven replacement for the old
+  /// 3s polling timer. It fires only on concrete connectivity events (a peer
+  /// connects, a relay authenticates) — not on a clock — so a peer that stays
+  /// offline no longer makes us re-encrypt on a cadence and outrun the ratchet's
+  /// skip limit. That makes the per-contact resend backoff stopgap unnecessary;
+  /// the relay still retains each deposited copy, so a later reconnect delivers.
+  func flushOnConnectivity() {
+    guard isUnlocked else { return }  // can't decrypt/sign or read contacts yet
     for contact in contacts {
       if establishedContactIDs.contains(contact.id) {
-        resendPendingIfDue(to: contact, now: now)
+        sendPending(to: contact)
       } else {
         ensureEstablishing(contactID: contact.id)
       }
     }
-  }
-
-  /// Retries unacked messages to one contact on a per-contact exponential
-  /// backoff. New sends and (re)establishment flush immediately by calling
-  /// `sendPending` directly; only these timed retries back off, so a peer that
-  /// stays offline for a long time doesn't make us re-encrypt every 3s (which
-  /// advances the ratchet and could outrun its skip limit). The relay retains
-  /// each deposited copy, so backing off the resend never costs delivery.
-  private func resendPendingIfDue(to contact: Contact, now: Date) {
-    let hasPending = conversations[contact.id]?.contains { $0.mine && $0.pending } ?? false
-    guard hasPending else {
-      resendGate[contact.id] = nil  // queue drained; the next message sends at once
-      return
-    }
-    if let gate = resendGate[contact.id], now < gate.nextAttempt { return }
-    sendPending(to: contact)
-    let step = (resendGate[contact.id]?.step ?? 0) + 1
-    resendGate[contact.id] = ResendGate(
-      nextAttempt: now.addingTimeInterval(Self.resendBackoff(step: step)), step: step)
-  }
-
-  /// Exponential backoff (seconds) for the Nth consecutive retry, capped so a
-  /// reconnect is still noticed within a bounded delay: 3, 6, 12, 24, 45, 45…
-  static func resendBackoff(step: Int) -> TimeInterval {
-    let factor = Double(1 << min(max(step - 1, 0), 8))
-    return min(3 * factor, 45)
-  }
-
-  /// Per-contact retry backoff state (see `resendGate`).
-  struct ResendGate {
-    var nextAttempt: Date
-    var step: Int
   }
 
   /// Drives (re)establishment for one contact according to our role: the
@@ -78,30 +45,17 @@ extension SessionManager {
 
   // MARK: - Locked receipt
 
-  /// Upper bound on envelopes buffered while locked (memory only).
-  private static let maxLockedInbox = 256
-
   /// Buffers an envelope received while locked and prompts the user to unlock.
   /// The notification is content-free and fires once per locked session
-  /// (coalesced) so a flood of deposits can't spam notifications.
+  /// (coalesced by `LockedInbox`) so a flood of deposits can't spam notifications.
   func bufferWhileLocked(_ data: Data, channel: TransportChannel) {
-    lockedInbox.append((data, channel))
-    if lockedInbox.count > Self.maxLockedInbox {
-      lockedInbox.removeFirst(lockedInbox.count - Self.maxLockedInbox)
-    }
-    if !notifiedWhileLocked {
-      notifiedWhileLocked = true
-      onIncomingNotification?()
-    }
+    if lockedInbox.buffer(data, channel: channel) { presenter.notifyLocal() }
   }
 
   /// Replays envelopes buffered while locked, now that we can decrypt and
   /// persist. Called from `attachStore` once the vault is open.
   func drainLockedInbox() {
-    guard !lockedInbox.isEmpty else { return }
-    let buffered = lockedInbox
-    lockedInbox.removeAll()
-    for (data, channel) in buffered { handleInbound(data, channel: channel) }
+    for entry in lockedInbox.drain() { handleInbound(entry.data, channel: entry.channel) }
   }
 
   // MARK: - Store-and-forward
@@ -116,32 +70,21 @@ extension SessionManager {
     if let initiation = pendingInitiation[contact.id] {
       sendEnvelope(.x3dhInit, payload: initiation, to: contact)
     }
-    let pending = (conversations[contact.id] ?? []).filter { $0.mine && $0.pending }
-    for message in pending {
+    for message in conversationStore.pending(for: contact.id) {
       transmit(message, to: contact)
     }
   }
 
   /// Flips a message's pending flag in both the in-memory view and the disk mirror.
   func setPending(_ pending: Bool, messageID: UUID, contactID: Data) {
-    if let index = conversations[contactID]?.firstIndex(where: { $0.id == messageID }) {
-      conversations[contactID]?[index].pending = pending
-    }
-    if let index = persistedConversations[contactID]?.firstIndex(where: { $0.id == messageID }) {
-      persistedConversations[contactID]?[index].pending = pending
-    }
+    conversationStore.setPending(pending, messageID: messageID, contactID: contactID)
   }
 
   /// Records the link a message is being dispatched over, in both the in-memory
   /// view and the disk mirror, so a pending message resent after a transport
   /// switch reflects the link it actually went out on (shown on long-press).
   func setTransport(_ channel: TransportChannel?, messageID: UUID, contactID: Data) {
-    if let index = conversations[contactID]?.firstIndex(where: { $0.id == messageID }) {
-      conversations[contactID]?[index].transport = channel
-    }
-    if let index = persistedConversations[contactID]?.firstIndex(where: { $0.id == messageID }) {
-      persistedConversations[contactID]?[index].transport = channel
-    }
+    conversationStore.setTransport(channel, messageID: messageID, contactID: contactID)
   }
 
   // MARK: - Logging & persistence
@@ -154,43 +97,24 @@ extension SessionManager {
   /// Appends a message to the in-memory view, and to the on-disk mirror unless
   /// the chat is ephemeral, then persists.
   func record(_ message: ChatMessage, for contactID: Data) {
-    conversations[contactID, default: []].append(message)
-    if !ephemeralContactIDs.contains(contactID) {
-      persistedConversations[contactID, default: []].append(message)
-    }
+    conversationStore.record(
+      message, for: contactID, ephemeral: ephemeralContactIDs.contains(contactID))
     persist()
   }
 
-  /// Writes contacts, the on-disk conversation mirror, and ephemeral flags to
-  /// the encrypted store (no-op before unlock).
+  /// Snapshots the live state (contacts, conversation mirror, ephemeral/Bluetooth
+  /// flags, Olm account) and hands it to `SessionPersistence` to seal at rest.
+  /// No-op before unlock; the store handle inside `persistence` is the second
+  /// guard once attached.
   func persist() {
-    guard let store, isUnlocked else { return }
-    let persistedContacts = contacts.map { contact in
-      PersistedContact(
-        name: contact.displayName, bundle: contact.bundle.encoded,
-        relayURLs: contact.relayURLs.map(\.absoluteString),
-        preferredRelayURL: contact.preferredRelayURL?.absoluteString,
-        prekeyBundle: contact.prekeyBundle?.encoded,
-        verifiedInPerson: contact.verifiedInPerson)
-    }
-    var conversationsByKey: [String: [ChatMessage]] = [:]
-    for (id, messages) in persistedConversations {
-      conversationsByKey[id.base64EncodedString()] = messages
-    }
-    // Re-seal the Olm account alongside the rest of the state. Inbound
-    // establishment and prekey rotation/replenish mutate the account, so its
-    // pickle is exported on every persist; the fallback public key rides along
-    // because Olm can't report it again after publishing.
-    let olmPickle = account.flatMap { try? $0.exportOlmPickle() }
-    let olmFallbackKey = account?.exportFallbackKey()
-    store.save(
-      PersistedState(
-        contacts: persistedContacts,
-        conversations: conversationsByKey,
-        ephemeralContactIDs: ephemeralContactIDs.map { $0.base64EncodedString() },
-        bluetoothContactIDs: bluetoothChatIDs.map { $0.base64EncodedString() },
+    guard isUnlocked else { return }
+    persistence.save(
+      SessionPersistence.Snapshot(
+        contacts: contacts,
+        conversations: conversationStore.persistedConversations,
+        ephemeralContactIDs: ephemeralContactIDs,
+        bluetoothChatIDs: bluetoothChatIDs,
         myName: myName,
-        olmAccountPickle: olmPickle,
-        olmFallbackKey: olmFallbackKey))
+        account: account))
   }
 }

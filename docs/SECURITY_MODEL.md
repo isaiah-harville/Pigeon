@@ -77,7 +77,7 @@ device; there is nothing to register with a central Pigeon service.
 │   • Relay (opt-in): blind ciphertext mailbox     │
 │   moves opaque ciphertext only · runs concurrently│
 ├──────────────────────────────────────────────┤
-│ pigeon-core (Rust, via PigeonCore XCFramework)   │
+│ pigeon-core (Rust, via PigeonFFI XCFramework)    │
 │   Olm session establishment + Double Ratchet     │
 │   (vodozemac) · identity binding on top           │
 ├──────────────────────────────────────────────┤
@@ -135,7 +135,7 @@ sessions in `pigeon-core`). The mesh layer relays opaque ciphertext;
 
 The pairwise messaging protocol is **Olm**, provided by the audited
 [`vodozemac`](https://github.com/matrix-org/vodozemac) Rust crate and reached
-from the app through the `pigeon-core` / `PigeonCore` XCFramework. Pigeon does
+from the app through the `pigeon-core` / `PigeonFFI` XCFramework. Pigeon does
 **not** implement the ratchet, session establishment, or any primitive
 algorithm; it adds exactly one piece of protocol trust on top of Olm — the
 identity binding — and otherwise drives Olm's account/session API. App-side
@@ -193,7 +193,7 @@ pre-key message).
   offline (§5.7).
 - **License:** the reusable messaging-core, mesh, and relay packages should
   remain open and copyleft, not source-visible-but-closable.
-  **`pigeon-core`, `pigeon-core-ffi`, `PigeonMesh`, and `pigeon-relay` are
+  **`pigeon-core`, `pigeon-ffi`, `pigeon-mesh`, and `pigeon-relay` are
   AGPL-3.0-only**, so modified versions offered to users, including over a
   network, must keep their source available. The iOS app and app-specific code
   are source-available for transparency, local development, and security review,

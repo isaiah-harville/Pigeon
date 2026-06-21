@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PUBLIC_DIR="$ROOT/public"
 RELAY_DOC_TARGET="${TMPDIR:-/tmp}/pigeon-relay-docs"
 CORE_DOC_TARGET="${TMPDIR:-/tmp}/pigeon-core-docs"
+MESH_DOC_TARGET="${TMPDIR:-/tmp}/pigeon-mesh-docs"
 DOCC_HOSTING_BASE_PATH="${DOCC_HOSTING_BASE_PATH:-api}"
 
 cd "$ROOT"
@@ -23,16 +24,15 @@ cargo doc \
 mkdir -p "$PUBLIC_DIR/api/pigeon-core"
 cp -R "$CORE_DOC_TARGET/doc" "$PUBLIC_DIR/api/pigeon-core/doc"
 
-echo "Building PigeonMesh DocC..."
-mkdir -p "$PUBLIC_DIR/api/PigeonMesh"
-swift package \
-  --package-path PigeonMesh \
-  --allow-writing-to-directory "$PUBLIC_DIR/api/PigeonMesh" \
-  generate-documentation \
-  --target PigeonMesh \
-  --output-path "$PUBLIC_DIR/api/PigeonMesh" \
-  --transform-for-static-hosting \
-  --hosting-base-path "$DOCC_HOSTING_BASE_PATH/PigeonMesh"
+echo "Building pigeon-mesh rustdoc..."
+rm -rf "$MESH_DOC_TARGET" "$PUBLIC_DIR/api/pigeon-mesh"
+cargo doc \
+  --manifest-path pigeon-mesh/Cargo.toml \
+  --no-deps \
+  --document-private-items \
+  --target-dir "$MESH_DOC_TARGET"
+mkdir -p "$PUBLIC_DIR/api/pigeon-mesh"
+cp -R "$MESH_DOC_TARGET/doc" "$PUBLIC_DIR/api/pigeon-mesh/doc"
 
 echo "Building pigeon-relay rustdoc..."
 rm -rf "$RELAY_DOC_TARGET" "$PUBLIC_DIR/api/pigeon-relay"
@@ -51,7 +51,7 @@ Docs are ready:
 
 API docs:
   http://localhost:$PORT/api/pigeon-core/doc/pigeon_core/
-  http://localhost:$PORT/api/PigeonMesh/documentation/pigeonmesh/
+  http://localhost:$PORT/api/pigeon-mesh/doc/pigeon_mesh/
   http://localhost:$PORT/api/pigeon-relay/doc/pigeon_relay/
 
 Press Ctrl-C to stop the server.

@@ -923,13 +923,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "pigeon-core-ffi"
+name = "pigeon-ffi"
 version = "0.1.0"
 dependencies = [
  "pigeon-core",
+ "pigeon-mesh",
  "serde_json",
  "uniffi",
  "vodozemac",
+]
+
+[[package]]
+name = "pigeon-mesh"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.2.17",
 ]
 
 [[package]]

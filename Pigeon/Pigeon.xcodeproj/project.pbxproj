@@ -7,9 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		C0FFEE0000000000000000B3 /* PigeonMesh in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE0000000000000000B2 /* PigeonMesh */; };
-		C0FFEE0000000000000000C3 /* PigeonCore in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE0000000000000000C2 /* PigeonCore */; };
-		D1150000000000000000001D /* PigeonCore in Frameworks */ = {isa = PBXBuildFile; productRef = D1150000000000000000001C /* PigeonCore */; };
+		C0FFEE0000000000000000C3 /* PigeonFFI in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE0000000000000000C2 /* PigeonFFI */; };
+		D1150000000000000000001D /* PigeonFFI in Frameworks */ = {isa = PBXBuildFile; productRef = D1150000000000000000001C /* PigeonFFI */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -58,8 +57,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				C0FFEE0000000000000000B3 /* PigeonMesh in Frameworks */,
-				C0FFEE0000000000000000C3 /* PigeonCore in Frameworks */,
+				C0FFEE0000000000000000C3 /* PigeonFFI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -67,7 +65,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				D1150000000000000000001D /* PigeonCore in Frameworks */,
+				D1150000000000000000001D /* PigeonFFI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,8 +110,7 @@
 			);
 			name = Pigeon;
 			packageProductDependencies = (
-				C0FFEE0000000000000000B2 /* PigeonMesh */,
-				C0FFEE0000000000000000C2 /* PigeonCore */,
+				C0FFEE0000000000000000C2 /* PigeonFFI */,
 			);
 			productName = Pigeon;
 			productReference = BFCCC6E52FE0108F000F4D70 /* Pigeon.app */;
@@ -137,7 +134,7 @@
 			);
 			name = PigeonTests;
 			packageProductDependencies = (
-				D1150000000000000000001C /* PigeonCore */,
+				D1150000000000000000001C /* PigeonFFI */,
 			);
 			productName = PigeonTests;
 			productReference = D11500000000000000000001 /* PigeonTests.xctest */;
@@ -172,8 +169,7 @@
 			mainGroup = BFCCC6DC2FE0108E000F4D70;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				C0FFEE0000000000000000B1 /* XCLocalSwiftPackageReference "../PigeonMesh" */,
-				C0FFEE0000000000000000C1 /* XCLocalSwiftPackageReference "../PigeonCore" */,
+				C0FFEE0000000000000000C1 /* XCLocalSwiftPackageReference "PigeonFFI" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BFCCC6E62FE0108F000F4D70 /* Products */;
@@ -530,28 +526,20 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		C0FFEE0000000000000000B1 /* XCLocalSwiftPackageReference "../PigeonMesh" */ = {
+		C0FFEE0000000000000000C1 /* XCLocalSwiftPackageReference "PigeonFFI" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../PigeonMesh;
-		};
-		C0FFEE0000000000000000C1 /* XCLocalSwiftPackageReference "../PigeonCore" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../PigeonCore;
+			relativePath = PigeonFFI;
 		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		C0FFEE0000000000000000B2 /* PigeonMesh */ = {
+		C0FFEE0000000000000000C2 /* PigeonFFI */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = PigeonMesh;
+			productName = PigeonFFI;
 		};
-		C0FFEE0000000000000000C2 /* PigeonCore */ = {
+		D1150000000000000000001C /* PigeonFFI */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = PigeonCore;
-		};
-		D1150000000000000000001C /* PigeonCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = PigeonCore;
+			productName = PigeonFFI;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

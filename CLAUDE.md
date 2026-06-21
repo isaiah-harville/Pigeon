@@ -13,7 +13,7 @@ auditable code over clever abstractions.
 ## Licensing Policy
 
 Keep the reusable protocol, cryptography, mesh, and relay packages open source
-and copyleft. `pigeon-core`, `PigeonMesh`, and `pigeon-relay` are
+and copyleft. `pigeon-core`, `pigeon-mesh`, and `pigeon-relay` are
 `AGPL-3.0-only` so modified protocol/network code offered to users cannot be
 taken closed. The iOS app and app-specific code are source-available but not
 open source; commercial use, redistribution as an app, and App Store/TestFlight
@@ -21,17 +21,17 @@ publication require permission from the Pigeon maintainers.
 
 ## Current Architecture
 
-The repo has the **app** (`Pigeon/`) plus three packages — `pigeon-core/`
-(Rust), `PigeonMesh/` (Swift), and `pigeon-relay/` (Rust) — and `PigeonCore/`,
-the thin Swift package that vends the generated FFI bindings + XCFramework.
+The repo has the **app** (`Pigeon/`) plus three Rust crates — `pigeon-core/`,
+`pigeon-mesh/`, and `pigeon-relay/` — and `Pigeon/PigeonFFI/`, the thin Swift
+package that vends the generated FFI bindings + XCFramework.
 
 **Rust migration (#79–#83):** the pairwise messaging core is the Rust
 `pigeon-core`, built on Olm (via the audited `vodozemac` crate) — not a
 clean-room Noise XX + X3DH + Double Ratchet. The iOS app reaches it through a
-UniFFI bridge (`pigeon-core-ffi`) packaged as `PigeonCore`'s XCFramework (#80,
-done). The old Swift `PigeonCrypto` package has been deleted; do not reintroduce
-it. The remaining migration work is the shared protobuf wire format (#81) and
-follow-ups (#82–#83).
+UniFFI bridge (`pigeon-ffi`) packaged as the `PigeonFFI` package's XCFramework
+(#80, done). The old Swift `PigeonCrypto` package has been deleted; do not
+reintroduce it. The remaining migration work is the shared protobuf wire format
+(#81) and follow-ups (#82–#83).
 
 - `Pigeon/` contains the SwiftUI app and Xcode project (`Pigeon/Pigeon.xcodeproj`,
   scheme `Pigeon`). Source lives under `Pigeon/Pigeon/`, split into `Core/`
@@ -41,19 +41,24 @@ follow-ups (#82–#83).
   long-term Ed25519 key signs Olm's Curve25519 identity key) on top of Olm's
   session establishment + Double Ratchet. It is NOT a Cargo-workspace member of
   `pigeon-relay`.
-- `pigeon-core-ffi/` is the UniFFI crate (the only crate that links UniFFI, so
-  `pigeon-core` stays binding-free). `build-xcframework.sh` builds the Apple
-  static libs, generates the Swift bindings + protobuf, and assembles
-  `PigeonCore/PigeonCoreFFI.xcframework`. The XCFramework and generated bindings
-  are build artifacts (gitignored) — regenerate them, don't commit them.
-- `PigeonCore/` is the Swift package the app links: a `binaryTarget` for the
-  XCFramework plus a thin Swift facade (`PigeonAccount`, `PigeonSession`,
+- `pigeon-ffi/` is the UniFFI crate (the only crate that links UniFFI, so
+  `pigeon-core` and `pigeon-mesh` stay binding-free). `build-xcframework.sh`
+  builds the Apple static libs, generates the Swift bindings + protobuf, and
+  assembles `Pigeon/PigeonFFI/PigeonFFIBindings.xcframework`. The XCFramework and
+  generated bindings are build artifacts (gitignored) — regenerate them, don't
+  commit them.
+- `Pigeon/PigeonFFI/` is the Swift package the app links (module `PigeonFFI`): a
+  `binaryTarget` for the XCFramework plus a thin Swift facade (`PigeonAccount`,
+  `PigeonSession`,
   `PigeonIdentityBundle`, `PigeonPrekeyBundle`, contact-card codec) over the
   generated bindings.
-- `PigeonMesh/` is a dependency-free, platform-agnostic Swift package for
-  transport/mesh logic (packet framing, fragmentation/reassembly over small BLE
-  MTUs, store-and-forward routing). The CoreBluetooth driver lives in the app and
-  feeds bytes through this package — `PigeonMesh` itself has no radio dependency.
+- `pigeon-mesh/` is a dependency-free, platform-agnostic Rust crate
+  (`AGPL-3.0-only`) for transport/mesh logic (packet framing, fragmentation/
+  reassembly over small BLE MTUs, dedup/TTL flood routing, and the
+  identity-addressed session envelope). It carries opaque ciphertext and performs
+  no cryptography, so every client shares one wire format by linking it. The iOS
+  app reaches it through the same UniFFI bridge as `pigeon-core`; the
+  CoreBluetooth driver lives in the app and feeds bytes through it.
 - `pigeon-relay/` is the Rust (axum/tokio) zero-knowledge relay server; ships as a
   Docker image. See the Remote Delivery section below.
 
@@ -88,7 +93,8 @@ App `Core/`:
   bundle + display name + advertised relay URLs + relay signature).
 - `Core/Transport/` — `Transport` protocol, `CompositeTransport` (mesh + relay),
   `RelayTransport`, `RelaySettings`, `PeerTransport`, `BluetoothConstants`.
-- `Core/Mesh/` — `MeshService` (CoreBluetooth driver feeding `PigeonMesh`).
+- `Core/Mesh/` — `MeshService` (CoreBluetooth driver feeding `pigeon-mesh` via
+  the FFI).
 - `Core/Storage/` — `Vault` and `EncryptedStore` (encrypted local persistence).
 - `Core/Notifications/` — `MessageNotifier`.
 
@@ -104,14 +110,17 @@ App `Features/`: `Onboarding/` (`UnlockView`, `OnboardingNameView`), `Home/`
 The shared schema is `proto/pigeon/wire/v1/pigeon_wire.proto`. Behavioral tests
 in `pigeon-core/tests/pairwise.rs`.
 
-`PigeonCore/Sources/PigeonCore/`: `PigeonCore.swift` (the Swift facade);
-`Generated/` (UniFFI + protobuf bindings — gitignored build output).
+`Pigeon/PigeonFFI/Sources/PigeonFFI/`: `PigeonCore.swift` (the crypto facade),
+`PigeonMesh.swift` (the mesh facade over the generated bindings); `Generated/`
+(UniFFI + protobuf bindings — gitignored build output).
 
-`PigeonMesh/Sources/PigeonMesh/`: `MeshPacket`, `SessionEnvelope`, `Fragmentation`.
+`pigeon-mesh/src/`: `packet.rs` (`MeshPacket`, `SeenCache`, `MeshRouter`),
+`fragment.rs` (`Fragment`, `Fragmenter`, `Reassembler`), `envelope.rs`
+(`SessionEnvelope`, `EnvelopeType`). Behavioral tests live in each module.
 
-Tests live in `pigeon-core/tests/`, `pigeon-core-ffi/src/` (Rust FFI seam),
-`PigeonCore/Tests/` (Swift round-trip), `PigeonMesh/Tests/`, and the app's
-`Pigeon/PigeonTests/` target. Docs of note: `docs/SECURITY_MODEL.md`,
+Tests live in `pigeon-core/tests/`, `pigeon-mesh/src/` (per-module),
+`pigeon-ffi/src/` (Rust FFI seam), `Pigeon/PigeonFFI/Tests/` (Swift round-trip),
+and the app's `Pigeon/PigeonTests/` target. Docs of note: `docs/SECURITY_MODEL.md`,
 `docs/HOW_IT_WORKS.md`, `docs/ROADMAP.md`.
 
 ## Security Invariants
@@ -148,10 +157,10 @@ shared behavior:
 
 ```sh
 cargo test --manifest-path pigeon-core/Cargo.toml      # Rust messaging core
-cargo test --manifest-path pigeon-core-ffi/Cargo.toml  # FFI seam
-bash pigeon-core-ffi/build-xcframework.sh              # regenerate bindings + XCFramework
-swift test --package-path PigeonCore                   # Swift round-trip across the FFI
-swift test --package-path PigeonMesh
+cargo test --manifest-path pigeon-mesh/Cargo.toml      # Rust mesh (framing/routing/fragmentation)
+cargo test --manifest-path pigeon-ffi/Cargo.toml       # FFI seam
+bash pigeon-ffi/build-xcframework.sh                   # regenerate bindings + XCFramework
+swift test --package-path Pigeon/PigeonFFI             # Swift round-trip across the FFI
 xcodebuild build -project Pigeon/Pigeon.xcodeproj -scheme Pigeon -destination 'generic/platform=iOS'
 cargo test --manifest-path pigeon-relay/Cargo.toml      # relay (Rust)
 ```

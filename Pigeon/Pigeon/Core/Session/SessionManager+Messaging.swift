@@ -4,8 +4,7 @@
 //
 
 import Foundation
-import PigeonCore
-import PigeonMesh
+import PigeonFFI
 
 extension SessionManager {
 
@@ -74,6 +73,9 @@ extension SessionManager {
     if let ack = try? inbound.session.encrypt(plaintext: Self.establishmentAck) {
       sendEnvelope(.ack, payload: ack, to: contact)
     }
+    // Session-established event (#82): flush anything we queued while waiting for
+    // the initiation, now that we can encrypt to this contact.
+    sendPending(to: contact)
   }
 
   func handleMessage(_ payload: Data, from contact: Contact, channel: TransportChannel) {
@@ -93,26 +95,13 @@ extension SessionManager {
     // Acknowledge every delivery (even duplicates) so the sender stops retrying.
     sendAck(messageID: received.id, to: contact)
     // Deduplicate by the sender's message id (a retried message arrives twice).
-    if conversations[contact.id]?.contains(where: { $0.id == received.id }) == true { return }
+    if conversationStore.contains(messageID: received.id, for: contact.id) { return }
     received.transport = channel
     record(received, for: contact.id)
 
-    // Surface a notification unless the user is actively viewing this chat.
-    guard !(isAppActive && activeChatID == contact.id) else { return }
-    if isAppActive {
-      showBanner(title: contact.displayName, body: received.text)
-    } else {
-      onIncomingNotification?()  // local notification while backgrounded
-    }
-  }
-
-  func showBanner(title: String, body: String) {
-    let banner = InAppBanner(title: title, body: body)
-    self.banner = banner
-    Task {
-      try? await Task.sleep(for: .seconds(3))
-      if self.banner == banner { self.banner = nil }
-    }
+    // Surface a banner/notification unless the user is actively viewing this chat.
+    presenter.notifyIncoming(
+      contactID: contact.id, title: contact.displayName, body: received.text)
   }
 
   func sendAck(messageID: UUID, to contact: Contact) {
@@ -171,6 +160,12 @@ extension SessionManager {
       record(ChatMessage(mine: false, text: text, system: true), for: contactID)
     }
     persist()
+    // Transport-switched event (#82): resend unacked messages over the link this
+    // chat now uses, so a switch flushes pending immediately (replacing the
+    // timer's eventual retry). `sendPending` no-ops until the session exists.
+    if changed, let contact = contacts.first(where: { $0.id == contactID }) {
+      sendPending(to: contact)
+    }
   }
 
   /// Sends our current transport choice for this chat to the peer (encrypted).

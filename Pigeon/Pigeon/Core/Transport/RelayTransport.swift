@@ -20,6 +20,7 @@
 //
 
 import Foundation
+import Network
 
 @MainActor
 @Observable
@@ -38,18 +39,20 @@ final class RelayTransport: Transport {
   private(set) var log: [String] = []
 
   /// Hosts of our own relays we're currently authenticated to (can receive on),
-  /// for display in the UI. Empty when offline.
-  var onlineRelayHosts: [String] {
-    myRelays.compactMap { url in
-      guard connections[url]?.ready == true else { return nil }
-      return host(url)
-    }
-  }
+  /// for display in the UI. Empty when offline. Stored (not computed) so it is
+  /// observed by SwiftUI: readiness lives on the `Connection` reference type
+  /// inside `connections`, whose mutations `@Observable` can't see, so the chat
+  /// header would otherwise never refresh when a relay comes up or drops.
+  /// Recomputed from `connections` on every readiness change in `refreshLinkState`.
+  private(set) var onlineRelayHosts: [String] = []
 
   // Relays are not "peers"; the headline status/peer-count stay BLE's.
   var status: TransportStatus { .idle }
   var connectedPeerCount: Int { 0 }
   var onMessage: ((_ message: Data, _ peerID: String) -> Void)?
+  /// Fired when a relay connection comes up (we can publish to it now), so the
+  /// session layer flushes pending work on the event rather than on a timer (#82).
+  var onConnectivity: (() -> Void)?
 
   /// Our own mailbox address: lowercase hex of our Ed25519 identity public key.
   private let mailboxHex: String
@@ -80,6 +83,14 @@ final class RelayTransport: Transport {
   private let urlSession = URLSession(configuration: .default)
   private var connections: [URL: Connection] = [:]
 
+  /// Watches the OS network path so relays reconnect the instant connectivity
+  /// returns (Wi-Fi ↔ cellular, airplane mode off), rather than waiting out the
+  /// supervise backoff (#76). `@ObservationIgnored` — it drives reconnects, not UI.
+  @ObservationIgnored private let pathMonitor = NWPathMonitor()
+  /// Whether the OS last reported a usable path. Tracked so we react only to the
+  /// *transition* back to reachable, ignoring interface flaps while already up.
+  @ObservationIgnored private var networkAvailable = true
+
   /// One relay endpoint: its socket plus the supervising reconnect task.
   /// `authenticate` is true for our own relays (we subscribe + prove ownership
   /// to read); false for contacts' relays we only deposit to.
@@ -94,7 +105,10 @@ final class RelayTransport: Transport {
   init(mailboxHex: String, sign: @escaping (Data) -> Data?) {
     self.mailboxHex = mailboxHex
     self.sign = sign
+    startPathMonitor()
   }
+
+  deinit { pathMonitor.cancel() }
 
   // MARK: - Configuration
 
@@ -221,6 +235,7 @@ final class RelayTransport: Transport {
     connection.ready = true
     note("Relay \(host(url)) \(connection.authenticate ? "online" : "ready")")
     refreshLinkState()
+    onConnectivity?()  // can publish to this relay now — flush pending work
 
     // Heartbeat alongside the blocking receive loop: a half-open socket (network
     // dropped and returned without a clean close) otherwise stays "ready" forever
@@ -275,12 +290,15 @@ final class RelayTransport: Transport {
 
   // MARK: - Helpers
 
-  /// Link state reflects our own mailbox relays (whether we can *receive*);
-  /// publish-only connections to contacts' relays don't change it.
+  /// Recomputes the observable link state from `connections`. Called on every
+  /// readiness change (a relay coming up or dropping, reconfigure), so the UI
+  /// stays live. Link state reflects our own mailbox relays (whether we can
+  /// *receive*); publish-only connections to contacts' relays don't change it.
   private func refreshLinkState() {
+    onlineRelayHosts = myRelays.compactMap { connections[$0]?.ready == true ? host($0) : nil }
     if myRelays.isEmpty {
       linkState = .disabled
-    } else if myRelays.contains(where: { connections[$0]?.ready == true }) {
+    } else if !onlineRelayHosts.isEmpty {
       linkState = .online
     } else {
       linkState = .connecting
@@ -296,6 +314,46 @@ final class RelayTransport: Transport {
 
   private static func hex(_ data: Data) -> String {
     data.map { String(format: "%02x", $0) }.joined()
+  }
+}
+
+// MARK: - Network path (proactive reconnect, #76)
+
+extension RelayTransport {
+
+  /// Starts watching the OS network path; a transition back to a usable path
+  /// reconnects any relay that's currently down.
+  func startPathMonitor() {
+    pathMonitor.pathUpdateHandler = { [weak self] path in
+      let available = path.status == .satisfied
+      Task { @MainActor in self?.handlePathChange(available: available) }
+    }
+    pathMonitor.start(queue: DispatchQueue(label: "com.isaiah-harville.Pigeon.relay.path"))
+  }
+
+  private func handlePathChange(available: Bool) {
+    defer { networkAvailable = available }
+    // Act only on the down→up transition; an interface change while already
+    // online doesn't warrant tearing healthy sockets down.
+    guard available, !networkAvailable else { return }
+    reconnectStalled()
+  }
+
+  /// Immediately restarts the supervise loop for every relay that isn't currently
+  /// connected, so a returning network reconnects now instead of after backoff.
+  /// Healthy connections are left untouched. Keys are snapshotted first so the
+  /// dictionary isn't mutated mid-iteration.
+  private func reconnectStalled() {
+    let stalled = connections.filter { !$0.value.ready }.map { ($0.key, $0.value.authenticate) }
+    guard !stalled.isEmpty else { return }
+    for (url, authenticate) in stalled {
+      connections[url]?.task?.cancel()
+      connections[url]?.socket?.cancel(with: .goingAway, reason: nil)
+      let fresh = Connection(authenticate: authenticate)
+      connections[url] = fresh
+      fresh.task = Task { [weak self] in await self?.supervise(url) }
+    }
+    note("Network restored; reconnecting \(stalled.count) relay(s)")
   }
 }
 

@@ -4,8 +4,7 @@
 //
 
 import Foundation
-import PigeonCore
-import PigeonMesh
+import PigeonFFI
 
 extension SessionManager {
 
@@ -22,14 +21,15 @@ extension SessionManager {
   var relayHosts: [String] { relay?.onlineRelayHosts ?? [] }
 
   /// Pull-to-refresh recovery for the chats screen: restart link discovery /
-  /// relay sockets, then immediately drive handshakes and pending sends instead
-  /// of waiting for the retry timer's next tick.
+  /// relay sockets, then immediately drive handshakes and pending sends. The
+  /// reconnect itself fires a connectivity event, but we also flush directly so
+  /// the refresh acts even when no link state actually changed.
   func refreshChats() async {
     note("Refreshing chats")
     mesh.refreshConnections()
-    tick()
+    flushOnConnectivity()
     try? await Task.sleep(for: .milliseconds(350))
-    tick()
+    flushOnConnectivity()
   }
 
   /// Whether a relay is configured at all, so the UI can offer the relay option.
@@ -47,6 +47,16 @@ extension SessionManager {
   /// relay is configured) — #24.
   func chatChannels(for contact: Contact) -> Set<TransportKind> {
     usesBluetooth(contact) ? [.bluetooth] : [.relay]
+  }
+
+  /// Live reachability of the link this chat is set to use, so the header can
+  /// show whether a message can go out *right now* over the chosen transport
+  /// (not just whether a session was ever established). A Bluetooth chat is
+  /// reachable when a peer is connected; a relay chat when one of our relays is
+  /// online (the mailbox we deposit to). Reads observable transport state, so it
+  /// refreshes as links come and go.
+  func chosenLinkReachable(for contact: Contact) -> Bool {
+    usesBluetooth(contact) ? connectedPeerCount > 0 : !relayHosts.isEmpty
   }
 
   /// The relay host this chat will use: its chosen relay if set, otherwise
@@ -159,14 +169,28 @@ extension SessionManager {
     refreshRelay()
   }
 
+  /// Manually re-drives delivery to `contact`: (re)establish if needed and
+  /// resend every unacked message now, for when the user doesn't want to wait
+  /// for the next connectivity event (#82). Same work `flushOnConnectivity` does
+  /// per link-up, scoped to one chat and triggered from the pending-message
+  /// retry affordance.
+  func retryDelivery(to contact: Contact) {
+    if establishedContactIDs.contains(contact.id) {
+      sendPending(to: contact)
+    } else {
+      ensureEstablishing(contactID: contact.id)
+    }
+    note("Manual retry for \"\(contact.displayName)\"")
+  }
+
   /// Conversation history with `contact`.
   func messages(with contact: Contact) -> [ChatMessage] {
-    conversations[contact.id] ?? []
+    conversationStore.messages(for: contact.id)
   }
 
   /// The most recent non-system message with `contact`, for list previews.
   func lastMessage(with contact: Contact) -> ChatMessage? {
-    conversations[contact.id]?.last { !$0.system }
+    conversationStore.lastNonSystem(for: contact.id)
   }
 
   /// The safety number to compare in person with `contact`.

@@ -82,6 +82,14 @@ protocol Transport: AnyObject {
   /// authenticated envelopes.
   var onMessage: ((_ message: Data, _ peerID: String) -> Void)? { get set }
 
+  /// Fired when this transport's reachability *improves* — a peer connects and
+  /// its channel is ready, or a relay authenticates — so the session layer can
+  /// (re)drive establishment and flush pending messages on the event instead of
+  /// polling on a timer (#82). Coarse and best-effort: it may fire more than
+  /// once per real change, so consumers must be idempotent. Never fired for a
+  /// drop (nothing to send when a link goes away).
+  var onConnectivity: (() -> Void)? { get set }
+
   /// Sends an opaque message. `recipient` is the intended destination's identity
   /// key when known (a direct, originated message), or `nil` for address-less
   /// flooding (e.g. relaying someone else's packet onward). It is only a

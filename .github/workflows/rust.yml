@@ -5,7 +5,8 @@ on:
     branches: [main]
     paths:
       - "pigeon-core/**"
-      - "pigeon-core-ffi/**"
+      - "pigeon-ffi/**"
+      - "pigeon-mesh/**"
       - "pigeon-relay/**"
       - "proto/**"
       - ".github/actions/rust-crate-ci/**"
@@ -14,7 +15,8 @@ on:
     branches: [main]
     paths:
       - "pigeon-core/**"
-      - "pigeon-core-ffi/**"
+      - "pigeon-ffi/**"
+      - "pigeon-mesh/**"
       - "pigeon-relay/**"
       - "proto/**"
       - ".github/actions/rust-crate-ci/**"
@@ -36,14 +38,24 @@ jobs:
           package: pigeon-core
           docs: "true"
 
-  pigeon-core-ffi:
-    name: pigeon-core-ffi
+  pigeon-mesh:
+    name: pigeon-mesh
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust-crate-ci
         with:
-          package: pigeon-core-ffi
+          package: pigeon-mesh
+          docs: "true"
+
+  pigeon-ffi:
+    name: pigeon-ffi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust-crate-ci
+        with:
+          package: pigeon-ffi
 
   pigeon-relay:
     name: pigeon-relay

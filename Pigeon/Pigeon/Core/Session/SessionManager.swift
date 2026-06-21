@@ -9,16 +9,16 @@
 //
 
 import Foundation
-import PigeonCore
-import PigeonMesh
+import PigeonFFI
 
 /// Owns encrypted sessions with contacts and bridges them to the mesh.
 ///
 /// Role assignment is deterministic so both ends agree without negotiation:
 /// the device whose identity key sorts first is the **initiator** (it opens the
 /// Olm session against the peer's published prekey), the other is the
-/// **responder**. A periodic retry re-drives stalled establishment, since either
-/// device may add the contact (scan the QR) at a different moment.
+/// **responder**. Establishment and pending sends are re-driven by concrete
+/// connectivity events (a link coming up — #82), since either device may add the
+/// contact (scan the QR) or come online at a different moment.
 @MainActor
 @Observable
 final class SessionManager {
@@ -30,10 +30,8 @@ final class SessionManager {
   let relay: RelayTransport?
 
   var contacts: [Contact] = []
-  /// Identity ids of contacts with a fully established, verified session.
-  var establishedContactIDs: Set<Data> = []
-  /// What the UI shows: every message this session, persisted or not.
-  var conversations: [Data: [ChatMessage]] = [:]
+  /// Conversation history and per-message edits (the in-memory view + disk mirror).
+  let conversationStore = ConversationStore()
   /// Contacts whose chat is ephemeral — new messages are kept in memory only.
   var ephemeralContactIDs: Set<Data> = []
   /// Contacts whose chat uses Bluetooth instead of the relay. Relay is the
@@ -45,63 +43,45 @@ final class SessionManager {
   var myName: String = ""
   var log: [String] = []
 
-  /// Called to surface a local notification when a message arrives while the
-  /// app is backgrounded.
-  var onIncomingNotification: (() -> Void)?
-  /// A transient in-app banner shown when a message arrives in the foreground
-  /// and the user isn't already viewing that chat.
-  var banner: InAppBanner?
-  /// The chat currently on screen (its notifications are suppressed while active).
-  var activeChatID: Data?
-  var isAppActive = true
-  /// Whether we've already posted the "you have messages, unlock" notification
-  /// during the current locked session (reset on unlock).
-  var notifiedWhileLocked = false
+  /// Banners, the backgrounded-notification hook, and active-chat bookkeeping.
+  let presenter = ChatPresenter()
 
-  func setAppActive(_ active: Bool) { isAppActive = active }
-  func dismissBanner() { banner = nil }
-
-  struct InAppBanner: Equatable, Identifiable {
-    let id = UUID()
-    let title: String
-    let body: String
+  // Facade passthroughs so the app/views keep a stable surface over `presenter`.
+  typealias InAppBanner = ChatPresenter.InAppBanner
+  var banner: InAppBanner? { presenter.banner }
+  var isAppActive: Bool { presenter.isAppActive }
+  var activeChatID: Data? {
+    get { presenter.activeChatID }
+    set { presenter.activeChatID = newValue }
   }
+  var onIncomingNotification: (() -> Void)? {
+    get { presenter.onIncomingNotification }
+    set { presenter.onIncomingNotification = newValue }
+  }
+  func setAppActive(_ active: Bool) { presenter.setAppActive(active) }
+  func dismissBanner() { presenter.dismissBanner() }
 
   /// This device's Olm account (Ed25519 identity + Olm keys), bound to the
   /// long-term identity in `IdentityManager`. Built from the identity seed plus
   /// the persisted Olm pickle in `attachStore` (so it is `nil` until unlock),
   /// and re-sealed to the vault whenever it mutates.
   var account: PigeonAccount?
-  var sessions: [Data: PigeonSession] = [:]
-  /// The initiation envelope payload (`identity ‖ first Olm pre-key message`) we
-  /// sent per contact, retained so it can be resent until the peer drains it.
-  /// Cleared once the peer acks (proof it stood up the session).
-  var pendingInitiation: [Data: Data] = [:]
-  /// The last initiation payload we processed as responder, to ignore retransmits
-  /// (re-running `establishInbound` would build a second session); a *different*
-  /// payload signals a genuine peer restart and triggers a rebuild.
-  var lastInitiationIn: [Data: Data] = [:]
-  /// The on-disk mirror of conversations (excludes ephemeral-era messages).
-  var persistedConversations: [Data: [ChatMessage]] = [:]
-  var retryTimer: Timer?
-  /// Per-contact backoff gating *retries* of unacked messages. Each retry
-  /// re-encrypts (advancing the ratchet), so retrying every tick while a peer is
-  /// offline could, over a long outage, outrun the ratchet's skip limit. New
-  /// sends and (re)establishment still flush immediately; only timed retries back
-  /// off. Cleared when the queue drains or the session is reset.
-  var resendGate: [Data: ResendGate] = [:]
 
-  /// Envelopes received while locked (we can't decrypt or persist yet). Held in
-  /// memory only — never written to disk — and replayed once unlocked. The relay
-  /// also retains its copies (we don't ack while locked), so nothing is lost if
-  /// we're killed before unlock. Bounded to blunt flooding.
-  var lockedInbox: [(data: Data, channel: TransportChannel)] = []
+  /// Per-contact Olm session state (sessions, established set, initiations),
+  /// surfaced through the facade in the extension below.
+  let sessionRegistry = SessionRegistry()
+
+  /// Envelopes received while locked (we can't decrypt or persist yet), replayed
+  /// once unlocked. See `LockedInbox`.
+  var lockedInbox = LockedInbox()
 
   var myID: Data { identity.publicKey.rawRepresentation }
 
   /// Locked until the vault is unlocked with Face ID / Touch ID.
   private(set) var isUnlocked = false
-  var store: EncryptedStore?
+  /// Owns the encrypted store and the codec between the live state and disk
+  /// (including building the bound Olm account). See `SessionPersistence`.
+  let persistence = SessionPersistence()
 
   /// Configured relay endpoints, mirrored here so the value is observable —
   /// changing it refreshes anything that depends on it (e.g. the QR card, which
@@ -146,57 +126,26 @@ final class SessionManager {
     self.mesh.onMessage = { [weak self] data, channel in
       self?.handleInbound(data, channel: channel)
     }
-    startRetryLoop()
+    // Event-driven delivery (#82): a link coming up re-drives establishment and
+    // flushes pending sends, replacing the old 3s polling timer.
+    self.mesh.onConnectivity = { [weak self] in self?.flushOnConnectivity() }
   }
 
   /// Attaches the encrypted store after unlock: load persisted state and begin
   /// establishing sessions for known contacts.
   func attachStore(_ store: EncryptedStore) {
-    self.store = store
-    let state = store.load()
-
-    // Build (or restore) the Olm account bound to our long-term Ed25519 identity.
-    // First launch: a fresh Olm account under the existing identity; thereafter:
-    // import the persisted pickle so the published fallback prekey is stable.
-    let seed = identity.identitySeed
-    if let pickle = state.olmAccountPickle, let fallback = state.olmFallbackKey,
-      let restored = try? PigeonAccount.`import`(
-        seed: seed, olmPickle: pickle, fallbackKey: fallback)
-    {
-      account = restored
-    } else {
-      account = try? PigeonAccount.fromIdentitySeed(seed: seed)
-    }
-
-    contacts = state.contacts.compactMap { persisted in
-      // Decoding a PigeonIdentityBundle verifies its binding signature; an
-      // invalid one yields nil and the contact is dropped.
-      guard let bundle = try? PigeonIdentityBundle(decoding: persisted.bundle) else {
-        return nil
-      }
-      // Honour a stored prekey bundle only if it verifies and is bound to this
-      // identity (the same guard the QR scanner applies).
-      let prekeyBundle = persisted.prekeyBundle
-        .flatMap { try? PigeonPrekeyBundle(decoding: $0) }
-        .flatMap { $0.identityKey == bundle.identityKey ? $0 : nil }
-      return Contact(
-        bundle: bundle, displayName: persisted.name,
-        relayURLs: persisted.relayURLs.compactMap { URL(string: $0) },
-        preferredRelayURL: persisted.preferredRelayURL.flatMap { URL(string: $0) },
-        prekeyBundle: prekeyBundle,
-        verifiedInPerson: persisted.verifiedInPerson)
-    }
-    var loaded: [Data: [ChatMessage]] = [:]
-    for (key, messages) in state.conversations {
-      if let id = Data(base64Encoded: key) { loaded[id] = messages }
-    }
-    persistedConversations = loaded
-    conversations = loaded  // start the in-memory view from what's on disk
-    ephemeralContactIDs = Set(state.ephemeralContactIDs.compactMap { Data(base64Encoded: $0) })
-    bluetoothChatIDs = Set(state.bluetoothContactIDs.compactMap { Data(base64Encoded: $0) })
-    myName = state.myName
+    // Decode persisted state and (re)build the bound Olm account off the identity
+    // seed. The codec/account logic lives in `SessionPersistence`; here we just
+    // apply the result to the live state and run the post-unlock orchestration.
+    let loaded = persistence.attach(store, identitySeed: identity.identitySeed)
+    account = loaded.account
+    contacts = loaded.contacts
+    conversationStore.load(loaded.conversations)  // in-memory view starts from disk
+    ephemeralContactIDs = loaded.ephemeralContactIDs
+    bluetoothChatIDs = loaded.bluetoothChatIDs
+    myName = loaded.myName
     isUnlocked = true
-    notifiedWhileLocked = false
+    lockedInbox.reset()
     refreshRelay()  // pick up loaded contacts' relays
     for contact in contacts { ensureEstablishing(contactID: contact.id) }
     drainLockedInbox()  // process anything that arrived while locked
@@ -291,18 +240,15 @@ final class SessionManager {
   }
 
   func resetSession(for contactID: Data) {
-    sessions[contactID] = nil
-    pendingInitiation[contactID] = nil
-    lastInitiationIn[contactID] = nil
-    resendGate[contactID] = nil  // a fresh session should flush pending promptly
-    establishedContactIDs.remove(contactID)
+    sessionRegistry.reset(contactID)
   }
 
   // MARK: - Sending
 
   /// Sends `text` to `contact`. The message stays *pending* until the peer
-  /// acknowledges it; it is (re)sent on each tick while a session exists and
-  /// queued otherwise, so it is never silently dropped on a disconnect.
+  /// acknowledges it; it is sent at once when a session exists and queued
+  /// otherwise, then resent on the next connectivity event (#82), so it is never
+  /// silently dropped on a disconnect.
   func send(_ text: String, to contact: Contact) {
     send(text, replySnippet: nil, to: contact)
   }
@@ -335,4 +281,28 @@ final class SessionManager {
     sendEnvelope(.message, payload: ciphertext, to: contact)
   }
 
+}
+
+// MARK: - Session-state facade
+
+/// Stable property surface over `sessionRegistry`, so the establishment and
+/// messaging code is unchanged by the registry extraction. In an extension so it
+/// doesn't count against the coordinator's type-body length.
+extension SessionManager {
+  var sessions: [Data: PigeonSession] {
+    get { sessionRegistry.sessions }
+    set { sessionRegistry.sessions = newValue }
+  }
+  var establishedContactIDs: Set<Data> {
+    get { sessionRegistry.established }
+    set { sessionRegistry.established = newValue }
+  }
+  var pendingInitiation: [Data: Data] {
+    get { sessionRegistry.pendingInitiation }
+    set { sessionRegistry.pendingInitiation = newValue }
+  }
+  var lastInitiationIn: [Data: Data] {
+    get { sessionRegistry.lastInitiationIn }
+    set { sessionRegistry.lastInitiationIn = newValue }
+  }
 }

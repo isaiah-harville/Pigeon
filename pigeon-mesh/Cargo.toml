@@ -1,0 +1,12 @@
+[package]
+name = "pigeon-mesh"
+version = "0.1.0"
+edition = "2021"
+description = "Pigeon's transport-agnostic mesh layer: packet framing + dedup/TTL flood routing, BLE-sized fragmentation/reassembly, and the identity-addressed session envelope. Carries opaque ciphertext; performs no cryptography."
+license = "AGPL-3.0-only"
+
+[dependencies]
+# Only dependency: OS entropy for fresh 16-byte packet ids (uniqueness, not
+# secrecy). Matches the entropy source pigeon-core uses, and keeps the mesh
+# layer free of any crypto/protocol dependency so it ports cleanly per platform.
+getrandom = "0.2"

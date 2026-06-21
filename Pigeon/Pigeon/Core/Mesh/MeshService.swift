@@ -9,7 +9,7 @@
 //
 
 import Foundation
-import PigeonMesh
+import PigeonFFI
 
 /// The app-facing messaging surface: send a message to the mesh, receive each
 /// message exactly once. Wraps any `Transport` and a `MeshRouter`, so the mesh
@@ -24,6 +24,11 @@ final class MeshService {
   /// Delivered once per unique message that reaches this device, along with the
   /// transport it arrived on (so the UI can show how a message travelled).
   var onMessage: ((Data, TransportChannel) -> Void)?
+
+  /// Fired when an underlying link becomes usable (a peer connects, a relay
+  /// authenticates), so the session layer can (re)drive establishment and flush
+  /// pending sends on the event instead of polling (#82).
+  var onConnectivity: (() -> Void)?
 
   // UI passthroughs so views don't need to know about the transport.
   var status: TransportStatus { transport.status }
@@ -41,6 +46,7 @@ final class MeshService {
     transport.onMessage = { [weak self] data, peerID in
       self?.handleInbound(data, channel: TransportChannel(peerID: peerID))
     }
+    transport.onConnectivity = { [weak self] in self?.onConnectivity?() }
   }
 
   /// Sends `message` into the mesh. `recipient` is the destination's identity
