@@ -31,6 +31,16 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
   ephemeral (no-persistence) mode.
 - **Identity:** on-device Curve25519 keypair (no accounts/phone numbers); public
   key fingerprint is the address; trust via in-person QR exchange + safety number.
+- **Mesh implementation language (#83, 2026-06-20):** `PigeonMesh`
+  (framing/dedup/fragmentation/routing) stays **Swift**, not ported to Rust. It
+  carries opaque ciphertext and holds no crypto, so the multiplatform-core
+  rationale (shared audited crypto, protocol compatibility) doesn't apply;
+  porting would add an FFI hot path and stateful FFI objects for negligible gain
+  while iOS is the only client. Cross-platform interop is guaranteed by the
+  documented fixed-layout wire headers + shared test vectors, not by sharing the
+  implementation. Revisit only when a second native client is actually built —
+  and then as a `pigeon-mesh` crate, keeping the tiny fixed headers (not
+  protobuf, whose framing overhead is wasteful on small BLE MTUs).
 
 ## Module layout
 
