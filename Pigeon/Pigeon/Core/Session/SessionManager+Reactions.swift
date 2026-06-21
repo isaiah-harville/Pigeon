@@ -7,7 +7,6 @@
 
 import Foundation
 import PigeonCore
-import PigeonMesh
 
 extension SessionManager {
 

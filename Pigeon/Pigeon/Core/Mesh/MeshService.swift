@@ -9,7 +9,7 @@
 //
 
 import Foundation
-import PigeonMesh
+import PigeonCore
 
 /// The app-facing messaging surface: send a message to the mesh, receive each
 /// message exactly once. Wraps any `Transport` and a `MeshRouter`, so the mesh

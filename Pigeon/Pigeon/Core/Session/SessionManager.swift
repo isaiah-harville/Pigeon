@@ -10,7 +10,6 @@
 
 import Foundation
 import PigeonCore
-import PigeonMesh
 
 /// Owns encrypted sessions with contacts and bridges them to the mesh.
 ///

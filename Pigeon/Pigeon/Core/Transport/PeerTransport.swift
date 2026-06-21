@@ -19,7 +19,7 @@
 
 import CoreBluetooth
 import Foundation
-import PigeonMesh
+import PigeonCore
 
 /// The BLE implementation of `Transport`. Drives Bluetooth discovery and
 /// messaging and publishes observable state for the UI. Runs on the main actor;
