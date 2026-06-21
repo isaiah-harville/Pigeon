@@ -325,6 +325,40 @@ Pigeon keeps the trust cost minimal:
 > trusted session** — those are gated by the identity ↔ Olm Curve25519 binding
 > and the Olm message authentication, which the relay cannot forge.
 
+#### Push wake-up (APNs) — official relay only, on by default
+
+Relay delivery is otherwise WebSocket-pull only: to receive, the app must be
+running and holding an authenticated subscription to its mailbox. iOS suspends or
+terminates backgrounded apps, so a message can sit in the mailbox unseen until the
+user reopens Pigeon. APNs is the only Apple-sanctioned way to wake a suspended or
+terminated app, and an APNs push to the Pigeon bundle id can only be signed by the
+holder of the app's `.p8` key — the app publisher. So push **cannot be federated**:
+the **official** Pigeon relay additionally runs a thin APNs gateway; self-hosted
+and third-party relays leave it unconfigured and never push (best-effort
+background reception, exactly as before).
+
+It is **on by default but user-controllable** (Relays → Push wake-ups turns it
+off, falling back to best-effort background reception). When on, the client
+registers its APNs device
+token with its official relay over the *existing* mailbox-ownership handshake
+(`Subscribe → Challenge → Auth`), so a token can only ever be bound to a mailbox
+by that mailbox's key holder — no new trust path. When ciphertext is deposited for
+a mailbox with a registered token, the gateway sends a **content-free** visible
+alert ("New message / Open Pigeon to read your message") — no sender, content, or
+count. The push only wakes the app; it then drains the mailbox and decrypts on
+unlock through the unchanged locked-receive pipeline. **No message content ever
+traverses Apple.**
+
+The cost is **metadata, not confidentiality**. This centralizes the *wake signal*:
+the official gateway learns `device token ↔ "this mailbox has mail at time T"`, and
+Apple sees push-delivery metadata — more than the blind relay alone. Pushes are
+coalesced per mailbox to blunt deposit-driven timing leakage. This is a deliberate,
+documented exception to the project's "no new network services beyond the relay"
+rule and to the relay's "learns only public keys" property (now also a device
+token, on the official deployment only). A future Notification Service Extension
+for richer (decrypted) notifications would require loosening the biometric vault
+and is explicitly out of scope.
+
 ---
 
 ## 7. Attacker Model
