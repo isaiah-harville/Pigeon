@@ -186,12 +186,12 @@ extension SessionManager {
 
   /// Conversation history with `contact`.
   func messages(with contact: Contact) -> [ChatMessage] {
-    conversations[contact.id] ?? []
+    conversationStore.messages(for: contact.id)
   }
 
   /// The most recent non-system message with `contact`, for list previews.
   func lastMessage(with contact: Contact) -> ChatMessage? {
-    conversations[contact.id]?.last { !$0.system }
+    conversationStore.lastNonSystem(for: contact.id)
   }
 
   /// The safety number to compare in person with `contact`.

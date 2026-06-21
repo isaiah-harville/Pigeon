@@ -33,8 +33,8 @@ final class SessionManager {
   var contacts: [Contact] = []
   /// Identity ids of contacts with a fully established, verified session.
   var establishedContactIDs: Set<Data> = []
-  /// What the UI shows: every message this session, persisted or not.
-  var conversations: [Data: [ChatMessage]] = [:]
+  /// Conversation history and per-message edits (the in-memory view + disk mirror).
+  let conversationStore = ConversationStore()
   /// Contacts whose chat is ephemeral — new messages are kept in memory only.
   var ephemeralContactIDs: Set<Data> = []
   /// Contacts whose chat uses Bluetooth instead of the relay. Relay is the
@@ -78,8 +78,6 @@ final class SessionManager {
   /// (re-running `establishInbound` would build a second session); a *different*
   /// payload signals a genuine peer restart and triggers a rebuild.
   var lastInitiationIn: [Data: Data] = [:]
-  /// The on-disk mirror of conversations (excludes ephemeral-era messages).
-  var persistedConversations: [Data: [ChatMessage]] = [:]
 
   /// Envelopes received while locked (we can't decrypt or persist yet), replayed
   /// once unlocked. See `LockedInbox`.
@@ -180,8 +178,7 @@ final class SessionManager {
     for (key, messages) in state.conversations {
       if let id = Data(base64Encoded: key) { loaded[id] = messages }
     }
-    persistedConversations = loaded
-    conversations = loaded  // start the in-memory view from what's on disk
+    conversationStore.load(loaded)  // in-memory view starts from what's on disk
     ephemeralContactIDs = Set(state.ephemeralContactIDs.compactMap { Data(base64Encoded: $0) })
     bluetoothChatIDs = Set(state.bluetoothContactIDs.compactMap { Data(base64Encoded: $0) })
     myName = state.myName

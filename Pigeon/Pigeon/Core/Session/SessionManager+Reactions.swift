@@ -12,7 +12,7 @@ import PigeonMesh
 extension SessionManager {
 
   func toggleReaction(_ emoji: String, for message: ChatMessage, in contact: Contact) {
-    let current = conversations[contact.id]?.first { $0.id == message.id }?.personalReaction
+    let current = conversationStore.personalReaction(messageID: message.id, for: contact.id)
     let reaction = current == emoji ? nil : emoji
     setReaction(reaction, messageID: message.id, contactID: contact.id, fromMe: true)
     sendReaction(reaction, messageID: message.id, to: contact)
@@ -40,20 +40,8 @@ extension SessionManager {
   private func setReaction(
     _ emoji: String?, messageID: UUID, contactID: Data, fromMe: Bool
   ) {
-    if let index = conversations[contactID]?.firstIndex(where: { $0.id == messageID }) {
-      if fromMe {
-        conversations[contactID]?[index].personalReaction = emoji
-      } else {
-        conversations[contactID]?[index].otherReactions = emoji.map { [$0] } ?? []
-      }
-    }
-    if let index = persistedConversations[contactID]?.firstIndex(where: { $0.id == messageID }) {
-      if fromMe {
-        persistedConversations[contactID]?[index].personalReaction = emoji
-      } else {
-        persistedConversations[contactID]?[index].otherReactions = emoji.map { [$0] } ?? []
-      }
-    }
+    conversationStore.setReaction(
+      emoji, personal: fromMe, messageID: messageID, contactID: contactID)
     persist()
   }
 

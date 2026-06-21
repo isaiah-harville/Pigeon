@@ -71,32 +71,21 @@ extension SessionManager {
     if let initiation = pendingInitiation[contact.id] {
       sendEnvelope(.x3dhInit, payload: initiation, to: contact)
     }
-    let pending = (conversations[contact.id] ?? []).filter { $0.mine && $0.pending }
-    for message in pending {
+    for message in conversationStore.pending(for: contact.id) {
       transmit(message, to: contact)
     }
   }
 
   /// Flips a message's pending flag in both the in-memory view and the disk mirror.
   func setPending(_ pending: Bool, messageID: UUID, contactID: Data) {
-    if let index = conversations[contactID]?.firstIndex(where: { $0.id == messageID }) {
-      conversations[contactID]?[index].pending = pending
-    }
-    if let index = persistedConversations[contactID]?.firstIndex(where: { $0.id == messageID }) {
-      persistedConversations[contactID]?[index].pending = pending
-    }
+    conversationStore.setPending(pending, messageID: messageID, contactID: contactID)
   }
 
   /// Records the link a message is being dispatched over, in both the in-memory
   /// view and the disk mirror, so a pending message resent after a transport
   /// switch reflects the link it actually went out on (shown on long-press).
   func setTransport(_ channel: TransportChannel?, messageID: UUID, contactID: Data) {
-    if let index = conversations[contactID]?.firstIndex(where: { $0.id == messageID }) {
-      conversations[contactID]?[index].transport = channel
-    }
-    if let index = persistedConversations[contactID]?.firstIndex(where: { $0.id == messageID }) {
-      persistedConversations[contactID]?[index].transport = channel
-    }
+    conversationStore.setTransport(channel, messageID: messageID, contactID: contactID)
   }
 
   // MARK: - Logging & persistence
@@ -109,10 +98,8 @@ extension SessionManager {
   /// Appends a message to the in-memory view, and to the on-disk mirror unless
   /// the chat is ephemeral, then persists.
   func record(_ message: ChatMessage, for contactID: Data) {
-    conversations[contactID, default: []].append(message)
-    if !ephemeralContactIDs.contains(contactID) {
-      persistedConversations[contactID, default: []].append(message)
-    }
+    conversationStore.record(
+      message, for: contactID, ephemeral: ephemeralContactIDs.contains(contactID))
     persist()
   }
 
@@ -129,7 +116,7 @@ extension SessionManager {
         verifiedInPerson: contact.verifiedInPerson)
     }
     var conversationsByKey: [String: [ChatMessage]] = [:]
-    for (id, messages) in persistedConversations {
+    for (id, messages) in conversationStore.persistedConversations {
       conversationsByKey[id.base64EncodedString()] = messages
     }
     // Re-seal the Olm account alongside the rest of the state. Inbound

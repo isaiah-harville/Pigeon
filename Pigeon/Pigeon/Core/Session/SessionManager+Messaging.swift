@@ -96,7 +96,7 @@ extension SessionManager {
     // Acknowledge every delivery (even duplicates) so the sender stops retrying.
     sendAck(messageID: received.id, to: contact)
     // Deduplicate by the sender's message id (a retried message arrives twice).
-    if conversations[contact.id]?.contains(where: { $0.id == received.id }) == true { return }
+    if conversationStore.contains(messageID: received.id, for: contact.id) { return }
     received.transport = channel
     record(received, for: contact.id)
 
