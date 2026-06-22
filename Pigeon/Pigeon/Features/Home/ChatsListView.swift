@@ -15,6 +15,7 @@ struct ChatsListView: View {
 
   @State private var showAddContact = false
   @State private var showMenu = false
+  @State private var showContacts = false
 
   var body: some View {
     NavigationStack {
@@ -24,7 +25,7 @@ struct ChatsListView: View {
 
   private var content: some View {
     Group {
-      if session.contacts.isEmpty {
+      if session.chatContacts.isEmpty {
         emptyState
       } else {
         contactList
@@ -37,6 +38,7 @@ struct ChatsListView: View {
     .toolbar { toolbarContent }
     .sheet(isPresented: $showAddContact) { AddContactView() }
     .sheet(isPresented: $showMenu) { MenuView() }
+    .sheet(isPresented: $showContacts) { ContactsListView() }
   }
 
   @ToolbarContentBuilder
@@ -55,6 +57,15 @@ struct ChatsListView: View {
         .font(.system(size: 28, weight: .heavy, design: .rounded).smallCaps())
         .tracking(2)
         .foregroundStyle(.primary)
+    }
+    ToolbarItem(placement: .topBarTrailing) {
+      Button {
+        showContacts = true
+      } label: {
+        Image(systemName: "person.2")
+          .font(.title3)
+      }
+      .accessibilityLabel("Contacts")
     }
     ToolbarItem(placement: .topBarTrailing) {
       Button {
@@ -105,13 +116,20 @@ struct ChatsListView: View {
 
   private var contactList: some View {
     List {
-      ForEach(session.contacts) { contact in
+      ForEach(session.chatContacts) { contact in
         NavigationLink {
           ChatView(contact: contact)
         } label: {
           ContactRow(contact: contact)
         }
         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+        .swipeActions(edge: .trailing) {
+          Button(role: .destructive) {
+            session.deleteConversation(with: contact)
+          } label: {
+            Label("Delete", systemImage: "trash")
+          }
+        }
       }
     }
     .listStyle(.plain)
@@ -119,32 +137,47 @@ struct ChatsListView: View {
 
   // MARK: - Empty state
 
+  // Two cases: no contacts at all (add one), or contacts exist in the book but no
+  // open conversation (open one).
+  private var hasContacts: Bool { !session.contacts.isEmpty }
+
   private var emptyState: some View {
     VStack(spacing: 20) {
-      Image(systemName: "qrcode.viewfinder")
+      Image(systemName: hasContacts ? "person.2" : "qrcode.viewfinder")
         .font(.system(size: 64, weight: .light))
         .foregroundStyle(.tint)
       VStack(spacing: 6) {
         Text("No conversations yet")
           .font(.title3.weight(.semibold))
-        Text("Add someone by scanning their Pigeon QR code in person.")
-          .font(.callout)
-          .foregroundStyle(.secondary)
-          .multilineTextAlignment(.center)
+        Text(
+          hasContacts
+            ? "Open a contact from your contacts book to start chatting."
+            : "Add someone by scanning their Pigeon QR code in person."
+        )
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
       }
-      Button {
-        showAddContact = true
-      } label: {
-        Label("Add Contact", systemImage: "plus")
-          .font(.body.weight(.semibold))
-          .padding(.horizontal, 8)
-      }
-      .buttonStyle(.borderedProminent)
-      .controlSize(.large)
-      .buttonBorderShape(.capsule)
+      emptyStateButton
     }
     .padding(40)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private var emptyStateButton: some View {
+    Button {
+      if hasContacts { showContacts = true } else { showAddContact = true }
+    } label: {
+      Label(
+        hasContacts ? "Open Contacts" : "Add Contact",
+        systemImage: hasContacts ? "person.2" : "plus"
+      )
+      .font(.body.weight(.semibold))
+      .padding(.horizontal, 8)
+    }
+    .buttonStyle(.borderedProminent)
+    .controlSize(.large)
+    .buttonBorderShape(.capsule)
   }
 }
 
