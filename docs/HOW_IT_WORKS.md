@@ -309,7 +309,7 @@ deliberately dumb, **zero-knowledge** mailbox. What makes trusting it unnecessar
   verifies the signature against your public key. The relay only ever learns
   *public* keys.
 - Anyone can **drop off** a locked box for your mailbox; the relay **stores and
-  forwards** it (up to 7 days) until you fetch it, then deletes it once your phone
+  forwards** it (up to 30 days) until you fetch it, then deletes it once your phone
   acknowledges receipt.
 - The relay **never** sees plaintext, holds no keys, and cannot forge a message
   (integrity/authenticity are guaranteed end-to-end by the Olm session's message

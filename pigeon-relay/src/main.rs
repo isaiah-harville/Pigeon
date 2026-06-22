@@ -62,7 +62,7 @@ fn env_u64(key: &str, default: u64) -> u64 {
 async fn main() {
     let addr = std::env::var("PIGEON_RELAY_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into());
     let cfg = Config {
-        ttl_secs: env_u64("PIGEON_RELAY_TTL_SECS", 7 * 24 * 3600),
+        ttl_secs: env_u64("PIGEON_RELAY_TTL_SECS", 30 * 24 * 3600),
         max_queue: env_u64("PIGEON_RELAY_MAX_QUEUE", 1000) as usize,
     };
 

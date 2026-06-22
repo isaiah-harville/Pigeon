@@ -59,6 +59,14 @@ final class ConversationStore {
     if !ephemeral { persistedConversations[contactID, default: []].append(message) }
   }
 
+  /// Drops a contact's entire message history from both the in-memory view and
+  /// the on-disk mirror. Used when deleting a conversation; the contact and its
+  /// session are kept by the owner.
+  func clear(contactID: Data) {
+    conversations[contactID] = nil
+    persistedConversations[contactID] = nil
+  }
+
   func setPending(_ pending: Bool, messageID: UUID, contactID: Data) {
     mutate(messageID: messageID, contactID: contactID) { $0.pending = pending }
   }

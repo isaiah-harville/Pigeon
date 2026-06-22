@@ -18,6 +18,14 @@ struct AddContactView: View {
   @State private var showingMyQR = false
   @State private var showingMyFingerprint = false
   @State private var addedName: String?
+  /// Whether we presented our own code (QR or fingerprint) before scanning. If so
+  /// the other person has already added us, so once we add them the exchange is
+  /// complete — we don't flip back to our QR (we were the second to scan).
+  @State private var didShowMyCode = false
+
+  /// The mutual exchange is finished: we added them *and* we'd already shown our
+  /// code first, so they've added us too.
+  private var isComplete: Bool { addedName != nil && didShowMyCode }
 
   var body: some View {
     NavigationStack {
@@ -54,6 +62,9 @@ struct AddContactView: View {
   }
 
   private var scannerHintText: String {
+    if isComplete {
+      return "Added \(addedName ?? ""). You're all set."
+    }
     if let addedName {
       return "Added \(addedName). Now have them scan your QR code to add you back."
     }
@@ -76,13 +87,15 @@ struct AddContactView: View {
   private var scanPanel: some View {
     VStack(spacing: 12) {
       scannerFrame
-      scanToggleButton
+      if !isComplete { scanToggleButton }
     }
   }
 
   private var scannerFrame: some View {
     ZStack {
-      if showingMyQR {
+      if isComplete {
+        completionView
+      } else if showingMyQR {
         myQRCode
       } else {
         QRScanner { code in handle(code, verifiedInPerson: true) }
@@ -91,7 +104,7 @@ struct AddContactView: View {
     }
     .aspectRatio(1, contentMode: .fit)
     .frame(maxWidth: 340)
-    .background(showingMyQR ? Color(.systemBackground) : .black)
+    .background(showingMyQR || isComplete ? Color(.systemBackground) : .black)
     .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
     .overlay(
       RoundedRectangle(cornerRadius: 28, style: .continuous)
@@ -104,12 +117,23 @@ struct AddContactView: View {
     Button {
       withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
         showingMyQR.toggle()
+        if showingMyQR { didShowMyCode = true }
       }
     } label: {
       Label(showingMyQR ? "Scan Contact QR" : "Show My QR", systemImage: "qrcode")
     }
     .buttonStyle(.bordered)
     .buttonBorderShape(.capsule)
+  }
+
+  private var completionView: some View {
+    VStack(spacing: 16) {
+      Image(systemName: "checkmark.circle.fill")
+        .font(.system(size: 72))
+        .foregroundStyle(.green)
+      Text("Added \(addedName ?? "")")
+        .font(.headline)
+    }
   }
 
   private var myQRCode: some View {
@@ -152,6 +176,7 @@ struct AddContactView: View {
       Button {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
           showingMyFingerprint = true
+          didShowMyCode = true
         }
       } label: {
         Label("Show My Fingerprint", systemImage: "number")
@@ -193,12 +218,14 @@ struct AddContactView: View {
     {
       error = nil
       pasted = ""
-      // Mutual exchange: once we've added them, flip to our own QR so the
-      // other person can scan us back without leaving this screen.
+      // Mutual exchange: if we hadn't already shown our code, flip to our own QR
+      // so the other person can scan us back without leaving this screen. If we
+      // *had* shown it first, they've already added us, so this completes the
+      // exchange (see `isComplete`) and we don't show our QR again.
       withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
         addedName = name
         showingMyFingerprint = false
-        showingMyQR = true
+        showingMyQR = !didShowMyCode
       }
     } else {
       error = "Couldn't add this contact (invalid binding, or it's your own code)."

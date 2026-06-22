@@ -52,11 +52,14 @@ extension SessionManager {
   /// Live reachability of the link this chat is set to use, so the header can
   /// show whether a message can go out *right now* over the chosen transport
   /// (not just whether a session was ever established). A Bluetooth chat is
-  /// reachable when a peer is connected; a relay chat when one of our relays is
-  /// online (the mailbox we deposit to). Reads observable transport state, so it
-  /// refreshes as links come and go.
+  /// reachable when a peer is connected; a relay chat when we hold a ready
+  /// connection to one of the *contact's* advertised relays (the mailbox we'd
+  /// deposit to) — not merely when one of our own relays is online, which says
+  /// nothing about whether the recipient can be reached. Reads observable
+  /// transport state, so it refreshes as links come and go.
   func chosenLinkReachable(for contact: Contact) -> Bool {
-    usesBluetooth(contact) ? connectedPeerCount > 0 : !relayHosts.isEmpty
+    if usesBluetooth(contact) { return connectedPeerCount > 0 }
+    return relay?.canReach(recipientRelays: advertisedRelays(for: contact)) ?? false
   }
 
   /// The relay host this chat will use: its chosen relay if set, otherwise
@@ -78,7 +81,7 @@ extension SessionManager {
   /// The full configured relay list (endpoints + enabled flags) for the settings UI.
   var relayEntries: [RelayEntry] { RelaySettings.entries() }
 
-  /// Whether the user has opted into APNs push wake-ups (off by default).
+  /// Whether APNs push wake-ups are enabled (on by default; the user can opt out).
   var pushEnabled: Bool { RelaySettings.pushEnabled }
 
   /// Opts into or out of push wake-ups: persists the choice and starts or stops
@@ -198,6 +201,58 @@ extension SessionManager {
       ensureEstablishing(contactID: contact.id)
     }
     note("Manual retry for \"\(contact.displayName)\"")
+  }
+
+  // MARK: - Contacts book vs. conversations
+
+  /// The contacts with an open conversation, for the home (chats) list — sorted
+  /// most-recent first, with chats that have no message yet (just started or
+  /// freshly added) floated to the top. The full book is `contacts`.
+  var chatContacts: [Contact] {
+    contacts
+      .filter { activeConversationIDs.contains($0.id) }
+      .sorted { lhs, rhs in
+        let lhsDate = lastMessage(with: lhs)?.date ?? .distantFuture
+        let rhsDate = lastMessage(with: rhs)?.date ?? .distantFuture
+        return lhsDate > rhsDate
+      }
+  }
+
+  /// Whether `contact` currently has an open conversation (shows on the home list).
+  func hasConversation(_ contact: Contact) -> Bool {
+    activeConversationIDs.contains(contact.id)
+  }
+
+  /// Opens (or re-opens) the conversation with `contact` so it shows on the home
+  /// list, without touching its history. Used when starting a chat from the book.
+  func startConversation(with contact: Contact) {
+    guard !activeConversationIDs.contains(contact.id) else { return }
+    activeConversationIDs.insert(contact.id)
+    persist()
+  }
+
+  /// Deletes the conversation with `contact`: clears its message history (memory +
+  /// disk mirror) and removes it from the home list. The contact stays in the
+  /// book and its Olm session is untouched, so re-opening the chat continues
+  /// without a re-handshake or re-scan. Per-chat transport/ephemeral preferences
+  /// belong to the contact's session, so they are deliberately left intact.
+  func deleteConversation(with contact: Contact) {
+    conversationStore.clear(contactID: contact.id)
+    activeConversationIDs.remove(contact.id)
+    persist()
+  }
+
+  /// Fully forgets a contact: clears its conversation, drops it from the book, and
+  /// resets its Olm session. Reaching this contact again requires re-scanning
+  /// their QR (the deliberate, documented reset path). The opposite of
+  /// `deleteConversation`, which keeps the contact.
+  func removeContact(_ contact: Contact) {
+    conversationStore.clear(contactID: contact.id)
+    activeConversationIDs.remove(contact.id)
+    contacts.removeAll { $0.id == contact.id }
+    resetSession(for: contact.id)
+    persist()
+    refreshRelay()
   }
 
   /// Conversation history with `contact`.

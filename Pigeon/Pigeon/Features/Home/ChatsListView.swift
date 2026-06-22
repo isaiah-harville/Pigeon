@@ -15,6 +15,12 @@ struct ChatsListView: View {
 
   @State private var showAddContact = false
   @State private var showMenu = false
+  @State private var showContacts = false
+  /// The chat to push in *this* (home) stack. Set when a contact is opened from
+  /// the contacts sheet, applied after the sheet dismisses so the chat opens in
+  /// the real navigation stack rather than inside the sheet.
+  @State private var openedChatID: Data?
+  @State private var pendingChatID: Data?
 
   var body: some View {
     NavigationStack {
@@ -24,19 +30,42 @@ struct ChatsListView: View {
 
   private var content: some View {
     Group {
-      if session.contacts.isEmpty {
+      if session.chatContacts.isEmpty {
         emptyState
       } else {
         contactList
       }
     }
+    // The bubble floats over the content, bottom-right. The empty state has its
+    // own add button, so it's only shown when there are chats.
+    .overlay(alignment: .bottomTrailing) {
+      if !session.chatContacts.isEmpty { addContactBubble }
+    }
     .navigationTitle("Pigeon")
     .navigationBarTitleDisplayMode(.inline)
-    .safeAreaInset(edge: .bottom) { statusStrip }
     .refreshable { await session.refreshChats() }
     .toolbar { toolbarContent }
+    .navigationDestination(item: $openedChatID) { id in
+      if let contact = session.contacts.first(where: { $0.id == id }) {
+        ChatView(contact: contact)
+      }
+    }
     .sheet(isPresented: $showAddContact) { AddContactView() }
     .sheet(isPresented: $showMenu) { MenuView() }
+    .sheet(isPresented: $showContacts, onDismiss: openPendingChat) {
+      ContactsListView { contactID in
+        pendingChatID = contactID
+        showContacts = false
+      }
+    }
+  }
+
+  /// Pushes the chat queued from the contacts sheet, once the sheet has fully
+  /// dismissed (so the push lands in the home stack and animates cleanly).
+  private func openPendingChat() {
+    guard let id = pendingChatID else { return }
+    pendingChatID = nil
+    openedChatID = id
   }
 
   @ToolbarContentBuilder
@@ -58,60 +87,52 @@ struct ChatsListView: View {
     }
     ToolbarItem(placement: .topBarTrailing) {
       Button {
-        showAddContact = true
+        showContacts = true
       } label: {
-        Image(systemName: "qrcode.viewfinder")
+        Image(systemName: "person.2")
           .font(.title3)
       }
-      .accessibilityLabel("Add contact")
+      .accessibilityLabel("Contacts")
     }
   }
 
-  // MARK: - Connection status
-
-  private var statusStrip: some View {
-    HStack(spacing: 8) {
-      Circle()
-        .fill(statusColor)
-        .frame(width: 8, height: 8)
-      Text(statusText)
-        .font(.footnote.weight(.medium))
-        .foregroundStyle(.secondary)
-      Spacer()
+  /// The primary "add someone" action: a floating QR bubble in the bottom-right,
+  /// so the toolbar stays to navigation (menu + contacts) and the create action
+  /// reads as the prominent thing it is.
+  private var addContactBubble: some View {
+    Button {
+      showAddContact = true
+    } label: {
+      Image(systemName: "qrcode.viewfinder")
+        .font(.title2.weight(.semibold))
+        .foregroundStyle(.white)
+        .frame(width: 56, height: 56)
+        .background(Circle().fill(Color.accentColor))
+        .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
     }
-    .padding(.horizontal)
-    .padding(.vertical, 8)
-    .background(.bar)
-  }
-
-  private var statusColor: Color {
-    if session.connectedPeerCount > 0 { return .green }
-    switch session.status {
-    case .scanning: return .orange
-    case .idle: return .secondary
-    case .unauthorized, .poweredOff: return .red
-    }
-  }
-
-  private var statusText: String {
-    if session.connectedPeerCount > 0 {
-      let peers = session.connectedPeerCount
-      return "Connected to \(peers) \(peers == 1 ? "peer" : "peers")"
-    }
-    return session.status.rawValue
+    .padding(.trailing, 20)
+    .padding(.bottom, 20)
+    .accessibilityLabel("Add contact")
   }
 
   // MARK: - Contact list
 
   private var contactList: some View {
     List {
-      ForEach(session.contacts) { contact in
+      ForEach(session.chatContacts) { contact in
         NavigationLink {
           ChatView(contact: contact)
         } label: {
           ContactRow(contact: contact)
         }
         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+        .swipeActions(edge: .trailing) {
+          Button(role: .destructive) {
+            session.deleteConversation(with: contact)
+          } label: {
+            Label("Delete", systemImage: "trash")
+          }
+        }
       }
     }
     .listStyle(.plain)
@@ -119,32 +140,47 @@ struct ChatsListView: View {
 
   // MARK: - Empty state
 
+  // Two cases: no contacts at all (add one), or contacts exist in the book but no
+  // open conversation (open one).
+  private var hasContacts: Bool { !session.contacts.isEmpty }
+
   private var emptyState: some View {
     VStack(spacing: 20) {
-      Image(systemName: "qrcode.viewfinder")
+      Image(systemName: hasContacts ? "person.2" : "qrcode.viewfinder")
         .font(.system(size: 64, weight: .light))
         .foregroundStyle(.tint)
       VStack(spacing: 6) {
         Text("No conversations yet")
           .font(.title3.weight(.semibold))
-        Text("Add someone by scanning their Pigeon QR code in person.")
-          .font(.callout)
-          .foregroundStyle(.secondary)
-          .multilineTextAlignment(.center)
+        Text(
+          hasContacts
+            ? "Open a contact from your contacts book to start chatting."
+            : "Add someone by scanning their Pigeon QR code in person."
+        )
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
       }
-      Button {
-        showAddContact = true
-      } label: {
-        Label("Add Contact", systemImage: "plus")
-          .font(.body.weight(.semibold))
-          .padding(.horizontal, 8)
-      }
-      .buttonStyle(.borderedProminent)
-      .controlSize(.large)
-      .buttonBorderShape(.capsule)
+      emptyStateButton
     }
     .padding(40)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private var emptyStateButton: some View {
+    Button {
+      if hasContacts { showContacts = true } else { showAddContact = true }
+    } label: {
+      Label(
+        hasContacts ? "Open Contacts" : "Add Contact",
+        systemImage: hasContacts ? "person.2" : "plus"
+      )
+      .font(.body.weight(.semibold))
+      .padding(.horizontal, 8)
+    }
+    .buttonStyle(.borderedProminent)
+    .controlSize(.large)
+    .buttonBorderShape(.capsule)
   }
 }
 

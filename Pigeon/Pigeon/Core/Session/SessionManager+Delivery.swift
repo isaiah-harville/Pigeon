@@ -53,9 +53,14 @@ extension SessionManager {
   }
 
   /// Replays envelopes buffered while locked, now that we can decrypt and
-  /// persist. Called from `attachStore` once the vault is open.
-  func drainLockedInbox() {
-    for entry in lockedInbox.drain() { handleInbound(entry.data, channel: entry.channel) }
+  /// persist. Called from `attachStore` once the vault is open. Returns whether
+  /// anything was buffered, so the caller can re-pull any relay copies we
+  /// surfaced-but-didn't-ack while locked (the relay still holds them).
+  @discardableResult
+  func drainLockedInbox() -> Bool {
+    let buffered = lockedInbox.drain()
+    for entry in buffered { handleInbound(entry.data, channel: entry.channel) }
+    return !buffered.isEmpty
   }
 
   // MARK: - Store-and-forward
@@ -97,24 +102,47 @@ extension SessionManager {
   /// Appends a message to the in-memory view, and to the on-disk mirror unless
   /// the chat is ephemeral, then persists.
   func record(_ message: ChatMessage, for contactID: Data) {
+    // Any recorded message (sent, received, or system) opens the conversation, so
+    // it appears on the home list — a deleted chat reappears when a message lands.
+    activeConversationIDs.insert(contactID)
     conversationStore.record(
       message, for: contactID, ephemeral: ephemeralContactIDs.contains(contactID))
     persist()
   }
 
-  /// Snapshots the live state (contacts, conversation mirror, ephemeral/Bluetooth
-  /// flags, Olm account) and hands it to `SessionPersistence` to seal at rest.
+  /// Seals the full live state (bulk + crypto) at rest via `SessionPersistence`.
   /// No-op before unlock; the store handle inside `persistence` is the second
   /// guard once attached.
   func persist() {
     guard isUnlocked else { return }
-    persistence.save(
-      SessionPersistence.Snapshot(
-        contacts: contacts,
-        conversations: conversationStore.persistedConversations,
-        ephemeralContactIDs: ephemeralContactIDs,
-        bluetoothChatIDs: bluetoothChatIDs,
-        myName: myName,
-        account: account))
+    persistence.save(snapshot())
+  }
+
+  /// Re-seals only the crypto blob (account + per-contact session pickles). The
+  /// fast path for a ratchet advance, where conversation history is unchanged —
+  /// avoids re-encoding the whole bulk store on every encrypted envelope. The
+  /// session pickle must be durable promptly (a stale one reuses Olm message
+  /// indices), so this is called on every session-encrypted send.
+  func persistCrypto() {
+    guard isUnlocked else { return }
+    persistence.saveCrypto(snapshot())
+  }
+
+  /// Snapshots the live state (contacts, conversation mirror, ephemeral/Bluetooth
+  /// flags, Olm account + per-contact session state) for `SessionPersistence` to
+  /// seal at rest.
+  private func snapshot() -> SessionPersistence.Snapshot {
+    SessionPersistence.Snapshot(
+      contacts: contacts,
+      conversations: conversationStore.persistedConversations,
+      ephemeralContactIDs: ephemeralContactIDs,
+      bluetoothChatIDs: bluetoothChatIDs,
+      activeConversationIDs: activeConversationIDs,
+      myName: myName,
+      account: account,
+      sessions: sessions,
+      pendingInitiation: pendingInitiation,
+      lastInitiationIn: lastInitiationIn,
+      fallbackRotatedAt: fallbackRotatedAt)
   }
 }

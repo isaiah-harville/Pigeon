@@ -18,7 +18,7 @@ use pigeon_core::{
     decode_olm_message, encode_olm_message, Account, IdentityBundle, Initiation, PrekeyBundle,
     Session,
 };
-use vodozemac::olm::AccountPickle;
+use vodozemac::olm::{AccountPickle, SessionPickle};
 
 uniffi::setup_scaffolding!();
 
@@ -47,7 +47,7 @@ pub enum PigeonError {
     Encryption,
     /// Olm decryption/authentication failed (tampering, wrong key, or replay).
     Decryption,
-    /// Failed to (de)serialize the persisted Olm account pickle.
+    /// Failed to (de)serialize a persisted Olm pickle (account or session).
     Serialization,
 }
 
@@ -62,7 +62,7 @@ impl std::fmt::Display for PigeonError {
             PigeonError::SessionCreation => "session creation failed",
             PigeonError::Encryption => "encryption failed",
             PigeonError::Decryption => "decryption failed",
-            PigeonError::Serialization => "account pickle (de)serialization failed",
+            PigeonError::Serialization => "pickle (de)serialization failed",
         };
         f.write_str(s)
     }
@@ -315,6 +315,27 @@ impl FfiSession {
 
 #[uniffi::export]
 impl FfiSession {
+    /// Restores a session from the host app's persisted parts: the serialized
+    /// ratchet pickle (from [`Self::export_pickle`]) and the peer's 32-byte
+    /// Ed25519 identity key (the contact id the session was stored under). Lets
+    /// an established conversation survive relaunch instead of re-handshaking.
+    #[uniffi::constructor]
+    pub fn import(pickle: Vec<u8>, remote_identity_key: Vec<u8>) -> Result<Arc<Self>, PigeonError> {
+        let remote = to_array32(&remote_identity_key)?;
+        let pickle: SessionPickle =
+            serde_json::from_slice(&pickle).map_err(|_| PigeonError::Serialization)?;
+        Ok(Arc::new(Self::new(Session::from_pickle(pickle, remote))))
+    }
+
+    /// The serialized Olm ratchet pickle (secret), for the host app to seal and
+    /// persist. Re-export after any operation that advances the ratchet (every
+    /// [`Self::encrypt`] / [`Self::decrypt`]) so the persisted state never lags
+    /// the live ratchet (a lagging pickle would reuse message indices).
+    pub fn export_pickle(&self) -> Result<Vec<u8>, PigeonError> {
+        serde_json::to_vec(&self.inner.lock().unwrap().pickle())
+            .map_err(|_| PigeonError::Serialization)
+    }
+
     /// Encrypts `plaintext`, advancing the ratchet; returns the encoded Olm
     /// message bytes.
     pub fn encrypt(&self, plaintext: Vec<u8>) -> Result<Vec<u8>, PigeonError> {
@@ -400,6 +421,44 @@ mod tests {
             parse_identity_bundle(bad.encode()),
             Err(PigeonError::InvalidSignature)
         ));
+    }
+
+    #[test]
+    fn session_pickle_round_trips_and_keeps_ratcheting() {
+        // Establish, exchange a message, then persist *both* sides' sessions and
+        // restore them — the conversation must continue across the round-trip
+        // exactly as if the apps had never been killed (no re-handshake).
+        let alice = FfiAccount::generate().unwrap();
+        let bob = FfiAccount::generate().unwrap();
+        let bundle = bob.take_one_time_prekey_bundles().pop().unwrap();
+        let outbound = alice.establish_outbound(bundle, b"hello".to_vec()).unwrap();
+        let inbound = bob.establish_inbound(outbound.initiation).unwrap();
+        assert_eq!(inbound.plaintext, b"hello");
+
+        // Persist and restore both ratchets (sealing the pickle is the host's job).
+        let alice_restored = FfiSession::import(
+            outbound.session.export_pickle().unwrap(),
+            bob.identity_public_key(),
+        )
+        .unwrap();
+        let bob_restored = FfiSession::import(
+            inbound.session.export_pickle().unwrap(),
+            alice.identity_public_key(),
+        )
+        .unwrap();
+
+        // The restored peer identity is preserved (the safety-number check still
+        // has something to compare against).
+        assert_eq!(
+            alice_restored.remote_identity_key(),
+            bob.identity_public_key()
+        );
+
+        // Traffic continues over the restored sessions, both directions.
+        let m1 = alice_restored.encrypt(b"after restart".to_vec()).unwrap();
+        assert_eq!(bob_restored.decrypt(m1).unwrap(), b"after restart");
+        let m2 = bob_restored.encrypt(b"got it".to_vec()).unwrap();
+        assert_eq!(alice_restored.decrypt(m2).unwrap(), b"got it");
     }
 
     #[test]
