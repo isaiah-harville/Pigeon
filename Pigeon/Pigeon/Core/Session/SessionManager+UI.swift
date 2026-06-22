@@ -203,6 +203,58 @@ extension SessionManager {
     note("Manual retry for \"\(contact.displayName)\"")
   }
 
+  // MARK: - Contacts book vs. conversations
+
+  /// The contacts with an open conversation, for the home (chats) list — sorted
+  /// most-recent first, with chats that have no message yet (just started or
+  /// freshly added) floated to the top. The full book is `contacts`.
+  var chatContacts: [Contact] {
+    contacts
+      .filter { activeConversationIDs.contains($0.id) }
+      .sorted { lhs, rhs in
+        let lhsDate = lastMessage(with: lhs)?.date ?? .distantFuture
+        let rhsDate = lastMessage(with: rhs)?.date ?? .distantFuture
+        return lhsDate > rhsDate
+      }
+  }
+
+  /// Whether `contact` currently has an open conversation (shows on the home list).
+  func hasConversation(_ contact: Contact) -> Bool {
+    activeConversationIDs.contains(contact.id)
+  }
+
+  /// Opens (or re-opens) the conversation with `contact` so it shows on the home
+  /// list, without touching its history. Used when starting a chat from the book.
+  func startConversation(with contact: Contact) {
+    guard !activeConversationIDs.contains(contact.id) else { return }
+    activeConversationIDs.insert(contact.id)
+    persist()
+  }
+
+  /// Deletes the conversation with `contact`: clears its message history (memory +
+  /// disk mirror) and removes it from the home list. The contact stays in the
+  /// book and its Olm session is untouched, so re-opening the chat continues
+  /// without a re-handshake or re-scan. Per-chat transport/ephemeral preferences
+  /// belong to the contact's session, so they are deliberately left intact.
+  func deleteConversation(with contact: Contact) {
+    conversationStore.clear(contactID: contact.id)
+    activeConversationIDs.remove(contact.id)
+    persist()
+  }
+
+  /// Fully forgets a contact: clears its conversation, drops it from the book, and
+  /// resets its Olm session. Reaching this contact again requires re-scanning
+  /// their QR (the deliberate, documented reset path). The opposite of
+  /// `deleteConversation`, which keeps the contact.
+  func removeContact(_ contact: Contact) {
+    conversationStore.clear(contactID: contact.id)
+    activeConversationIDs.remove(contact.id)
+    contacts.removeAll { $0.id == contact.id }
+    resetSession(for: contact.id)
+    persist()
+    refreshRelay()
+  }
+
   /// Conversation history with `contact`.
   func messages(with contact: Contact) -> [ChatMessage] {
     conversationStore.messages(for: contact.id)
