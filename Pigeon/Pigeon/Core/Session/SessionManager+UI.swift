@@ -81,7 +81,7 @@ extension SessionManager {
   /// The full configured relay list (endpoints + enabled flags) for the settings UI.
   var relayEntries: [RelayEntry] { RelaySettings.entries() }
 
-  /// Whether the user has opted into APNs push wake-ups (off by default).
+  /// Whether APNs push wake-ups are enabled (on by default; the user can opt out).
   var pushEnabled: Bool { RelaySettings.pushEnabled }
 
   /// Opts into or out of push wake-ups: persists the choice and starts or stops
