@@ -3,16 +3,22 @@
 //  Pigeon
 //
 //  The persistence/account slice of the session coordinator: owns the encrypted
-//  store, builds (or restores) the device's Olm account from the identity seed +
+//  stores, builds (or restores) the device's Olm account from the identity seed +
 //  persisted pickle, and translates between the live domain objects and the
-//  on-disk `PersistedState`. Extracted from SessionManager so the codec and the
-//  store handle live in one focused type, leaving the coordinator to own only the
+//  on-disk state. Extracted from SessionManager so the codec and the store
+//  handles live in one focused type, leaving the coordinator to own only the
 //  orchestration (unlock, establishment, draining the locked inbox).
+//
+//  State is split across two sealed blobs (see `EncryptedStore`): the bulky
+//  conversation/contact state and the small, hot crypto state (account + per-
+//  contact ratchet pickles). The crypto blob can be re-sealed on its own via
+//  `saveCrypto` after a ratchet advance, so a send/ack no longer re-encodes the
+//  whole conversation history.
 //
 //  This type owns no live state of its own — it reads a `Snapshot` to seal and
 //  returns a `Loaded` to apply. The establishment/ratchet logic is untouched: the
 //  account it returns is mutated in place by SessionManager's messaging code and
-//  handed back here on the next `save`.
+//  handed back here on the next save.
 //
 
 import Foundation
@@ -24,9 +30,15 @@ import PigeonFFI
 @MainActor
 final class SessionPersistence {
 
-  /// The encrypted store, set at unlock. `nil` (and every `save` a no-op) until
-  /// `attach` runs, mirroring the old `guard let store` behaviour.
+  /// The bulk store (contacts + conversations), set at unlock. `nil` (and every
+  /// save a no-op) until `attach` runs.
   private var store: EncryptedStore?
+  /// The crypto store (account + per-contact session state), a sibling of `store`
+  /// under the same key. Re-sealed on its own via `saveCrypto`.
+  private var cryptoStore: EncryptedStore?
+
+  /// Suffix for the crypto companion blob (appended to the bulk store's name).
+  private static let cryptoSuffix = ".crypto"
 
   /// Everything restored from disk at unlock, ready for the coordinator to apply.
   struct Loaded {
@@ -36,6 +48,13 @@ final class SessionPersistence {
     var ephemeralContactIDs: Set<Data>
     var bluetoothChatIDs: Set<Data>
     var myName: String
+    /// Restored live Olm sessions, keyed by contact id. A contact appearing here
+    /// is (re)established without a fresh handshake.
+    var sessions: [Data: PigeonSession]
+    var pendingInitiation: [Data: Data]
+    var lastInitiationIn: [Data: Data]
+    /// When the signed-prekey (fallback) was last rotated; `nil` if never stamped.
+    var fallbackRotatedAt: Date?
   }
 
   /// The live state the coordinator hands over to be sealed at rest.
@@ -46,38 +65,49 @@ final class SessionPersistence {
     var bluetoothChatIDs: Set<Data>
     var myName: String
     var account: PigeonAccount?
+    /// Live per-contact session state to seal alongside the account. Keyed by
+    /// contact id.
+    var sessions: [Data: PigeonSession]
+    var pendingInitiation: [Data: Data]
+    var lastInitiationIn: [Data: Data]
+    var fallbackRotatedAt: Date?
   }
 
-  /// Attaches the store and decodes persisted state, (re)building the Olm account
+  /// Attaches the stores and decodes persisted state, (re)building the Olm account
   /// bound to `identitySeed`. First launch yields a fresh account under the
   /// existing identity; thereafter the persisted pickle is imported so the
-  /// published fallback prekey stays stable.
+  /// published fallback prekey stays stable. Stores written before the crypto/bulk
+  /// split are migrated transparently (their crypto fields move to the sibling on
+  /// the next save).
   func attach(_ store: EncryptedStore, identitySeed: Data) -> Loaded {
     self.store = store
-    let state = store.load()
+    let cryptoStore = store.companion(suffix: Self.cryptoSuffix)
+    self.cryptoStore = cryptoStore
+
+    let bulk = store.load(PersistedState.self) ?? PersistedState()
+    let crypto = cryptoStore.load(PersistedCrypto.self) ?? PersistedCrypto(migratingFrom: bulk)
+    let sessionState = Self.decodeSessionState(crypto.sessions)
     return Loaded(
-      account: Self.buildAccount(seed: identitySeed, state: state),
-      contacts: Self.decodeContacts(state.contacts),
-      conversations: Self.decodeConversations(state.conversations),
-      ephemeralContactIDs: Self.decodeIDs(state.ephemeralContactIDs),
-      bluetoothChatIDs: Self.decodeIDs(state.bluetoothContactIDs),
-      myName: state.myName)
+      account: Self.buildAccount(seed: identitySeed, crypto: crypto),
+      contacts: Self.decodeContacts(bulk.contacts),
+      conversations: Self.decodeConversations(bulk.conversations),
+      ephemeralContactIDs: Self.decodeIDs(bulk.ephemeralContactIDs),
+      bluetoothChatIDs: Self.decodeIDs(bulk.bluetoothContactIDs),
+      myName: bulk.myName,
+      sessions: sessionState.sessions,
+      pendingInitiation: sessionState.pending,
+      lastInitiationIn: sessionState.lastIn,
+      fallbackRotatedAt: crypto.fallbackRotatedAt.map { Date(timeIntervalSince1970: $0) })
   }
 
-  /// Writes contacts, the conversation mirror, ephemeral/Bluetooth flags, and the
-  /// re-sealed Olm account to the encrypted store (no-op before `attach`).
+  /// Writes the full state: the bulk blob (contacts + conversations + flags) and
+  /// the crypto blob (account + per-contact session state). No-op before `attach`.
   func save(_ snapshot: Snapshot) {
     guard let store else { return }
     var conversationsByKey: [String: [ChatMessage]] = [:]
     for (id, messages) in snapshot.conversations {
       conversationsByKey[id.base64EncodedString()] = messages
     }
-    // Re-seal the Olm account alongside the rest of the state. Inbound
-    // establishment and prekey rotation/replenish mutate the account, so its
-    // pickle is exported on every persist; the fallback public key rides along
-    // because Olm can't report it again after publishing.
-    let olmPickle = snapshot.account.flatMap { try? $0.exportOlmPickle() }
-    let olmFallbackKey = snapshot.account?.exportFallbackKey()
     store.save(
       PersistedState(
         contacts: snapshot.contacts.map(Self.encodeContact),
@@ -85,14 +115,42 @@ final class SessionPersistence {
         ephemeralContactIDs: snapshot.ephemeralContactIDs.map { $0.base64EncodedString() },
         bluetoothContactIDs: snapshot.bluetoothChatIDs.map { $0.base64EncodedString() },
         myName: snapshot.myName,
-        olmAccountPickle: olmPickle,
-        olmFallbackKey: olmFallbackKey))
+        olmAccountPickle: nil,  // crypto lives in the sibling blob now
+        olmFallbackKey: nil))
+    saveCrypto(snapshot)
+  }
+
+  /// Re-seals only the crypto blob (account + per-contact session state). Cheap
+  /// fast-path for the hot ratchet-advance path, where the bulk conversation
+  /// history is unchanged and need not be re-encoded. No-op before `attach`.
+  func saveCrypto(_ snapshot: Snapshot) {
+    guard let cryptoStore else { return }
+    // The session pickle is re-exported here so the sealed ratchet state never
+    // lags the live one (a stale pickle would reuse Olm message indices). Secret
+    // — only ever written sealed.
+    var sessions: [String: PersistedSession] = [:]
+    let ids = Set(snapshot.sessions.keys)
+      .union(snapshot.pendingInitiation.keys)
+      .union(snapshot.lastInitiationIn.keys)
+    for id in ids {
+      let entry = PersistedSession(
+        pickle: try? snapshot.sessions[id]?.exportPickle(),
+        pendingInitiation: snapshot.pendingInitiation[id],
+        lastInitiationIn: snapshot.lastInitiationIn[id])
+      if !entry.isEmpty { sessions[id.base64EncodedString()] = entry }
+    }
+    var crypto = PersistedCrypto()
+    crypto.olmAccountPickle = snapshot.account.flatMap { try? $0.exportOlmPickle() }
+    crypto.olmFallbackKey = snapshot.account?.exportFallbackKey()
+    crypto.fallbackRotatedAt = snapshot.fallbackRotatedAt?.timeIntervalSince1970
+    crypto.sessions = sessions
+    cryptoStore.save(crypto)
   }
 
   // MARK: - Account
 
-  private static func buildAccount(seed: Data, state: PersistedState) -> PigeonAccount? {
-    if let pickle = state.olmAccountPickle, let fallback = state.olmFallbackKey,
+  private static func buildAccount(seed: Data, crypto: PersistedCrypto) -> PigeonAccount? {
+    if let pickle = crypto.olmAccountPickle, let fallback = crypto.olmFallbackKey,
       let restored = try? PigeonAccount.`import`(
         seed: seed, olmPickle: pickle, fallbackKey: fallback)
     {
@@ -131,6 +189,31 @@ final class SessionPersistence {
         prekeyBundle: prekeyBundle,
         verifiedInPerson: persisted.verifiedInPerson)
     }
+  }
+
+  /// Rebuilds the live session state from the persisted crypto blob: the restored
+  /// Olm sessions plus the two initiation blobs that drive async establishment,
+  /// keyed by contact id. A session whose pickle no longer decodes is simply
+  /// skipped (it re-establishes on next contact), never crashing the unlock.
+  private static func decodeSessionState(_ persisted: [String: PersistedSession]) -> (
+    sessions: [Data: PigeonSession], pending: [Data: Data], lastIn: [Data: Data]
+  ) {
+    var sessions: [Data: PigeonSession] = [:]
+    var pending: [Data: Data] = [:]
+    var lastIn: [Data: Data] = [:]
+    for (key, entry) in persisted {
+      guard let id = Data(base64Encoded: key) else { continue }
+      // The contact id is the verified Ed25519 identity key the session was
+      // stored under; restoring re-attaches it to the ratchet.
+      if let pickle = entry.pickle,
+        let session = try? PigeonSession.import(pickle: pickle, remoteIdentityKey: id)
+      {
+        sessions[id] = session
+      }
+      if let initiation = entry.pendingInitiation { pending[id] = initiation }
+      if let initiation = entry.lastInitiationIn { lastIn[id] = initiation }
+    }
+    return (sessions, pending, lastIn)
   }
 
   private static func decodeConversations(_ stored: [String: [ChatMessage]]) -> [Data:

@@ -99,4 +99,30 @@ final class PigeonFFIRoundTripTests: XCTestCase {
       fallbackKey: bob.exportFallbackKey())
     XCTAssertEqual(reloaded.identityPublicKey(), identityBefore)
   }
+
+  /// Both ends persist (pickle) and restore their sessions, then keep talking —
+  /// the conversation must survive a cold start without a fresh handshake. This
+  /// is the Swift counterpart of the FFI's `session_pickle_round_trips_*` test
+  /// and underpins reliable store-and-forward delivery across app relaunch.
+  func testSessionPersistenceRoundTripContinuesConversation() throws {
+    let pair = try convergedPair()
+
+    // Restore both ratchets from their sealed pickles, re-attaching each peer's
+    // verified identity (the contact id the host keyed the session by).
+    let aliceRestored = try PigeonSession.import(
+      pickle: pair.aliceSession.exportPickle(),
+      remoteIdentityKey: pair.bob.identityPublicKey())
+    let bobRestored = try PigeonSession.import(
+      pickle: pair.bobSession.exportPickle(),
+      remoteIdentityKey: pair.alice.identityPublicKey())
+
+    XCTAssertEqual(aliceRestored.remoteIdentityKey(), pair.bob.identityPublicKey())
+    XCTAssertEqual(bobRestored.remoteIdentityKey(), pair.alice.identityPublicKey())
+
+    // Traffic continues both ways over the restored sessions.
+    let m1 = try aliceRestored.encrypt(plaintext: Data("after relaunch".utf8))
+    XCTAssertEqual(try bobRestored.decrypt(message: m1), Data("after relaunch".utf8))
+    let m2 = try bobRestored.encrypt(plaintext: Data("still here".utf8))
+    XCTAssertEqual(try aliceRestored.decrypt(message: m2), Data("still here".utf8))
+  }
 }

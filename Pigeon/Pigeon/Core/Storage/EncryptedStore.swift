@@ -2,8 +2,16 @@
 //  EncryptedStore.swift
 //  Pigeon
 //
-//  Persists app state (contacts, conversations) to disk, encrypted at rest
-//  with the Vault's key via SecretBox. The on-disk file is opaque ciphertext.
+//  Persists app state to disk, encrypted at rest with the Vault's key via
+//  SecretBox. The on-disk files are opaque ciphertext.
+//
+//  State is split across two sealed blobs under the same key so the small, hot
+//  crypto state (the Olm account + per-contact ratchet pickles, which change on
+//  *every* encrypt/decrypt and must be durable promptly) is written without
+//  re-encoding the bulky conversation history each time:
+//    • `pigeon.store`  — contacts, conversations, per-chat flags, display name.
+//    • `pigeon.crypto` — Olm account pickle + fallback + per-contact session
+//                        pickles and in-flight initiation blobs.
 //
 
 import CryptoKit
@@ -27,8 +35,8 @@ struct PersistedContact: Codable {
   var verifiedInPerson: Bool = true
 }
 
-/// The complete persisted app state. Conversation keys are contact identity
-/// keys, hex-encoded for use as dictionary keys in JSON.
+/// The bulky, slow-changing app state: contacts and conversation history.
+/// Conversation keys are contact identity keys, hex/base64-encoded for JSON.
 struct PersistedState: Codable {
   var contacts: [PersistedContact] = []
   var conversations: [String: [ChatMessage]] = [:]
@@ -39,21 +47,63 @@ struct PersistedState: Codable {
   var bluetoothContactIDs: [String] = []
   /// The local user's own display name, shared in their QR card.
   var myName: String = ""
-  /// The Olm account pickle (secret), sealed at rest with everything else here.
-  /// Persisted so the device's Olm identity/fallback prekey (advertised in the
-  /// QR) survives relaunch. `nil` before the account is first built.
+  /// Legacy crypto fields — read only to migrate stores written before the
+  /// crypto/bulk split, never written again (they live in `PersistedCrypto` now).
   var olmAccountPickle: Data?
-  /// The Olm account's current fallback public key (public), needed to rebuild
-  /// the account since Olm cannot report it after publishing.
   var olmFallbackKey: Data?
 }
 
-/// Reads and writes `PersistedState` as an encrypted blob in Application Support.
+/// One contact's persisted Olm session state (secret — only ever written sealed).
+struct PersistedSession: Codable {
+  /// The live ratchet pickle, so the conversation survives relaunch without a
+  /// fresh handshake. `nil` when no session is established yet.
+  var pickle: Data?
+  /// The initiation we sent but haven't seen acked, resent after relaunch until
+  /// the peer stands up its side. `nil` once acked.
+  var pendingInitiation: Data?
+  /// The last initiation we processed (responder-side dedup), so a retransmit
+  /// after relaunch doesn't rebuild a second session. `nil` until we accept one.
+  var lastInitiationIn: Data?
+
+  var isEmpty: Bool { pickle == nil && pendingInitiation == nil && lastInitiationIn == nil }
+}
+
+/// The small, frequently-rewritten crypto state, sealed apart from the bulk so a
+/// ratchet advance doesn't re-encode conversation history.
+struct PersistedCrypto: Codable {
+  /// The Olm account pickle (secret); the device's Olm identity/fallback prekey.
+  var olmAccountPickle: Data?
+  /// The account's current fallback public key (public), needed to rebuild it
+  /// since Olm cannot report it after publishing.
+  var olmFallbackKey: Data?
+  /// Unix-time seconds of the last signed-prekey (fallback) rotation; `nil` until
+  /// first stamped. Drives periodic rotation (bounds the no-one-time-key window).
+  var fallbackRotatedAt: Double?
+  /// Per-contact session state, keyed by base64 contact identity id.
+  var sessions: [String: PersistedSession] = [:]
+
+  /// Reconstructs crypto state from a legacy single-file `PersistedState` for
+  /// stores written before the split (only the account pickle + fallback ever
+  /// shipped that way; per-contact sessions were never persisted pre-split).
+  init(migratingFrom legacy: PersistedState) {
+    olmAccountPickle = legacy.olmAccountPickle
+    olmFallbackKey = legacy.olmFallbackKey
+  }
+
+  init() {}
+}
+
+/// Reads and writes a single sealed `Codable` blob in Application Support.
 struct EncryptedStore {
   private let key: SymmetricKey
   private let url: URL
 
+  /// The default bulk store.
   init(key: SymmetricKey) {
+    self.init(key: key, fileName: "pigeon.store")
+  }
+
+  init(key: SymmetricKey, fileName: String) {
     self.key = key
     let base =
       (try? FileManager.default.url(
@@ -61,30 +111,38 @@ struct EncryptedStore {
         in: .userDomainMask,
         appropriateFor: nil,
         create: true)) ?? FileManager.default.temporaryDirectory
-    self.url = base.appendingPathComponent("pigeon.store")
+    self.url = base.appendingPathComponent(fileName)
   }
 
-  /// Decrypts and decodes the stored state, or returns empty state if there is
-  /// nothing stored yet (or it can't be read with this key).
-  func load() -> PersistedState {
+  /// A companion store under the same key and directory whose file name is this
+  /// store's name plus `suffix` — for a separate sealed blob (e.g. the crypto
+  /// state kept apart from the bulk). Deriving from this store's own name keeps
+  /// companions distinct when several stores coexist (e.g. multiple identities).
+  func companion(suffix: String) -> EncryptedStore {
+    EncryptedStore(key: key, fileName: url.lastPathComponent + suffix)
+  }
+
+  /// Decrypts and decodes the stored blob, or `nil` if there is nothing stored
+  /// yet (or it can't be read/decoded with this key).
+  func load<T: Decodable>(_: T.Type) -> T? {
     guard let blob = try? Data(contentsOf: url),
       let plaintext = try? SecretBox.open(blob, key: key),
-      let state = try? JSONDecoder().decode(PersistedState.self, from: plaintext)
+      let value = try? JSONDecoder().decode(T.self, from: plaintext)
     else {
-      return PersistedState()
+      return nil
     }
-    return state
+    return value
   }
 
-  /// Encodes, encrypts, and writes the state atomically with file protection.
-  func save(_ state: PersistedState) {
-    guard let plaintext = try? JSONEncoder().encode(state),
+  /// Encodes, encrypts, and writes the blob atomically with file protection.
+  func save<T: Encodable>(_ value: T) {
+    guard let plaintext = try? JSONEncoder().encode(value),
       let blob = try? SecretBox.seal(plaintext, key: key)
     else { return }
     try? blob.write(to: url, options: [.atomic, .completeFileProtection])
   }
 
-  /// Removes the on-disk store (used when switching to ephemeral mode / wipe).
+  /// Removes this on-disk blob (used when switching to ephemeral mode / wipe).
   func wipe() {
     try? FileManager.default.removeItem(at: url)
   }

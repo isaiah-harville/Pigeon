@@ -71,6 +71,15 @@ final class SessionManager {
   /// surfaced through the facade in the extension below.
   let sessionRegistry = SessionRegistry()
 
+  /// When the device's signed-prekey (Olm fallback) was last rotated, restored
+  /// from and persisted to the crypto store. Drives periodic rotation to bound
+  /// the exposure window of the no-one-time-key async-first-contact path.
+  var fallbackRotatedAt: Date?
+  /// How often the signed prekey is rotated. Olm keeps the previous fallback
+  /// valid for one rotation, so a contact's stored QR card stays usable for first
+  /// contact for up to two intervals before they need a fresh code.
+  static let fallbackRotationInterval: TimeInterval = 7 * 24 * 3600
+
   /// Envelopes received while locked (we can't decrypt or persist yet), replayed
   /// once unlocked. See `LockedInbox`.
   var lockedInbox = LockedInbox()
@@ -144,16 +153,54 @@ final class SessionManager {
     ephemeralContactIDs = loaded.ephemeralContactIDs
     bluetoothChatIDs = loaded.bluetoothChatIDs
     myName = loaded.myName
+    // Restore established sessions so a relaunch continues the conversation
+    // instead of re-handshaking. A contact with a restored session is, by
+    // definition, established (the two are kept in lockstep everywhere else).
+    sessions = loaded.sessions
+    establishedContactIDs = Set(loaded.sessions.keys)
+    pendingInitiation = loaded.pendingInitiation
+    lastInitiationIn = loaded.lastInitiationIn
+    fallbackRotatedAt = loaded.fallbackRotatedAt
     isUnlocked = true
     lockedInbox.reset()
     refreshRelay()  // pick up loaded contacts' relays
+    // Drain anything buffered while locked *before* re-driving establishment, so
+    // a buffered initiation/rehandshake stands up the session itself and the
+    // `ensureEstablishing` pass below then no-ops — rather than both firing and
+    // racing into two competing initiations (the relaunch handshake bug).
+    // If anything was buffered while locked, re-subscribe our own relays: those
+    // envelopes were surfaced but not acked (we couldn't consume them locked),
+    // so the relay still holds them — pull them again now that we can ack.
+    if drainLockedInbox() { relay?.resubscribeOwnRelays() }
     for contact in contacts { ensureEstablishing(contactID: contact.id) }
-    drainLockedInbox()  // process anything that arrived while locked
+    maybeRotateFallbackKey()
   }
 
   /// Recomputes the relay connection pool (our relays plus every contact's).
   func refreshRelay() {
     relay?.reconfigure(RelaySettings.urls())
+  }
+
+  /// Rotates the signed (fallback) prekey if it's older than the rotation
+  /// interval, bounding the exposure window of the no-one-time-key first-contact
+  /// path (the only prekey path the QR card uses). A fresh account is stamped
+  /// without rotating — its fallback is already new. Called on unlock. No key
+  /// material is logged. Rotating changes our QR card's advertised prekey; Olm
+  /// keeps the previous fallback valid for one rotation so recently shared cards
+  /// still work for first contact.
+  func maybeRotateFallbackKey() {
+    guard let account else { return }
+    let now = Date()
+    guard let lastRotated = fallbackRotatedAt else {
+      fallbackRotatedAt = now  // first launch: stamp the already-fresh fallback
+      persist()
+      return
+    }
+    guard now.timeIntervalSince(lastRotated) >= Self.fallbackRotationInterval else { return }
+    account.rotateFallbackKey()
+    fallbackRotatedAt = now
+    note("Rotated signed prekey")
+    persist()
   }
 
   /// Persists and applies the full relay list (endpoints + enabled flags).

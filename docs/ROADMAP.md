@@ -24,9 +24,13 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
   ciphertext mailbox; federation-friendly) for peers out of local range. Relays
   are a first-class transport option but are never trusted for confidentiality,
   authentication, or integrity.
-- **Crypto:** Signal-grade — Noise handshake + Double Ratchet — implemented
-  clean-room over CryptoKit in the standalone `PigeonCrypto` package (chosen over
-  libsignal: AGPL/App-Store conflict, server-coupled design, auditability).
+- **Crypto:** Signal-grade end-to-end encryption via **Olm** (the audited
+  `vodozemac` crate) in the Rust `pigeon-core`, with Pigeon's own long-term
+  Ed25519 identity binding layered on top. Migrated (#79–#83) from the original
+  clean-room Swift `PigeonCrypto` (Noise XX + Double Ratchet over CryptoKit),
+  which has been removed. libsignal was rejected (AGPL/App-Store conflict,
+  server-coupled design); a Rust core keeps the protocol portable across future
+  clients and reachable from the app through a UniFFI bridge.
 - **Storage:** encrypted-at-rest (key tied to biometrics/passcode) + per-chat
   ephemeral (no-persistence) mode.
 - **Identity:** on-device Curve25519 keypair (no accounts/phone numbers); public
@@ -39,12 +43,16 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 
 ## Module layout
 
-- `PigeonCrypto/` — package: Primitives, DoubleRatchet, NoiseHandshake,
-  SecureSession, IdentityBundle, SecretBox (identity-agnostic, CLI-tested).
+- `pigeon-core/` — Rust crate (AGPL): the pairwise messaging core over Olm/
+  `vodozemac` — identity binding, account/prekeys, sessions, the protobuf wire
+  format. Reached from the app through the UniFFI bridge.
+- `pigeon-ffi/` — UniFFI crate: builds the XCFramework and generates the Swift
+  bindings vended by the `PigeonFFI` package (the app's crypto/mesh facade).
 - `pigeon-mesh/` — Rust crate: Fragmentation, MeshPacket (dedup/TTL/relay),
   SessionEnvelope (dependency-free, surfaced through the FFI).
+- `pigeon-relay/` — Rust (axum/tokio) zero-knowledge relay; ships as a Docker image.
 - `Pigeon/` (app) — Identity (Keychain), CoreBluetooth transport, MeshService,
-  SessionManager, encrypted storage, notifications, and SwiftUI. Links both packages.
+  SessionManager, encrypted storage, notifications, and SwiftUI. Links `PigeonFFI`.
 
 ---
 
