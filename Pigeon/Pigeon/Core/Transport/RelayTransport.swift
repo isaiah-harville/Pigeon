@@ -384,7 +384,7 @@ extension RelayTransport {
   func startPathMonitor() {
     pathMonitor.pathUpdateHandler = { [weak self] path in
       let available = path.status == .satisfied
-      Task { @MainActor in self?.handlePathChange(available: available) }
+      Task { @MainActor [weak self] in self?.handlePathChange(available: available) }
     }
     pathMonitor.start(queue: DispatchQueue(label: "com.isaiah-harville.Pigeon.relay.path"))
   }
