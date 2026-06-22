@@ -31,6 +31,11 @@ struct ChatsListView: View {
         contactList
       }
     }
+    // The bubble floats over the content (above the status strip, since this is
+    // applied before the inset). The empty state has its own add button.
+    .overlay(alignment: .bottomTrailing) {
+      if !session.chatContacts.isEmpty { addContactBubble }
+    }
     .navigationTitle("Pigeon")
     .navigationBarTitleDisplayMode(.inline)
     .safeAreaInset(edge: .bottom) { statusStrip }
@@ -67,15 +72,25 @@ struct ChatsListView: View {
       }
       .accessibilityLabel("Contacts")
     }
-    ToolbarItem(placement: .topBarTrailing) {
-      Button {
-        showAddContact = true
-      } label: {
-        Image(systemName: "qrcode.viewfinder")
-          .font(.title3)
-      }
-      .accessibilityLabel("Add contact")
+  }
+
+  /// The primary "add someone" action: a floating QR bubble in the bottom-right,
+  /// so the toolbar stays to navigation (menu + contacts) and the create action
+  /// reads as the prominent thing it is.
+  private var addContactBubble: some View {
+    Button {
+      showAddContact = true
+    } label: {
+      Image(systemName: "qrcode.viewfinder")
+        .font(.title2.weight(.semibold))
+        .foregroundStyle(.white)
+        .frame(width: 56, height: 56)
+        .background(Circle().fill(Color.accentColor))
+        .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
     }
+    .padding(.trailing, 20)
+    .padding(.bottom, 20)
+    .accessibilityLabel("Add contact")
   }
 
   // MARK: - Connection status
