@@ -311,11 +311,13 @@ extension SessionManager {
       type == .message ? chatChannels(for: contact) : TransportKind.all
     mesh.send(envelope.encoded(), to: contact.id, over: channels)
     // Every session-encrypted envelope (message/ack/control) and every initiation
-    // advances or creates ratchet state the caller just produced. Persist so the
-    // sealed session pickle never lags the live ratchet across a relaunch; a lag
-    // would reuse Olm message indices. Cheap and idempotent for the rare
-    // non-encrypting envelopes (e.g. rehandshake requests).
-    persist()
+    // advances or creates ratchet state the caller just produced. Persist the
+    // crypto blob so the sealed session pickle never lags the live ratchet across
+    // a relaunch; a lag would reuse Olm message indices. This is the crypto-only
+    // fast path — conversation history is untouched here, so we don't re-encode
+    // the bulk store. Idempotent for the rare non-encrypting envelopes (e.g.
+    // rehandshake requests).
+    persistCrypto()
   }
 
   func sessionRejectedMessage(for contact: Contact) -> String {

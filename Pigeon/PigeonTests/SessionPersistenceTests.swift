@@ -22,9 +22,16 @@ final class SessionPersistenceTests: XCTestCase {
   /// fresh handshake. This is the persistence-layer counterpart of the FFI's
   /// session pickle round-trip, exercising the actual app wiring (PersistedContact
   /// ↔ SessionRegistry) the bug lived in.
-  func testEstablishedSessionSurvivesSaveAndReload() throws {
+  /// A clean pair of stores (bulk + crypto sibling) under a fresh key.
+  private func freshStore() -> EncryptedStore {
     let store = EncryptedStore(key: SymmetricKey(size: .bits256))
-    store.wipe()  // start from a clean store
+    store.wipe()
+    store.companion(suffix: ".crypto").wipe()
+    return store
+  }
+
+  func testEstablishedSessionSurvivesSaveAndReload() throws {
+    let store = freshStore()
     let persistence = SessionPersistence()
 
     // "Alice" is the local device; "Bob" is a contact. Establish a session and
@@ -54,7 +61,8 @@ final class SessionPersistenceTests: XCTestCase {
         account: alice,
         sessions: [contactID: outbound.session],
         pendingInitiation: [:],
-        lastInitiationIn: [:]))
+        lastInitiationIn: [:],
+        fallbackRotatedAt: nil))
 
     // Re-attach as if the app had been relaunched: the session must come back.
     let reloaded = persistence.attach(store, identitySeed: alice.exportSeed())
@@ -71,8 +79,7 @@ final class SessionPersistenceTests: XCTestCase {
   /// too, so a relaunch mid-establishment resends/dedupes correctly instead of
   /// dropping the in-flight handshake.
   func testInitiationBlobsRoundTrip() throws {
-    let store = EncryptedStore(key: SymmetricKey(size: .bits256))
-    store.wipe()
+    let store = freshStore()
     let persistence = SessionPersistence()
 
     let alice = try PigeonAccount.generate()
@@ -94,11 +101,48 @@ final class SessionPersistenceTests: XCTestCase {
         account: alice,
         sessions: [:],
         pendingInitiation: [contactID: outBlob],
-        lastInitiationIn: [contactID: inBlob]))
+        lastInitiationIn: [contactID: inBlob],
+        fallbackRotatedAt: nil))
 
     let reloaded = persistence.attach(store, identitySeed: alice.exportSeed())
     XCTAssertNil(reloaded.sessions[contactID])  // no session was established
     XCTAssertEqual(reloaded.pendingInitiation[contactID], outBlob)
     XCTAssertEqual(reloaded.lastInitiationIn[contactID], inBlob)
+  }
+
+  /// The crypto-only fast path (`saveCrypto`) persists the account + session
+  /// state and the fallback-rotation timestamp, and survives reload — without a
+  /// preceding full `save`. This is what `sendEnvelope` calls on every ratchet
+  /// advance.
+  func testCryptoFastPathPersistsSessionAndRotationStamp() throws {
+    let store = freshStore()
+    let persistence = SessionPersistence()
+
+    let alice = try PigeonAccount.generate()
+    let bob = try PigeonAccount.generate()
+    let prekey = try XCTUnwrap(bob.takeOneTimePrekeyBundles().first)
+    let outbound = try alice.establishOutbound(peerBundle: prekey, firstPlaintext: Data("hi".utf8))
+    _ = try bob.establishInbound(initiation: outbound.initiation)
+    let contactID = bob.identityPublicKey()
+    let stamp = Date(timeIntervalSince1970: 1_700_000_000)
+
+    _ = persistence.attach(store, identitySeed: alice.exportSeed())
+    persistence.saveCrypto(
+      SessionPersistence.Snapshot(
+        contacts: [],
+        conversations: [:],
+        ephemeralContactIDs: [],
+        bluetoothChatIDs: [],
+        myName: "",
+        account: alice,
+        sessions: [contactID: outbound.session],
+        pendingInitiation: [:],
+        lastInitiationIn: [:],
+        fallbackRotatedAt: stamp))
+
+    let reloaded = persistence.attach(store, identitySeed: alice.exportSeed())
+    XCTAssertNotNil(reloaded.sessions[contactID])
+    XCTAssertEqual(
+      reloaded.fallbackRotatedAt?.timeIntervalSince1970, stamp.timeIntervalSince1970)
   }
 }
