@@ -9,8 +9,10 @@
 //
 //  Addressing: a direct message carries its recipient's identity key, so we
 //  deposit it only on *that* recipient's mailbox — on the relays they advertise
-//  (federation: relay URLs travel in the contact's QR bundle), falling back to
-//  our own relays when a contact advertises none. Address-less flood packets
+//  (federation: relay URLs travel in the contact's QR bundle). A contact that
+//  advertises no relays is simply unreachable over the internet: we never fall
+//  back to our own relays, because the recipient doesn't read them, so the
+//  deposit could never be delivered. Address-less flood packets
 //  (`recipient == nil`) are not sent over the internet at all.
 //
 //  To receive, we subscribe to our own mailbox on our own relays and prove
@@ -45,6 +47,15 @@ final class RelayTransport: Transport {
   /// header would otherwise never refresh when a relay comes up or drops.
   /// Recomputed from `connections` on every readiness change in `refreshLinkState`.
   private(set) var onlineRelayHosts: [String] = []
+
+  /// Every relay endpoint we currently hold a *ready* connection to — our own
+  /// (authenticated, for receiving) **and** publish-only contact relays (for
+  /// depositing). Stored (so `@Observable` sees it) and recomputed in
+  /// `refreshLinkState`, because readiness lives on the `Connection` reference
+  /// type inside `connections`, which `@Observable` can't see. Drives the chat
+  /// header's live "can a message actually go out over the relay" indicator,
+  /// which depends on reaching the *recipient's* relay — not just our own.
+  private(set) var readyRelayURLs: Set<URL> = []
 
   // Relays are not "peers"; the headline status/peer-count stay BLE's.
   var status: TransportStatus { .idle }
@@ -155,7 +166,7 @@ final class RelayTransport: Transport {
     guard let recipient else { return }
     let preferred = preferredRelayForRecipient(recipient)
     let targets = Self.deliveryTargets(
-      preferred: preferred, advertised: relaysForRecipient(recipient), myRelays: myRelays)
+      preferred: preferred, advertised: relaysForRecipient(recipient))
     let ready = targets.filter { connections[$0]?.ready == true && connections[$0]?.socket != nil }
     guard !ready.isEmpty else { return }
 
@@ -309,6 +320,8 @@ final class RelayTransport: Transport {
   /// *receive*); publish-only connections to contacts' relays don't change it.
   private func refreshLinkState() {
     onlineRelayHosts = myRelays.compactMap { connections[$0]?.ready == true ? host($0) : nil }
+    readyRelayURLs = Set(
+      connections.filter { $0.value.ready && $0.value.socket != nil }.map(\.key))
     if myRelays.isEmpty {
       linkState = .disabled
     } else if !onlineRelayHosts.isEmpty {
@@ -327,6 +340,38 @@ final class RelayTransport: Transport {
 
   private static func hex(_ data: Data) -> String {
     data.map { String(format: "%02x", $0) }.joined()
+  }
+}
+
+// MARK: - Reachability & post-unlock re-flush
+
+extension RelayTransport {
+
+  /// Whether a message addressed to a contact who advertises `recipientRelays`
+  /// can actually be deposited right now: we hold a ready connection to at least
+  /// one relay they advertise. Mirrors `broadcast`'s target selection (any
+  /// advertised relay that's ready), so the chat header's "reachable" cue
+  /// reflects reaching the *recipient's* mailbox rather than merely our own
+  /// relay being online. Empty `recipientRelays` ⇒ unreachable over the relay.
+  func canReach(recipientRelays: [URL]) -> Bool {
+    recipientRelays.contains { readyRelayURLs.contains($0) }
+  }
+
+  /// Reconnects our own (authenticated) relays so their mailbox queues are
+  /// re-flushed. Called right after unlock: an envelope that arrived while we
+  /// were locked was surfaced for notification but deliberately not acked (we
+  /// couldn't durably consume it), so the relay still holds it. A live socket
+  /// won't re-send on its own, so we re-subscribe to pull the retained copy now
+  /// that we can process and ack it — instead of leaving it in the mailbox until
+  /// some future reconnect. Publish-only contact relays are left untouched.
+  func resubscribeOwnRelays() {
+    for (url, connection) in connections where connection.authenticate {
+      connection.task?.cancel()
+      connection.socket?.cancel(with: .goingAway, reason: nil)
+      let fresh = Connection(authenticate: true)
+      connections[url] = fresh
+      fresh.task = Task { [weak self] in await self?.supervise(url) }
+    }
   }
 }
 
@@ -434,20 +479,23 @@ extension RelayTransport {
 
 extension RelayTransport {
 
-  /// Where to deposit ciphertext for a recipient: the relays they advertise
-  /// (federation) if any, otherwise our own as a fallback. Address-less sends
-  /// pass `advertised == []` *and* `myRelays == []` to target nothing.
-  static func deliveryTargets(advertised: [URL], myRelays: [URL]) -> [URL] {
-    deliveryTargets(preferred: nil, advertised: advertised, myRelays: myRelays)
+  /// Where to deposit ciphertext for a recipient: the relays *they* advertise
+  /// (federation). Only a relay the recipient actually subscribes to can deliver
+  /// to them, so a contact that advertises none yields no targets — we do **not**
+  /// fall back to our own relays. Depositing there is undeliverable (the
+  /// recipient never reads our mailbox relays) and would worse-than-uselessly
+  /// mask the failure by making the send look "sent". Address-less sends pass
+  /// `advertised == []` and likewise target nothing.
+  static func deliveryTargets(advertised: [URL]) -> [URL] {
+    deliveryTargets(preferred: nil, advertised: advertised)
   }
 
   /// As above, but ordered to honor a user-chosen relay for this conversation:
   /// the preferred relay first (when it's one the recipient advertises), then
   /// their remaining relays, so a dead preferred falls through to the rest (#18).
-  static func deliveryTargets(preferred: URL?, advertised: [URL], myRelays: [URL]) -> [URL] {
-    let base = advertised.isEmpty ? myRelays : advertised
-    guard let preferred, base.contains(preferred) else { return base }
-    return [preferred] + base.filter { $0 != preferred }
+  static func deliveryTargets(preferred: URL?, advertised: [URL]) -> [URL] {
+    guard let preferred, advertised.contains(preferred) else { return advertised }
+    return [preferred] + advertised.filter { $0 != preferred }
   }
 
   /// The relays we keep connected: our own (to receive) plus every contact's

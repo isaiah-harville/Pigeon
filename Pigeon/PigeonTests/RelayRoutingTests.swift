@@ -20,19 +20,15 @@ final class RelayRoutingTests: XCTestCase {
 
   func testDeliveryPrefersRecipientAdvertisedRelays() {
     let advertised = [url("wss://theirs.example/ws")]
-    let mine = [url("wss://mine.example/ws")]
-    // Federation: deposit on the recipient's relays, not ours.
-    XCTAssertEqual(
-      RelayTransport.deliveryTargets(advertised: advertised, myRelays: mine), advertised)
+    // Federation: deposit only on the recipient's relays.
+    XCTAssertEqual(RelayTransport.deliveryTargets(advertised: advertised), advertised)
   }
 
-  func testDeliveryFallsBackToOwnRelaysWhenRecipientAdvertisesNone() {
-    let mine = [url("wss://mine.example/ws")]
-    XCTAssertEqual(RelayTransport.deliveryTargets(advertised: [], myRelays: mine), mine)
-  }
-
-  func testDeliveryTargetsNothingWhenNoRelaysKnown() {
-    XCTAssertTrue(RelayTransport.deliveryTargets(advertised: [], myRelays: []).isEmpty)
+  func testDeliveryTargetsNothingWhenRecipientAdvertisesNone() {
+    // No own-relay fallback: a contact who advertises no relay can't be reached
+    // over the internet (they don't read our mailbox relays), so we target
+    // nothing rather than depositing somewhere undeliverable.
+    XCTAssertTrue(RelayTransport.deliveryTargets(advertised: []).isEmpty)
   }
 
   // MARK: - Per-conversation preferred relay (#18)
@@ -44,7 +40,7 @@ final class RelayRoutingTests: XCTestCase {
     // Preferred relay leads; the rest follow in order so a dead preferred
     // falls through to them.
     XCTAssertEqual(
-      RelayTransport.deliveryTargets(preferred: b, advertised: [a, b, c], myRelays: []),
+      RelayTransport.deliveryTargets(preferred: b, advertised: [a, b, c]),
       [b, a, c])
   }
 
@@ -53,25 +49,18 @@ final class RelayRoutingTests: XCTestCase {
     let stray = url("wss://stray.example/ws")
     // A preference the recipient doesn't advertise can't be honored — fall back
     // to their advertised relays unchanged.
-    XCTAssertEqual(
-      RelayTransport.deliveryTargets(preferred: stray, advertised: [a], myRelays: []),
-      [a])
+    XCTAssertEqual(RelayTransport.deliveryTargets(preferred: stray, advertised: [a]), [a])
   }
 
-  func testPreferredIgnoredWhenAdvertisesNoneFallsBackToOwn() {
-    let mine = [url("wss://mine.example/ws")]
+  func testPreferredIgnoredWhenAdvertisesNoneTargetsNothing() {
     let stray = url("wss://stray.example/ws")
-    XCTAssertEqual(
-      RelayTransport.deliveryTargets(preferred: stray, advertised: [], myRelays: mine),
-      mine)
+    XCTAssertTrue(RelayTransport.deliveryTargets(preferred: stray, advertised: []).isEmpty)
   }
 
   func testNilPreferredMatchesPlainDelivery() {
     let a = url("wss://a.example/ws")
     let b = url("wss://b.example/ws")
-    XCTAssertEqual(
-      RelayTransport.deliveryTargets(preferred: nil, advertised: [a, b], myRelays: []),
-      [a, b])
+    XCTAssertEqual(RelayTransport.deliveryTargets(preferred: nil, advertised: [a, b]), [a, b])
   }
 
   // MARK: - Connection set (reconfigure union)

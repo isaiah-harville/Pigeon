@@ -52,11 +52,14 @@ extension SessionManager {
   /// Live reachability of the link this chat is set to use, so the header can
   /// show whether a message can go out *right now* over the chosen transport
   /// (not just whether a session was ever established). A Bluetooth chat is
-  /// reachable when a peer is connected; a relay chat when one of our relays is
-  /// online (the mailbox we deposit to). Reads observable transport state, so it
-  /// refreshes as links come and go.
+  /// reachable when a peer is connected; a relay chat when we hold a ready
+  /// connection to one of the *contact's* advertised relays (the mailbox we'd
+  /// deposit to) — not merely when one of our own relays is online, which says
+  /// nothing about whether the recipient can be reached. Reads observable
+  /// transport state, so it refreshes as links come and go.
   func chosenLinkReachable(for contact: Contact) -> Bool {
-    usesBluetooth(contact) ? connectedPeerCount > 0 : !relayHosts.isEmpty
+    if usesBluetooth(contact) { return connectedPeerCount > 0 }
+    return relay?.canReach(recipientRelays: advertisedRelays(for: contact)) ?? false
   }
 
   /// The relay host this chat will use: its chosen relay if set, otherwise
