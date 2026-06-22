@@ -45,6 +45,10 @@ struct PersistedState: Codable {
   /// Base64 identity ids of contacts whose chat uses Bluetooth instead of the
   /// relay (relay is the default). Defaults empty so older stores still decode.
   var bluetoothContactIDs: [String] = []
+  /// Base64 identity ids of contacts that have an open conversation (a chat that
+  /// shows on the home list). A contact can exist in the book without one — see
+  /// the contacts/messaging split. Defaults empty.
+  var activeConversationIDs: [String] = []
   /// The local user's own display name, shared in their QR card.
   var myName: String = ""
   /// Legacy crypto fields — read only to migrate stores written before the
