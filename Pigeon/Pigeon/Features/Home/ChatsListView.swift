@@ -31,14 +31,13 @@ struct ChatsListView: View {
         contactList
       }
     }
-    // The bubble floats over the content (above the status strip, since this is
-    // applied before the inset). The empty state has its own add button.
+    // The bubble floats over the content, bottom-right. The empty state has its
+    // own add button.
     .overlay(alignment: .bottomTrailing) {
       if !session.chatContacts.isEmpty { addContactBubble }
     }
     .navigationTitle("Pigeon")
     .navigationBarTitleDisplayMode(.inline)
-    .safeAreaInset(edge: .bottom) { statusStrip }
     .refreshable { await session.refreshChats() }
     .toolbar { toolbarContent }
     .sheet(isPresented: $showAddContact) { AddContactView() }
@@ -91,40 +90,6 @@ struct ChatsListView: View {
     .padding(.trailing, 20)
     .padding(.bottom, 20)
     .accessibilityLabel("Add contact")
-  }
-
-  // MARK: - Connection status
-
-  private var statusStrip: some View {
-    HStack(spacing: 8) {
-      Circle()
-        .fill(statusColor)
-        .frame(width: 8, height: 8)
-      Text(statusText)
-        .font(.footnote.weight(.medium))
-        .foregroundStyle(.secondary)
-      Spacer()
-    }
-    .padding(.horizontal)
-    .padding(.vertical, 8)
-    .background(.bar)
-  }
-
-  private var statusColor: Color {
-    if session.connectedPeerCount > 0 { return .green }
-    switch session.status {
-    case .scanning: return .orange
-    case .idle: return .secondary
-    case .unauthorized, .poweredOff: return .red
-    }
-  }
-
-  private var statusText: String {
-    if session.connectedPeerCount > 0 {
-      let peers = session.connectedPeerCount
-      return "Connected to \(peers) \(peers == 1 ? "peer" : "peers")"
-    }
-    return session.status.rawValue
   }
 
   // MARK: - Contact list
