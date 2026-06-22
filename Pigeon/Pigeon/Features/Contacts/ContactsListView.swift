@@ -15,8 +15,11 @@ struct ContactsListView: View {
   @Environment(SessionManager.self) private var session
   @Environment(\.dismiss) private var dismiss
 
+  /// Called when a contact is opened, so the presenter can dismiss this sheet and
+  /// push the chat in the real (home) navigation stack rather than inside here.
+  let onOpenChat: (Data) -> Void
+
   @State private var showAddContact = false
-  @State private var openedContactID: Data?
   @State private var contactToRemove: Contact?
 
   /// All contacts, sorted by display name (case-insensitive).
@@ -32,11 +35,6 @@ struct ContactsListView: View {
         .navigationTitle("Contacts")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
-        .navigationDestination(item: $openedContactID) { id in
-          if let contact = session.contacts.first(where: { $0.id == id }) {
-            ChatView(contact: contact)
-          }
-        }
         .sheet(isPresented: $showAddContact) { AddContactView() }
         .alert(
           "Remove Contact?", isPresented: removeAlertBinding, presenting: contactToRemove
@@ -65,7 +63,7 @@ struct ContactsListView: View {
       ForEach(contacts) { contact in
         Button {
           session.startConversation(with: contact)
-          openedContactID = contact.id
+          onOpenChat(contact.id)
         } label: {
           ContactBookRow(contact: contact)
         }

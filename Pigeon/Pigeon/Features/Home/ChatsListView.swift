@@ -16,6 +16,11 @@ struct ChatsListView: View {
   @State private var showAddContact = false
   @State private var showMenu = false
   @State private var showContacts = false
+  /// The chat to push in *this* (home) stack. Set when a contact is opened from
+  /// the contacts sheet, applied after the sheet dismisses so the chat opens in
+  /// the real navigation stack rather than inside the sheet.
+  @State private var openedChatID: Data?
+  @State private var pendingChatID: Data?
 
   var body: some View {
     NavigationStack {
@@ -32,7 +37,7 @@ struct ChatsListView: View {
       }
     }
     // The bubble floats over the content, bottom-right. The empty state has its
-    // own add button.
+    // own add button, so it's only shown when there are chats.
     .overlay(alignment: .bottomTrailing) {
       if !session.chatContacts.isEmpty { addContactBubble }
     }
@@ -40,9 +45,27 @@ struct ChatsListView: View {
     .navigationBarTitleDisplayMode(.inline)
     .refreshable { await session.refreshChats() }
     .toolbar { toolbarContent }
+    .navigationDestination(item: $openedChatID) { id in
+      if let contact = session.contacts.first(where: { $0.id == id }) {
+        ChatView(contact: contact)
+      }
+    }
     .sheet(isPresented: $showAddContact) { AddContactView() }
     .sheet(isPresented: $showMenu) { MenuView() }
-    .sheet(isPresented: $showContacts) { ContactsListView() }
+    .sheet(isPresented: $showContacts, onDismiss: openPendingChat) {
+      ContactsListView { contactID in
+        pendingChatID = contactID
+        showContacts = false
+      }
+    }
+  }
+
+  /// Pushes the chat queued from the contacts sheet, once the sheet has fully
+  /// dismissed (so the push lands in the home stack and animates cleanly).
+  private func openPendingChat() {
+    guard let id = pendingChatID else { return }
+    pendingChatID = nil
+    openedChatID = id
   }
 
   @ToolbarContentBuilder
