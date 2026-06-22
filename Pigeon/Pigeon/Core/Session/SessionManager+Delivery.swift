@@ -102,6 +102,9 @@ extension SessionManager {
   /// Appends a message to the in-memory view, and to the on-disk mirror unless
   /// the chat is ephemeral, then persists.
   func record(_ message: ChatMessage, for contactID: Data) {
+    // Any recorded message (sent, received, or system) opens the conversation, so
+    // it appears on the home list — a deleted chat reappears when a message lands.
+    activeConversationIDs.insert(contactID)
     conversationStore.record(
       message, for: contactID, ephemeral: ephemeralContactIDs.contains(contactID))
     persist()
@@ -134,6 +137,7 @@ extension SessionManager {
       conversations: conversationStore.persistedConversations,
       ephemeralContactIDs: ephemeralContactIDs,
       bluetoothChatIDs: bluetoothChatIDs,
+      activeConversationIDs: activeConversationIDs,
       myName: myName,
       account: account,
       sessions: sessions,

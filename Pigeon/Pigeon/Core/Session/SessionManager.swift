@@ -39,6 +39,10 @@ final class SessionManager {
   /// to the peer (like ephemeral) so both ends of a chat agree on the link, and
   /// persisted so the choice survives relaunch.
   var bluetoothChatIDs: Set<Data> = []
+  /// Contacts that have an open conversation (a chat shown on the home list). A
+  /// contact lives in the book (`contacts`) whether or not it has one; deleting a
+  /// conversation removes the id here while keeping the contact and its session.
+  var activeConversationIDs: Set<Data> = []
   /// The local user's own display name, shared in their QR card.
   var myName: String = ""
   var log: [String] = []
@@ -152,6 +156,7 @@ final class SessionManager {
     conversationStore.load(loaded.conversations)  // in-memory view starts from disk
     ephemeralContactIDs = loaded.ephemeralContactIDs
     bluetoothChatIDs = loaded.bluetoothChatIDs
+    activeConversationIDs = loaded.activeConversationIDs
     myName = loaded.myName
     // Restore established sessions so a relaunch continues the conversation
     // instead of re-handshaking. A contact with a restored session is, by
@@ -277,6 +282,9 @@ final class SessionManager {
     } else {
       contacts.append(contact)
     }
+    // Adding a contact opens its conversation, so it shows on the home list (the
+    // book lets the user re-open it later if the chat is deleted).
+    activeConversationIDs.insert(bundle.identityKey)
     persist()
     refreshRelay()  // open a publish connection to the new contact's relays
     note("Added contact \"\(name)\"")
