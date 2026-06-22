@@ -47,6 +47,7 @@ final class SessionPersistence {
     var conversations: [Data: [ChatMessage]]
     var ephemeralContactIDs: Set<Data>
     var bluetoothChatIDs: Set<Data>
+    var activeConversationIDs: Set<Data>
     var myName: String
     /// Restored live Olm sessions, keyed by contact id. A contact appearing here
     /// is (re)established without a fresh handshake.
@@ -63,6 +64,7 @@ final class SessionPersistence {
     var conversations: [Data: [ChatMessage]]
     var ephemeralContactIDs: Set<Data>
     var bluetoothChatIDs: Set<Data>
+    var activeConversationIDs: Set<Data> = []
     var myName: String
     var account: PigeonAccount?
     /// Live per-contact session state to seal alongside the account. Keyed by
@@ -93,6 +95,7 @@ final class SessionPersistence {
       conversations: Self.decodeConversations(bulk.conversations),
       ephemeralContactIDs: Self.decodeIDs(bulk.ephemeralContactIDs),
       bluetoothChatIDs: Self.decodeIDs(bulk.bluetoothContactIDs),
+      activeConversationIDs: Self.decodeIDs(bulk.activeConversationIDs),
       myName: bulk.myName,
       sessions: sessionState.sessions,
       pendingInitiation: sessionState.pending,
@@ -114,6 +117,7 @@ final class SessionPersistence {
         conversations: conversationsByKey,
         ephemeralContactIDs: snapshot.ephemeralContactIDs.map { $0.base64EncodedString() },
         bluetoothContactIDs: snapshot.bluetoothChatIDs.map { $0.base64EncodedString() },
+        activeConversationIDs: snapshot.activeConversationIDs.map { $0.base64EncodedString() },
         myName: snapshot.myName,
         olmAccountPickle: nil,  // crypto lives in the sibling blob now
         olmFallbackKey: nil))
