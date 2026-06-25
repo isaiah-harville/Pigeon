@@ -34,6 +34,19 @@ final class DeliveryStatusTests: XCTestCase {
     XCTAssertFalse(DeliveryStatus.failed.timedOut(age: 10_000, window: window))
   }
 
+  func testRetentionRetiresOnlyUnackedMessages() {
+    let week: TimeInterval = 7 * 24 * 60 * 60
+    // Any unacknowledged state past the retention horizon is retired from the
+    // queue — the local safety valve against resending forever.
+    XCTAssertTrue(DeliveryStatus.sending.expired(age: week + 1, retention: week))
+    XCTAssertTrue(DeliveryStatus.sent.expired(age: week + 1, retention: week))
+    XCTAssertTrue(DeliveryStatus.failed.expired(age: week + 1, retention: week))
+    XCTAssertFalse(DeliveryStatus.sent.expired(age: week - 1, retention: week), "within window")
+    // A proven or already-retired message never expires.
+    XCTAssertFalse(DeliveryStatus.delivered.expired(age: week * 10, retention: week))
+    XCTAssertFalse(DeliveryStatus.expired.expired(age: week * 10, retention: week), "terminal")
+  }
+
   // MARK: - Model derivation & migration
 
   func testPendingIsDerivedFromDeliveryState() {
@@ -41,12 +54,13 @@ final class DeliveryStatusTests: XCTestCase {
     XCTAssertTrue(message(.sent).pending, "awaiting ack is still unacknowledged")
     XCTAssertTrue(message(.failed).pending, "a failed message must keep being resent")
     XCTAssertFalse(message(.delivered).pending)
+    XCTAssertFalse(message(.expired).pending, "a retired message has left the resend queue")
     XCTAssertFalse(
       ChatMessage(mine: false, text: "in").pending, "received messages are never pending")
   }
 
   func testStatusSurvivesCodableRoundTrip() throws {
-    for status in [DeliveryStatus.sending, .sent, .delivered, .failed] {
+    for status in [DeliveryStatus.sending, .sent, .delivered, .failed, .expired] {
       let decoded = try roundTrip(message(status))
       XCTAssertEqual(decoded.delivery, status)
     }
@@ -88,6 +102,54 @@ final class DeliveryStatusTests: XCTestCase {
 
     store.setDelivery(.delivered, messageID: msg.id, contactID: contact)
     XCTAssertTrue(store.pending(for: contact).isEmpty, "an acked message is no longer resent")
+  }
+
+  // MARK: - Retention / queue expiry (#32)
+
+  func testStaleUnackedMessagesExpireOutOfTheQueue() {
+    let store = ConversationStore()
+    let contact = Data([0x03])
+    let week: TimeInterval = 7 * 24 * 60 * 60
+    var old = message(.sent)
+    old.date = Date().addingTimeInterval(-(week + 60))
+    let fresh = message(.sent)
+    store.record(old, for: contact, ephemeral: false)
+    store.record(fresh, for: contact, ephemeral: false)
+
+    XCTAssertTrue(store.expireStale(retention: week, now: Date()))
+
+    XCTAssertEqual(store.delivery(messageID: old.id, contactID: contact), .expired)
+    XCTAssertEqual(store.delivery(messageID: fresh.id, contactID: contact), .sent, "still fresh")
+    XCTAssertEqual(
+      store.pending(for: contact).map(\.id), [fresh.id], "the expired one left the queue")
+  }
+
+  func testDeliveredMessagesNeverExpire() {
+    let store = ConversationStore()
+    let contact = Data([0x04])
+    var acked = message(.delivered)
+    acked.date = Date().addingTimeInterval(-30 * 24 * 60 * 60)
+    store.record(acked, for: contact, ephemeral: false)
+
+    XCTAssertFalse(store.expireStale(retention: 7 * 24 * 60 * 60, now: Date()), "nothing to retire")
+    XCTAssertEqual(store.delivery(messageID: acked.id, contactID: contact), .delivered)
+  }
+
+  func testExpiredMessageRevivesForResend() {
+    let store = ConversationStore()
+    let contact = Data([0x05])
+    let week: TimeInterval = 7 * 24 * 60 * 60
+    var old = message(.sent)
+    old.date = Date().addingTimeInterval(-(week + 60))
+    store.record(old, for: contact, ephemeral: false)
+    _ = store.expireStale(retention: week, now: Date())
+    XCTAssertTrue(store.pending(for: contact).isEmpty, "retired before resend")
+
+    let revived = store.reviveExpired(contactID: contact)
+
+    XCTAssertEqual(revived, [old.id])
+    XCTAssertEqual(store.delivery(messageID: old.id, contactID: contact), .sending)
+    XCTAssertEqual(store.pending(for: contact).count, 1, "revived back into the queue")
   }
 
   // MARK: - End-to-end happy path

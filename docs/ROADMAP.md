@@ -174,8 +174,11 @@ Several are audit blockers (see [SECURITY_MODEL.md](SECURITY_MODEL.md) → Audit
 - **BLE MTU** — raise the fixed conservative fragment size to the negotiated MTU
   per connection; consider write-without-response for throughput.
 - **Connection topology** — dedupe the two-way central/peripheral link per pair.
-- **Store-and-forward** — queued messages have no age expiry; relay-level
-  store-and-forward (holding *others'* packets) is future work (see data mules).
+- **Store-and-forward** — relay-level store-and-forward (holding *others'*
+  packets) is future work (see data mules). The local queue now has a retention
+  policy: an unacked outbound message is auto-resent for a week-long horizon, then
+  retired to `.expired` (surfaced as "Not delivered", resend revives it) so the
+  queue can't grow without bound — purged across restarts at unlock.
 - **Background reception** — a locked background relaunch no longer crashes, and
   with opt-out **background delivery** (on by default) the identity key is
   readable after first unlock, so a relaunched app can authenticate to the relay

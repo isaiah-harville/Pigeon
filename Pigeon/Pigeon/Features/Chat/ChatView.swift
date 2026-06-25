@@ -168,7 +168,7 @@ struct ChatView: View {
   /// Show the Sent → Delivered line under the latest outbound message, plus under
   /// any not-delivered one so a stuck message stays actionable.
   private func showsStatus(_ message: ChatMessage) -> Bool {
-    message.mine && (message.delivery == .failed || message.id == lastOutgoingID)
+    message.mine && (message.delivery?.needsAttention == true || message.id == lastOutgoingID)
   }
 
   private func messageText(_ message: ChatMessage) -> some View {

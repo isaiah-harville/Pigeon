@@ -184,8 +184,10 @@ final class SessionManager {
     // so the relay still holds them — pull them again now that we can ack.
     if drainLockedInbox() { relay?.resubscribeOwnRelays() }
     for contact in contacts { ensureEstablishing(contactID: contact.id) }
-    // Re-arm/settle delivery deadlines lost to the relaunch, so a message killed
-    // mid-send doesn't read "Sending…" forever (#106).
+    // Purge queue entries that outlived the retention window while the app was
+    // closed (#32), then re-arm/settle the deadlines lost to the relaunch so a
+    // message killed mid-send doesn't read "Sending…" forever (#106).
+    expireStaleDeliveries(now: Date())
     reconcileDeliveryStatuses(now: Date())
     maybeRotateFallbackKey()
   }

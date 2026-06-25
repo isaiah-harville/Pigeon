@@ -195,12 +195,18 @@ extension SessionManager {
   /// per link-up, scoped to one chat and triggered from the pending-message
   /// retry affordance.
   func retryDelivery(to contact: Contact) {
+    // A resend on a retired (`.expired`) message revives it to `.sending` and
+    // re-arms its confidence deadline, so manual retry drives it again (#32).
+    for messageID in conversationStore.reviveExpired(contactID: contact.id) {
+      armDeliveryDeadline(messageID: messageID, contactID: contact.id)
+    }
     if establishedContactIDs.contains(contact.id) {
       sendPending(to: contact)
     } else {
       ensureEstablishing(contactID: contact.id)
     }
     note("Manual retry for \"\(contact.displayName)\"")
+    persist()
   }
 
   // MARK: - Contacts book vs. conversations

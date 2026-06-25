@@ -24,6 +24,12 @@ enum DeliveryStatus: String, Codable {
   /// session to encrypt against). Auto-retry on connectivity continues and the UI
   /// offers a manual resend; this is purely an "unconfirmed, you can act" hint.
   case failed
+  /// Retired from the local resend queue after the retention window elapsed with
+  /// no ack (#32) — a terminal, non-pending state so a permanently-unreachable
+  /// peer's messages stop resending forever instead of growing the queue. Nothing
+  /// is dropped: it stays in history and the UI offers a manual resend, which
+  /// revives it. Distinct from `.failed`, which keeps auto-retrying.
+  case expired
 
   /// Whether a message in this state, this old, should fall to `.failed`. Only an
   /// undispatched message (`.sending`) past the window does — a handed-off `.sent`
@@ -32,6 +38,22 @@ enum DeliveryStatus: String, Codable {
   func timedOut(age: TimeInterval, window: TimeInterval) -> Bool {
     self == .sending && age >= window
   }
+
+  /// Whether an unacknowledged message left this long has exhausted the local
+  /// retention window and should be retired to `.expired` (#32). Only unacked
+  /// states expire; `.delivered` and `.expired` are terminal. Pure so the
+  /// retention policy is unit-tested without the session machinery.
+  func expired(age: TimeInterval, retention: TimeInterval) -> Bool {
+    switch self {
+    case .delivered, .expired: return false
+    case .sending, .sent, .failed: return age >= retention
+    }
+  }
+
+  /// States the UI surfaces as needing the user's attention (a "Not delivered"
+  /// line with a resend affordance): a message that couldn't be dispatched, or one
+  /// retired from the queue after the retention window.
+  var needsAttention: Bool { self == .failed || self == .expired }
 }
 
 /// A single message in a conversation. `delivery` is set only on our own outbound
@@ -67,7 +89,7 @@ struct ChatMessage: Identifiable, Equatable, Codable {
   /// so there is a single source of truth for delivery state.
   var pending: Bool {
     guard let delivery else { return false }
-    return delivery != .delivered
+    return delivery != .delivered && delivery != .expired
   }
 
   init(mine: Bool, text: String) {

@@ -70,7 +70,7 @@ struct MessageStatusLabel: View {
     case .sending: line("Sending…", icon: "clock")
     case .sent: line("Sent", icon: "checkmark")
     case .delivered: line("Delivered", icon: "checkmark.circle.fill")
-    case .failed:
+    case .failed, .expired:
       Button(action: onResend) {
         Label("Not delivered · Resend", systemImage: "exclamationmark.arrow.circlepath")
           .font(.caption2.weight(.semibold))

@@ -87,6 +87,36 @@ final class ConversationStore {
     conversations[contactID]?.first { $0.id == messageID }?.delivery
   }
 
+  /// Retires every unacknowledged outbound message older than `retention` to
+  /// `.expired`, so the local store-and-forward queue can't grow without bound and
+  /// a permanently-unreachable peer's messages surface as "Not delivered" instead
+  /// of resending forever (#32). Returns whether anything changed, so the caller
+  /// persists only when needed. Nothing is dropped — an expired message stays in
+  /// history and can be revived. Relay-side retention is a separate concern.
+  func expireStale(retention: TimeInterval, now: Date) -> Bool {
+    var changed = false
+    for contactID in Array(conversations.keys) {
+      let stale = (conversations[contactID] ?? []).filter { message in
+        guard message.mine, let status = message.delivery else { return false }
+        return status.expired(age: now.timeIntervalSince(message.date), retention: retention)
+      }
+      for message in stale {
+        setDelivery(.expired, messageID: message.id, contactID: contactID)
+        changed = true
+      }
+    }
+    return changed
+  }
+
+  /// Revives a contact's `.expired` messages back to `.sending` so a manual resend
+  /// can drive them again, returning the revived IDs so the caller can re-arm their
+  /// confidence deadlines.
+  func reviveExpired(contactID: Data) -> [UUID] {
+    let expired = (conversations[contactID] ?? []).filter { $0.mine && $0.delivery == .expired }
+    for message in expired { setDelivery(.sending, messageID: message.id, contactID: contactID) }
+    return expired.map(\.id)
+  }
+
   func setTransport(_ channel: TransportChannel?, messageID: UUID, contactID: Data) {
     mutate(messageID: messageID, contactID: contactID) { $0.transport = channel }
   }

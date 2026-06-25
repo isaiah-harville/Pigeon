@@ -23,6 +23,7 @@ extension SessionManager {
   /// the relay still retains each deposited copy, so a later reconnect delivers.
   func flushOnConnectivity() {
     guard isUnlocked else { return }  // can't decrypt/sign or read contacts yet
+    expireStaleDeliveries(now: Date())
     for contact in contacts {
       if establishedContactIDs.contains(contact.id) {
         sendPending(to: contact)
@@ -94,6 +95,25 @@ extension SessionManager {
   /// unreachable peer. Once dispatched (`.sent`) a message never times out — it's
   /// in store-and-forward and only the recipient's ack moves it to `.delivered`.
   static let deliveryConfidenceWindow: TimeInterval = 30
+
+  /// How long we keep auto-resending an unacknowledged outbound message before
+  /// retiring it from the local queue to `.expired` (#32). A long-horizon safety
+  /// valve, not a deadline: the relay retains deposited copies and every reconnect
+  /// retries, so a peer offline for hours or days still receives the message.
+  /// Expiry only stops the *local* queue from growing without bound and, after a
+  /// week with no ack, surfaces a genuinely-undeliverable message as "Not
+  /// delivered" (resend revives it) rather than resending it silently forever.
+  /// Relay-side retention is a separate, server-side policy.
+  static let deliveryRetentionWindow: TimeInterval = 7 * 24 * 60 * 60
+
+  /// Retires unacknowledged outbound messages past the retention window to
+  /// `.expired`, persisting only when something changed. Run at unlock and on every
+  /// connectivity flush, so stale queue entries are purged across app restarts.
+  func expireStaleDeliveries(now: Date) {
+    if conversationStore.expireStale(retention: Self.deliveryRetentionWindow, now: now) {
+      persist()
+    }
+  }
 
   /// Arms the confidence deadline for a freshly-queued message: after the window,
   /// if it still hasn't reached a transport, mark it failed so the user sees an
