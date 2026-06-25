@@ -61,86 +61,73 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 ### ✅ Shipped
 
 - **Identity** — Curve25519 identity key in the Keychain, fingerprint, safety number.
-- **Crypto core** — primitives, Double Ratchet, Noise XX, SecureSession,
-  IdentityBundle (identity↔static binding), SecretBox; ~40 CLI tests.
-- **BLE transport** — dual-role CoreBluetooth, GATT, MTU fragmentation/reassembly,
-  auto-reconnect; verified on two devices.
-- **End-to-end encryption over the mesh** — per-contact sessions, deterministic
-  roles, stop-and-wait handshake, the static-key binding check, encrypted chat.
+- **Crypto core (`pigeon-core`, Rust)** — Olm via the audited `vodozemac` crate:
+  Double Ratchet, async-first session establishment, and Pigeon's identity binding
+  (a long-term Ed25519 key signs Olm's Curve25519 identity key). Reached from the
+  app through the UniFFI bridge (`pigeon-ffi` → `PigeonFFI`). Behavioural tests in
+  `pigeon-core/tests/`.
+- **BLE transport** — dual-role CoreBluetooth, GATT, fragmentation/reassembly sized
+  from the negotiated ATT MTU per connection, auto-reconnect; verified on two devices.
+- **End-to-end encryption over the mesh** — per-contact Olm sessions, deterministic
+  initiator/responder roles, the identity-binding check, encrypted chat.
+- **Async first contact (Olm prekeys)** — message a peer who isn't currently
+  reachable: signed + one-time prekeys travel in the QR card, OPK is deleted on use,
+  and the signed prekey rotates on a schedule (Olm keeps the previous one valid for
+  one interval). Includes the "added remotely / not verified in person" trust UX.
 - **Mesh** — packet dedup (seen-cache), flood relay with TTL, and a persisted
   per-contact **store-and-forward** queue with delivery acknowledgements (messages
-  survive disconnects, lost packets, and restarts).
+  survive disconnects, lost packets, and restarts) plus a retention policy that
+  retires an unacked message after a long horizon instead of resending forever.
+- **Delivery confidence** — an honest **Sent → Delivered** status under each
+  outbound message (Delivered only on the recipient's end-to-end ack), with a
+  "Not delivered" + resend affordance when a message genuinely couldn't be dispatched.
+- **Relay transport (remote delivery)** — opt-in `RelayTransport` + a self-hostable
+  zero-knowledge mailbox server (Rust, axum/tokio, Docker→GHCR). Carries the same
+  E2E ciphertext to peers out of local range: per-recipient **addressed** delivery
+  (no fan-out), **federation** (each peer advertises their relays in the QR card and
+  senders deposit only there), send-side store-and-forward, and relay unit tests.
+  Two-device validation performed. See [SECURITY_MODEL.md §6.1](SECURITY_MODEL.md).
+- **Local Wi-Fi transport** — `LocalWiFiTransport`, a Multipeer Connectivity
+  `Transport` running alongside BLE and the relay. A dumb pipe carrying the same
+  E2E ciphertext; the mesh dedups across BLE/Wi-Fi/relay. No fragmentation (Multipeer
+  gives reliable arbitrarily-sized sessions). Privacy: random per-launch peer name
+  (no device name on the wire), no discovery metadata, and `.required` session
+  encryption as defence in depth. Open local-link trust model like BLE; a
+  deterministic invite tie-break avoids forming two sessions per pair. Foreground-only
+  (background reach is the relay's job); needs the local-network/Bonjour Info.plist
+  entries. **Wi-Fi Aware** stays a Horizon item (Multipeer already covers same-network).
+- **Push wake-up (APNs via the official relay)** — opt-in, content-free push that
+  wakes a backgrounded app to drain its mailbox (decrypt still happens on unlock).
+  Relay token registration over the authenticated `/ws` handshake, a config-gated
+  APNs gateway that fires the content-free alert on deposit (coalesced, 410 token
+  eviction), and app-side opt-in. Only the app publisher can hold the APNs key, so
+  this can't be federated; self-hosted/third-party relays simply don't push. The
+  payload is empty, so **confidentiality is untouched**; it does expose wake metadata
+  (device token ↔ "has mail at time T") to the gateway and Apple — a deliberate,
+  documented exception to "no new network services beyond the relay."
 - **Encrypted storage** — biometric-gated `Vault` key + `EncryptedStore`;
   **per-chat ephemeral mode** (synced to the peer, future-messages-only).
 - **Onboarding & UI** — name onboarding, QR identity card (name auto-populates on
   scan; edit + copy-fingerprint), contact verification via safety number, contacts
-  list (avatars, previews, lock state), chat with auto-scroll, rename.
+  book + conversations list (avatars, previews, lock state, swipe-to-delete), chat
+  with auto-scroll, rename.
 - **Notifications** — in-app foreground banner + local notification (no server).
-- **`Transport` abstraction** — BLE is now one implementation of a `Transport`
-  protocol; `MeshService` runs over any transport (and several concurrently).
-  The enabler for non-BLE transports below.
+- **`Transport` abstraction** — BLE, local Wi-Fi, and the relay are each one
+  implementation of a `Transport` protocol; `MeshService` runs over any transport
+  (and several concurrently, deduping across them).
 
 ### 🟡 In progress
 
 - **UI polish** — ongoing refinement of chat/contacts.
-- **Relay transport (remote delivery)** — opt-in `RelayTransport` + a
-  self-hostable zero-knowledge mailbox server (Rust, Docker→GHCR, homelab
-  Kubernetes). Carries the same E2E ciphertext to peers out of local range. Done:
-  per-recipient **addressed** delivery (no fan-out) and **federation** — each
-  peer advertises their relays in the QR card and senders deposit only there.
-  Remaining: relay unit tests and the metadata hardening below. Live two-device
-  validation has been performed but still needs to be written up. Pairs
-  naturally with async first contact (below). See
-  [SECURITY_MODEL.md §6.1](SECURITY_MODEL.md).
+- **Security hardening / audit prep** — work toward the audit blockers below:
+  traffic-analysis resistance (padding/cover traffic), key zeroization,
+  constant-time compares, and logging discipline.
 
 ### ⬜ Next
 
-- **Security hardening / audit prep** — clear the audit blockers below:
-  traffic-analysis resistance (padding/cover traffic), key zeroization,
-  constant-time compares, and logging discipline.
 - **Relay metadata minimization** — sealed-sender addressing, padding, optional
   Tor routing so the relay sees as little as possible (audit items 12–16).
-- **Async first contact (X3DH-style prekeys)** — message a peer who is not
-  currently reachable at first contact (prekeys in the QR / gossiped over mesh).
-  Unblocks long-distance and async group messaging. Has prekey-exhaustion/replay
-  tradeoffs. **Crypto core done:** `PigeonCrypto/X3DH.swift` (prekey bundle +
-  agreement, reuses `IdentityBundle` trust and the Double Ratchet bootstrap;
-  CLI-tested) and the tradeoffs are written up in
-  [SECURITY_MODEL.md §5.7](SECURITY_MODEL.md). Remaining: app wiring (prekey
-  gen/storage/rotation, OPK delete-on-use, bundle in the QR card / relay, mesh
-  gossip), the "added remotely / not verified in person" trust UX, and the X3DH
-  validation audit item (3a).
-- **Push wake-up (APNs via the official relay)** — iOS suspends backgrounded
-  apps, so without a push the device may not notice a relay-delivered message
-  until the user opens Pigeon. Only the app publisher can hold the APNs signing
-  key, so this can't be federated; the **official Pigeon relay** also runs a thin
-  **APNs push gateway**. Opt-in clients register their APNs device token with
-  their official relay; when ciphertext is deposited for them, the gateway sends
-  a **content-free** "you may have messages" push that wakes the app to drain its
-  mailbox (decrypt still happens on unlock — today's pipeline). Self-hosted and
-  third-party relays simply don't push (best-effort, as now). Tradeoff: this
-  centralizes the *wake signal* and exposes wake metadata (device token ↔ "has
-  mail at time T") to the gateway and to Apple; **confidentiality is untouched**
-  because the payload is empty. A deliberate, documented exception to "no new
-  network services beyond the relay." See [SECURITY_MODEL.md §6.1](SECURITY_MODEL.md).
-  *Implemented:* relay token registration over the authenticated `/ws` handshake
-  (`register_push`/`unregister_push`), a config-gated APNs gateway that fires the
-  content-free alert on deposit (coalesced, with 410 token eviction); app-side
-  opt-in (Relays → Push wake-ups), APNs registration, and per-relay token binding.
-- **Local Wi-Fi transport** — *implemented* (#34) as `LocalWiFiTransport`, a
-  Multipeer Connectivity `Transport` running alongside BLE and the relay. It is a
-  dumb pipe carrying the same E2E ciphertext; the mesh dedups across BLE/Wi-Fi/relay.
-  No fragmentation (Multipeer gives reliable arbitrarily-sized sessions). Privacy:
-  a random per-launch peer name (no device name on the wire), no discovery metadata,
-  and `.required` session encryption as defence in depth over the already-E2E payload.
-  Open local-link trust model like BLE (accept any nearby peer; identity binding +
-  Olm enforce confidentiality/auth above). A deterministic invite tie-break avoids
-  forming two sessions per pair. Limitations: foreground-only (iOS suspends a
-  backgrounded app's Multipeer session — out-of-range/background reach is the relay's
-  job), needs `NSLocalNetworkUsageDescription`/`NSBonjourServices`, and discovery
-  needs both devices on the same local network (or Apple peer-to-peer Wi-Fi).
-  **Wi-Fi Aware** (infrastructure-less, longer range) is out of scope here — Multipeer
-  already covers the same-network case; Aware stays a Horizon item.
+- **External security audit** — required before any real-world "secure" claim.
 
 ### 🔭 Horizon
 
@@ -177,17 +164,11 @@ federated paths):
 
 Several are audit blockers (see [SECURITY_MODEL.md](SECURITY_MODEL.md) → Audit Readiness).
 
-- **Official Noise test vectors** — tests prove self-consistency only; add
-  byte-level conformance. **Audit blocker.**
 - **External security audit** — required before any real-world "secure" claim.
+  **Audit blocker.** The messaging core is Olm via the audited `vodozemac` crate, but Pigeon's identity binding, wire formats, transports, and storage still need independent review.
 - **Re-handshake DoS** — mesh envelopes are unauthenticated, so a spoofed
   `rehandshakeRequest`/handshake can force a session reset (no content breach —
-  the binding check holds). Rate-limit / harden.
-- **BLE MTU** — fragment size now follows the negotiated ATT MTU per connection
-  (smallest usable length across active write/notify paths, minus the fragment
-  header), with the old conservative size kept as a safe floor. Write-with-response
-  is retained deliberately (flow control + reliable long writes; this app favours
-  delivery certainty over raw throughput).
+  the binding check holds). *Mitigated:* network-triggered re-handshakes are rate-limited per peer with a cooldown, so a spoofed flood costs at most one teardown per window; user-initiated resets bypass the gate.
 - **Connection topology** — two dual-role devices form *two* central↔peripheral
   links per pair, so each message crosses BLE twice. This is an **efficiency**
   issue only: the mesh dedup layer already drops the duplicate, so no duplicate is
@@ -201,24 +182,22 @@ Several are audit blockers (see [SECURITY_MODEL.md](SECURITY_MODEL.md) → Audit
   *both* links for redundancy and falling back to today's behaviour whenever the
   instance is unknown. Deferred deliberately: it needs on-device BLE verification and
   must not risk the delivery path, and correctness is already covered by dedup.
-- **Store-and-forward** — relay-level store-and-forward (holding *others'*
-  packets) is future work (see data mules). The local queue now has a retention
-  policy: an unacked outbound message is auto-resent for a week-long horizon, then
-  retired to `.expired` (surfaced as "Not delivered", resend revives it) so the
-  queue can't grow without bound — purged across restarts at unlock.
+- **Relay-level store-and-forward** — holding *others'* ciphertext to bridge disconnected clusters (data mules) is future work (see Horizon). The local send-queue's own retention is done (below).
 - **Background reception** — a locked background relaunch no longer crashes, and
   with opt-out **background delivery** (on by default) the identity key is
   readable after first unlock, so a relaunched app can authenticate to the relay
   and receive. Inbound envelopes are buffered in memory (and left unacked on the
   relay) and a single content-free notification is posted; they decrypt once the
   user unlocks (the message vault stays biometric-gated — no background
-  decryption, deliberately). Remaining limit: iOS *suspends* a backgrounded app,
-  so reliable "phone in pocket for hours" delivery still needs a push wake-up
-  (see **Push wake-up** under Next).
+  decryption, deliberately). iOS still *suspends* a backgrounded app, which is why
+  the opt-in **push wake-up** (Shipped) exists to nudge it awake to drain its mailbox.
 
-*Resolved:* multi-path duplicate delivery (mesh dedup), identity↔Noise-static
-binding (IdentityBundle), one-sided-restart reconnection (auto-reconnect +
-re-handshake), dropped notifications (reliable notify queue).
+*Resolved:* multi-path duplicate delivery (mesh dedup); identity↔Olm-key binding
+(the Ed25519 identity signs Olm's Curve25519 identity key); one-sided-restart
+reconnection (auto-reconnect + re-handshake); dropped notifications (reliable notify
+queue); re-handshake reset DoS (per-peer rate limit); fixed-size BLE fragments
+(now sized from the negotiated ATT MTU); unbounded local send queue (retention/
+expiry policy); silent "pending" sends (honest Sent → Delivered status + resend).
 
 ## Standing principles
 
