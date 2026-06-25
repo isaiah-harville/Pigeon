@@ -165,7 +165,7 @@ struct MessageContextMenu: View {
   let onReact: (String) -> Void
   let onReply: () -> Void
   /// Present only for a still-pending message of our own, so the user can force
-  /// a resend now instead of waiting for the next connectivity event (#82).
+  /// a resend now instead of waiting for the next connectivity event.
   var onRetry: (() -> Void)?
 
   private let quickReactions = ["👍", "❤️", "😂"]
@@ -230,7 +230,7 @@ extension ChatMessage {
 
 /// Long-press detail for a message: the link it travelled over plus the full
 /// timestamp. The link is the genuinely-observed arrival transport for received
-/// messages, and the link it was last sent over for sent ones (#24).
+/// messages, and the link it was last sent over for sent ones.
 struct MessageDetailMenu: View {
   let message: ChatMessage
 

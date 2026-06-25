@@ -55,7 +55,7 @@ struct ChatStatusBanner: View {
 
 /// The chat's chosen link and whether it can carry a message *right now*, shown
 /// live in the header so users can tell at a glance if they're reachable over
-/// the transport this chat uses — relay or Bluetooth (#24). Reads observable
+/// the transport this chat uses — relay or Bluetooth. Reads observable
 /// transport state, so the trailing dot and text refresh as links come and go.
 struct ConnectionSummary: View {
   @Environment(SessionManager.self) private var session
@@ -90,7 +90,7 @@ struct ConnectionSummary: View {
 
 /// A thin pill above the composer to pick the chat's link. Relay is the default
 /// (we encourage relays); Bluetooth is the opt-in second option. Tap a segment
-/// or swipe to switch; the choice is mirrored to the peer (#24).
+/// or swipe to switch; the choice is mirrored to the peer.
 struct TransportPill: View {
   @Environment(SessionManager.self) private var session
   let contact: Contact

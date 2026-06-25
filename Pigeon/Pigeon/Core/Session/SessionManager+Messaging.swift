@@ -83,7 +83,7 @@ extension SessionManager {
     if let ack = try? inbound.session.encrypt(plaintext: Self.establishmentAck) {
       sendEnvelope(.ack, payload: ack, to: contact)
     }
-    // Session-established event (#82): flush anything we queued while waiting for
+    // Session-established event: flush anything we queued while waiting for
     // the initiation, now that we can encrypt to this contact.
     sendPending(to: contact)
   }
@@ -142,7 +142,7 @@ extension SessionManager {
   // MARK: - Transport mode (relay default; Bluetooth opt-in)
 
   /// Switches a chat between the relay (default) and Bluetooth, mirroring the
-  /// change to the peer so both ends of the chat use the same link (#24).
+  /// change to the peer so both ends of the chat use the same link.
   func setChatUsesBluetooth(_ useBluetooth: Bool, for contact: Contact) {
     guard bluetoothChatIDs.contains(contact.id) != useBluetooth else { return }
     applyTransport(useBluetooth: useBluetooth, for: contact.id, announce: true)
@@ -151,7 +151,7 @@ extension SessionManager {
 
   /// Applies a transport-mode change locally and adds a centered notice in the
   /// chat (matching how ephemeral announces itself). The relay notice names the
-  /// host this side will actually use, so each end shows its own relay (#24).
+  /// host this side will actually use, so each end shows its own relay.
   func applyTransport(useBluetooth: Bool, for contactID: Data, announce: Bool) {
     let changed = bluetoothChatIDs.contains(contactID) != useBluetooth
     if useBluetooth {
@@ -171,7 +171,7 @@ extension SessionManager {
       record(ChatMessage(mine: false, text: text, system: true), for: contactID)
     }
     persist()
-    // Transport-switched event (#82): resend unacked messages over the link this
+    // Transport-switched event: resend unacked messages over the link this
     // chat now uses, so a switch flushes pending immediately (replacing the
     // timer's eventual retry). `sendPending` no-ops until the session exists.
     if changed, let contact = contacts.first(where: { $0.id == contactID }) {
@@ -214,7 +214,7 @@ extension SessionManager {
   /// Recovers a lost/stale session. The initiator re-establishes; the responder
   /// asks the initiator to do so. Triggered by *network* input (an undecryptable
   /// message, a missing session for an inbound message), so it's rate-limited per
-  /// contact: a spoofed flood can't drive endless resets or re-request spam (#33).
+  /// contact: a spoofed flood can't drive endless resets or re-request spam.
   func requestRehandshake(with contact: Contact) {
     guard rehandshakeGate.allow(contact.id, now: Date()) else { return }
     if isInitiator(toward: contact.id) {
@@ -238,8 +238,8 @@ extension SessionManager {
     // Otherwise re-establish only if we're established (peer lost it) or never
     // started. The request is unauthenticated (empty payload), so rate-limit the
     // destructive reset per contact — a spoofed `.rehandshakeRequest` flood then
-    // costs at most one teardown per cooldown window rather than one per packet
-    // (#33). A genuinely lost peer simply re-requests after the window.
+    // costs at most one teardown per cooldown window rather than one per packet.
+    // A genuinely lost peer simply re-requests after the window.
     guard establishedContactIDs.contains(contact.id) || sessions[contact.id] == nil else { return }
     guard rehandshakeGate.allow(contact.id, now: Date()) else { return }
     note("\"\(contact.displayName)\" requested re-establishment")
@@ -312,7 +312,7 @@ extension SessionManager {
     // App messages travel over the chat's chosen link (relay by default). Every
     // other envelope — initiations, acks, the control message that *syncs* the
     // link choice — floods both links so establishment and state sync stay
-    // robust regardless of the selected transport (#24). The recipient hint lets
+    // robust regardless of the selected transport. The recipient hint lets
     // the relay address this contact's mailbox directly; BLE ignores it.
     let channels: Set<TransportKind> =
       type == .message ? chatChannels(for: contact) : TransportKind.all

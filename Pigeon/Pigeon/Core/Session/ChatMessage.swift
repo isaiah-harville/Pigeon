@@ -25,7 +25,7 @@ enum DeliveryStatus: String, Codable {
   /// offers a manual resend; this is purely an "unconfirmed, you can act" hint.
   case failed
   /// Retired from the local resend queue after the retention window elapsed with
-  /// no ack (#32) — a terminal, non-pending state so a permanently-unreachable
+  /// no ack — a terminal, non-pending state so a permanently-unreachable
   /// peer's messages stop resending forever instead of growing the queue. Nothing
   /// is dropped: it stays in history and the UI offers a manual resend, which
   /// revives it. Distinct from `.failed`, which keeps auto-retrying.
@@ -40,7 +40,7 @@ enum DeliveryStatus: String, Codable {
   }
 
   /// Whether an unacknowledged message left this long has exhausted the local
-  /// retention window and should be retired to `.expired` (#32). Only unacked
+  /// retention window and should be retired to `.expired`. Only unacked
   /// states expire; `.delivered` and `.expired` are terminal. Pure so the
   /// retention policy is unit-tested without the session machinery.
   func expired(age: TimeInterval, retention: TimeInterval) -> Bool {

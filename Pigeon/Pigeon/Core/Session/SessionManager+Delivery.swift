@@ -12,7 +12,7 @@ import PigeonFFI
 
 extension SessionManager {
 
-  // MARK: - Connectivity-driven delivery (#82)
+  // MARK: - Connectivity-driven delivery
 
   /// Re-drives every contact when a link comes up: (re)establish stalled sessions
   /// and flush unacked messages. This is the event-driven replacement for the old
@@ -87,7 +87,7 @@ extension SessionManager {
     conversationStore.setDelivery(status, messageID: messageID, contactID: contactID)
   }
 
-  // MARK: - Delivery confidence window (#106)
+  // MARK: - Delivery confidence window
 
   /// How long an outbound message may sit *undispatched* before its status drops
   /// to "Not delivered" with a resend affordance. Long enough that establishment +
@@ -97,7 +97,7 @@ extension SessionManager {
   static let deliveryConfidenceWindow: TimeInterval = 30
 
   /// How long we keep auto-resending an unacknowledged outbound message before
-  /// retiring it from the local queue to `.expired` (#32). A long-horizon safety
+  /// retiring it from the local queue to `.expired`. A long-horizon safety
   /// valve, not a deadline: the relay retains deposited copies and every reconnect
   /// retries, so a peer offline for hours or days still receives the message.
   /// Expiry only stops the *local* queue from growing without bound and, after a

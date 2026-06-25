@@ -41,7 +41,7 @@ final class CompositeTransport: Transport {
   }
 
   /// Fans the send out to every child, passing the channel filter down so each
-  /// transport decides whether it should carry this message (#24).
+  /// transport decides whether it should carry this message.
   func broadcast(_ message: Data, to recipient: Data?, over channels: Set<TransportKind>) {
     for transport in transports {
       transport.broadcast(message, to: recipient, over: channels)

@@ -52,7 +52,7 @@ enum TransportChannel: Codable, Equatable, Hashable {
 
 /// Identifies which kind of link a concrete transport is, so callers can
 /// restrict a send to a subset of links (e.g. force a message over the relay
-/// when the user switches an in-range chat to the internet — #24).
+/// when the user switches an in-range chat to the internet).
 enum TransportKind: CaseIterable {
   case bluetooth
   case localWiFi
@@ -95,7 +95,7 @@ protocol Transport: AnyObject {
   /// Fired when this transport's reachability *improves* — a peer connects and
   /// its channel is ready, or a relay authenticates — so the session layer can
   /// (re)drive establishment and flush pending messages on the event instead of
-  /// polling on a timer (#82). Coarse and best-effort: it may fire more than
+  /// polling on a timer. Coarse and best-effort: it may fire more than
   /// once per real change, so consumers must be idempotent. Never fired for a
   /// drop (nothing to send when a link goes away).
   var onConnectivity: (() -> Void)? { get set }
@@ -110,7 +110,7 @@ protocol Transport: AnyObject {
 
   /// Sends restricted to `channels` (pass `TransportKind.all` for every link).
   /// Lets the session force a message onto a specific link, e.g. relay-only when
-  /// a chat is switched off Bluetooth (#24).
+  /// a chat is switched off Bluetooth.
   func broadcast(_ message: Data, to recipient: Data?, over channels: Set<TransportKind>)
 
   /// User-initiated recovery nudge. Transports should restart discovery or

@@ -3,7 +3,7 @@
 //  PigeonTests
 //
 //  The channel filter that lets the session force a message onto a specific
-//  link (relay-only when a chat is switched off Bluetooth — #24).
+//  link (relay-only when a chat is switched off Bluetooth).
 //
 
 import Foundation
@@ -86,7 +86,7 @@ final class CompositeTransportTests: XCTestCase {
     XCTAssertEqual(relay.refreshCount, 1)
   }
 
-  /// Event-driven delivery (#82): a child link coming up must surface to the
+  /// Event-driven delivery: a child link coming up must surface to the
   /// composite's consumer, so the session layer can flush pending work without
   /// polling. Either link firing should reach the single handler.
   func testConnectivityFromAnyLinkReachesConsumer() {

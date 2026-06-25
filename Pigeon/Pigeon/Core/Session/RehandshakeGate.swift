@@ -2,7 +2,7 @@
 //  RehandshakeGate.swift
 //  Pigeon
 //
-//  Rate-limits reactive re-handshakes per contact (#33).
+//  Rate-limits reactive re-handshakes per contact.
 //
 //  A `.rehandshakeRequest` envelope is an unauthenticated, empty-payload control
 //  message, and an undecryptable `.message` is just as cheap to forge. Either one

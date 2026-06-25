@@ -11,7 +11,7 @@
 //  the `pigeon-mesh` fragmenter and reassembled per source. Encryption (the Olm
 //  session) and mesh relaying layer on top of this.
 //
-//  Fragment size follows the negotiated ATT MTU per connection (#30), with a
+//  Fragment size follows the negotiated ATT MTU per connection, with a
 //  conservative floor so any link stays safe. We deliberately keep
 //  write-with-response: it gives flow control and reliable long writes, and this
 //  app values delivery certainty over raw throughput — MTU-sized fragments already
@@ -42,7 +42,7 @@ final class PeerTransport: NSObject, Transport {
   var onMessage: ((_ message: Data, _ peerID: String) -> Void)?
   /// Fired when a peer link becomes usable for sending (a write channel is
   /// discovered, or a central subscribes), so the session layer flushes pending
-  /// work on the event rather than on a timer (#82).
+  /// work on the event rather than on a timer.
   var onConnectivity: (() -> Void)?
 
   @ObservationIgnored private var centralRef: CBCentralManager?
@@ -166,7 +166,7 @@ final class PeerTransport: NSObject, Transport {
     note("Bluetooth refresh requested")
   }
 
-  // MARK: - Fragment sizing (#30)
+  // MARK: - Fragment sizing
 
   /// The per-fragment payload budget for this broadcast: the smallest usable
   /// length negotiated across every path this message will travel (each connected

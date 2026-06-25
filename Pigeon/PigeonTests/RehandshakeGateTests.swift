@@ -2,7 +2,7 @@
 //  RehandshakeGateTests.swift
 //  PigeonTests
 //
-//  #33: re-handshakes that network input can trigger are rate-limited per
+//  re-handshakes that network input can trigger are rate-limited per
 //  contact, so a spoofed/replayed `.rehandshakeRequest` flood can't force endless
 //  session resets. Covers the pure gate policy and a coordinator-level burst.
 //

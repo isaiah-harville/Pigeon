@@ -62,7 +62,7 @@ final class RelayTransport: Transport {
   var connectedPeerCount: Int { 0 }
   var onMessage: ((_ message: Data, _ peerID: String) -> Void)?
   /// Fired when a relay connection comes up (we can publish to it now), so the
-  /// session layer flushes pending work on the event rather than on a timer (#82).
+  /// session layer flushes pending work on the event rather than on a timer.
   var onConnectivity: (() -> Void)?
 
   /// Our own mailbox address: lowercase hex of our Ed25519 identity public key.
@@ -116,7 +116,7 @@ final class RelayTransport: Transport {
 
   /// Watches the OS network path so relays reconnect the instant connectivity
   /// returns (Wi-Fi ↔ cellular, airplane mode off), rather than waiting out the
-  /// supervise backoff (#76). `@ObservationIgnored` — it drives reconnects, not UI.
+  /// supervise backoff. `@ObservationIgnored` — it drives reconnects, not UI.
   @ObservationIgnored private let pathMonitor = NWPathMonitor()
   /// Whether the OS last reported a usable path. Tracked so we react only to the
   /// *transition* back to reachable, ignoring interface flaps while already up.
@@ -362,7 +362,7 @@ extension RelayTransport {
   }
 }
 
-// MARK: - Network path (proactive reconnect, #76)
+// MARK: - Network path (proactive reconnect)
 
 extension RelayTransport {
 
@@ -462,7 +462,7 @@ extension RelayTransport {
   }
 }
 
-// MARK: - Send (deposit + send-side store-and-forward, #106)
+// MARK: - Send (deposit + send-side store-and-forward)
 
 extension RelayTransport {
 

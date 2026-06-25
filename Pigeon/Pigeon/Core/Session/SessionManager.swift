@@ -17,7 +17,7 @@ import PigeonFFI
 /// the device whose identity key sorts first is the **initiator** (it opens the
 /// Olm session against the peer's published prekey), the other is the
 /// **responder**. Establishment and pending sends are re-driven by concrete
-/// connectivity events (a link coming up — #82), since either device may add the
+/// connectivity events (a link coming up), since either device may add the
 /// contact (scan the QR) or come online at a different moment.
 @MainActor
 @Observable
@@ -90,7 +90,7 @@ final class SessionManager {
 
   /// Throttles re-handshakes that *network* input can trigger, so a spoofed or
   /// replayed `.rehandshakeRequest` (or a flood of undecryptable `.message`
-  /// envelopes) can't force endless session resets (#33). User-initiated resets
+  /// envelopes) can't force endless session resets. User-initiated resets
   /// bypass it. See `RehandshakeGate`.
   var rehandshakeGate = RehandshakeGate(cooldown: RehandshakeGate.defaultCooldown)
 
@@ -124,7 +124,7 @@ final class SessionManager {
       let relay = RelayTransport(
         mailboxHex: mailboxHex
       ) { [identity] nonce in try? identity.sign(nonce) }
-      // Local delivery runs over both BLE and same-network Wi-Fi (#34); the relay
+      // Local delivery runs over both BLE and same-network Wi-Fi; the relay
       // reaches peers out of local range. The mesh dedups across all three.
       self.mesh = MeshService(
         transport: CompositeTransport([PeerTransport(), LocalWiFiTransport(), relay]))
@@ -148,7 +148,7 @@ final class SessionManager {
     self.mesh.onMessage = { [weak self] data, channel in
       self?.handleInbound(data, channel: channel)
     }
-    // Event-driven delivery (#82): a link coming up re-drives establishment and
+    // Event-driven delivery: a link coming up re-drives establishment and
     // flushes pending sends, replacing the old 3s polling timer.
     self.mesh.onConnectivity = { [weak self] in self?.flushOnConnectivity() }
   }
@@ -188,8 +188,8 @@ final class SessionManager {
     if drainLockedInbox() { relay?.resubscribeOwnRelays() }
     for contact in contacts { ensureEstablishing(contactID: contact.id) }
     // Purge queue entries that outlived the retention window while the app was
-    // closed (#32), then re-arm/settle the deadlines lost to the relaunch so a
-    // message killed mid-send doesn't read "Sending…" forever (#106).
+    // closed, then re-arm/settle the deadlines lost to the relaunch so a
+    // message killed mid-send doesn't read "Sending…" forever.
     expireStaleDeliveries(now: Date())
     reconcileDeliveryStatuses(now: Date())
     maybeRotateFallbackKey()
@@ -304,7 +304,7 @@ final class SessionManager {
     note("Added contact \"\(name)\"")
     // Re-scanning forces a fresh handshake (manual recovery if one stalled). This
     // is an explicit user action, so it supersedes the re-handshake throttle —
-    // clear the cooldown so the recovery isn't suppressed (#33).
+    // clear the cooldown so the recovery isn't suppressed.
     rehandshakeGate.clear(bundle.identityKey)
     resetSession(for: bundle.identityKey)
     establishIfNeeded(contactID: bundle.identityKey)
@@ -319,7 +319,7 @@ final class SessionManager {
 
   /// Sends `text` to `contact`. The message stays *pending* until the peer
   /// acknowledges it; it is sent at once when a session exists and queued
-  /// otherwise, then resent on the next connectivity event (#82), so it is never
+  /// otherwise, then resent on the next connectivity event, so it is never
   /// silently dropped on a disconnect.
   func send(_ text: String, to contact: Contact) {
     send(text, replySnippet: nil, to: contact)
@@ -331,7 +331,7 @@ final class SessionManager {
     message.transport = outboundChannel(for: contact)
     record(message, for: contact.id)
     // Arm the confidence deadline now: if it can't reach a transport within the
-    // window the status drops to "Not delivered" with a resend (#106). A
+    // window the status drops to "Not delivered" with a resend. A
     // successful transmit below moves it to `.sent`, which the deadline ignores.
     armDeliveryDeadline(messageID: message.id, contactID: contact.id)
     if establishedContactIDs.contains(contact.id) {

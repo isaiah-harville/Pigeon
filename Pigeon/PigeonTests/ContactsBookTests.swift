@@ -2,7 +2,7 @@
 //  ContactsBookTests.swift
 //  PigeonTests
 //
-//  Coordinator-level tests for the contacts-book / conversation split (#69, #75):
+//  Coordinator-level tests for the contacts-book / conversation split:
 //  deleting a conversation must clear its history and drop it from the home (chats)
 //  list while keeping the contact and its live Olm session — so re-opening the chat
 //  continues with no re-handshake and no re-scan. Reuses the in-process bus harness

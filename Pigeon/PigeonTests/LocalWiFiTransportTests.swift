@@ -2,7 +2,7 @@
 //  LocalWiFiTransportTests.swift
 //  PigeonTests
 //
-//  #34: the local Wi-Fi transport drops in alongside BLE and the relay. Covers
+//  the local Wi-Fi transport drops in alongside BLE and the relay. Covers
 //  the pure, side-effect-free pieces — the link classification a received message
 //  is tagged with, the local/all link sets the session sends over, and the
 //  deterministic invite tie-break that keeps a pair from forming two sessions —

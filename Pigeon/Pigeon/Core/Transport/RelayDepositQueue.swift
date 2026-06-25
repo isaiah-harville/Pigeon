@@ -2,7 +2,7 @@
 //  RelayDepositQueue.swift
 //  Pigeon
 //
-//  Send-side store-and-forward for the relay transport (#106): a bounded FIFO of
+//  Send-side store-and-forward for the relay transport: a bounded FIFO of
 //  outbound deposits that found no ready relay, held for re-send the instant a
 //  usable link comes up. Pure and value-typed so the queue/flush policy is
 //  unit-tested without live sockets — the transport supplies a closure that

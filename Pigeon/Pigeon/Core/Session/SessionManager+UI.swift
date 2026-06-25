@@ -37,14 +37,14 @@ extension SessionManager {
 
   /// Whether `contact`'s chat sends over Bluetooth. Relay is the default for
   /// every chat (we encourage relays); Bluetooth is the opt-in second option.
-  /// A chat falls back to Bluetooth when no relay is configured at all (#24).
+  /// A chat falls back to Bluetooth when no relay is configured at all.
   func usesBluetooth(_ contact: Contact) -> Bool {
     bluetoothChatIDs.contains(contact.id) || !hasRelay
   }
 
   /// The links an outbound app message to `contact` is dispatched over: just the
   /// chat's chosen link (relay by default, Bluetooth when opted in or when no
-  /// relay is configured) — #24.
+  /// relay is configured).
   func chatChannels(for contact: Contact) -> Set<TransportKind> {
     usesBluetooth(contact) ? TransportKind.local : [.relay]
   }
@@ -191,12 +191,12 @@ extension SessionManager {
 
   /// Manually re-drives delivery to `contact`: (re)establish if needed and
   /// resend every unacked message now, for when the user doesn't want to wait
-  /// for the next connectivity event (#82). Same work `flushOnConnectivity` does
+  /// for the next connectivity event. Same work `flushOnConnectivity` does
   /// per link-up, scoped to one chat and triggered from the pending-message
   /// retry affordance.
   func retryDelivery(to contact: Contact) {
     // A resend on a retired (`.expired`) message revives it to `.sending` and
-    // re-arms its confidence deadline, so manual retry drives it again (#32).
+    // re-arms its confidence deadline, so manual retry drives it again.
     for messageID in conversationStore.reviveExpired(contactID: contact.id) {
       armDeliveryDeadline(messageID: messageID, contactID: contact.id)
     }

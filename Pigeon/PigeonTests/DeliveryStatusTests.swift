@@ -2,7 +2,7 @@
 //  DeliveryStatusTests.swift
 //  PigeonTests
 //
-//  #106: an outbound message carries an honest Sent → Delivered status, only ever
+//  an outbound message carries an honest Sent → Delivered status, only ever
 //  claims `delivered` on the peer's end-to-end ack, and falls to a resendable
 //  "Not delivered" when it couldn't be dispatched — never when it's merely
 //  awaiting an ack from an offline-but-reachable peer. Covers the pure timeout
@@ -104,7 +104,7 @@ final class DeliveryStatusTests: XCTestCase {
     XCTAssertTrue(store.pending(for: contact).isEmpty, "an acked message is no longer resent")
   }
 
-  // MARK: - Retention / queue expiry (#32)
+  // MARK: - Retention / queue expiry
 
   func testStaleUnackedMessagesExpireOutOfTheQueue() {
     let store = ConversationStore()

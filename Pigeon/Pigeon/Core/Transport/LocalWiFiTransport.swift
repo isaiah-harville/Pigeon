@@ -2,7 +2,7 @@
 //  LocalWiFiTransport.swift
 //  Pigeon
 //
-//  A same-network local transport built on Multipeer Connectivity (#34). It runs
+//  A same-network local transport built on Multipeer Connectivity. It runs
 //  alongside BLE and the relay as another `Transport`: a "dumb pipe" that moves
 //  opaque, already-end-to-end-encrypted mesh bytes between nearby devices over
 //  Wi-Fi / peer-to-peer Wi-Fi, with no knowledge of encryption, identity, or mesh
@@ -120,7 +120,7 @@ final class LocalWiFiTransport: NSObject, Transport {
     connectedPeerCount = connectedCount
     if connected {
       note("Wi-Fi connected: \(peer)")
-      onConnectivity?()  // a usable local link came up — flush pending work (#82)
+      onConnectivity?()  // a usable local link came up — flush pending work
     } else {
       note("Wi-Fi link to \(peer) ended")
     }

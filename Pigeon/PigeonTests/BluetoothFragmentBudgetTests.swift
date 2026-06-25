@@ -2,7 +2,7 @@
 //  BluetoothFragmentBudgetTests.swift
 //  PigeonTests
 //
-//  #30: BLE fragment payload follows the negotiated ATT MTU per connection
+//  BLE fragment payload follows the negotiated ATT MTU per connection
 //  instead of a fixed conservative size. Covers the pure clamp policy — header
 //  subtraction, the safe floor on small/absent MTUs, and the defensive ceiling —
 //  without standing up CoreBluetooth.

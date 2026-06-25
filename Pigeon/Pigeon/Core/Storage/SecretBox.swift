@@ -11,7 +11,7 @@
 //  encrypts many records, unlike the ratchet's deterministic per-message nonces.
 //
 //  Relocated from the (now-removed) Swift PigeonCrypto package during the
-//  pigeon-core cutover (#80).
+//  pigeon-core cutover.
 //
 
 import CryptoKit

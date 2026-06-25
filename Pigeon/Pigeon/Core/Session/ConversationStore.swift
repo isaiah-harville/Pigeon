@@ -90,7 +90,7 @@ final class ConversationStore {
   /// Retires every unacknowledged outbound message older than `retention` to
   /// `.expired`, so the local store-and-forward queue can't grow without bound and
   /// a permanently-unreachable peer's messages surface as "Not delivered" instead
-  /// of resending forever (#32). Returns whether anything changed, so the caller
+  /// of resending forever. Returns whether anything changed, so the caller
   /// persists only when needed. Nothing is dropped — an expired message stays in
   /// history and can be revived. Relay-side retention is a separate concern.
   func expireStale(retention: TimeInterval, now: Date) -> Bool {
