@@ -144,19 +144,20 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 
 **Long-distance / non-Bluetooth transport** (same E2E ciphertext across local or
 federated paths):
-- **Extend local reach:** Multipeer Connectivity / Wi-Fi Aware (higher bandwidth,
-  offline-capable); **LoRa** for km-range off-grid text (needs hardware).
+- **Extend local reach:** ~~Multipeer Connectivity~~ ✅ (shipped); **Wi-Fi Aware**
+  (infrastructure-less, longer range) and **LoRa** for km-range off-grid text
+  (needs hardware) remain.
 - **Delay-tolerant "data mules":** hold ciphertext addressed to a recipient and
   deliver when next encountered; physical movement bridges disconnected clusters.
 - **Internet (opt-in), in order of fit:** (1) **federated zero-knowledge relays**
   — dumb, self-hostable mailboxes storing ciphertext only (Nostr-relay-like) —
-  *first relay now in progress, see above*; (2) **Tor** hidden services for
-  metadata privacy (Briar-style); (3) direct P2P (NAT traversal usually needs a
-  TURN relay — partial at best).
+  *shipped (federated), see above*; (2) **Tor** hidden services for metadata
+  privacy (Briar-style); (3) direct P2P (NAT traversal usually needs a TURN relay
+  — partial at best).
 - Metadata is the main new risk: mitigate with sealed-sender, onion routing,
   padding, cover traffic.
-- *Path:* ~~Transport abstraction~~ ✅ → single self-hosted relay (in progress) →
-  federation → metadata hardening (sealed-sender/Tor) → data mules.
+- *Path:* ~~Transport abstraction~~ ✅ → ~~self-hosted relay~~ ✅ →
+  ~~federation~~ ✅ → metadata hardening (sealed-sender/Tor) → data mules.
 
 ---
 

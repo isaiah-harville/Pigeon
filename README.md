@@ -3,8 +3,8 @@
 Pigeon is an end-to-end encrypted mesh messaging framework for federated servers.
 
 Pigeon's goal is extreme privacy and security across multiple delivery methods.
-Peers can exchange messages locally over a Bluetooth Low Energy mesh (with local
-Wi-Fi planned), or use federated zero-knowledge relays when they are out of
+Peers can exchange messages locally over a Bluetooth Low Energy mesh and
+same-network Wi-Fi, or use federated zero-knowledge relays when they are out of
 local range. Messages are end-to-end encrypted regardless of how they travel; no
 transport, relay, or mesh hop can read them.
 
@@ -33,8 +33,9 @@ concurrently):
 
 - **Bluetooth LE mesh** — in-range, offline-capable local delivery with no
   server involved.
-- **Local Wi-Fi** (planned) — same-network reach and higher bandwidth.
-- **Relay** (in progress) — for peers who are out of local range and on
+- **Local Wi-Fi** — same-network reach and higher bandwidth over Multipeer
+  Connectivity, offline-capable and serverless like the BLE mesh.
+- **Relay** — for peers who are out of local range and on
   different networks (e.g. cellular). A self-hostable, zero-knowledge mailbox
   forwards ciphertext addressed by public key. It **cannot read messages**, but
   it does see connection metadata (who connects, when). Opt-in; see the security

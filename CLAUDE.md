@@ -143,6 +143,8 @@ and the app's `Pigeon/PigeonTests/` target. Docs of note: `docs/SECURITY_MODEL.m
 ## Coding Style
 
 - Follow existing Swift style: small types, explicit names, focused comments.
+- Comments describe current behavior, not history: no issue/PR numbers (`(#42)`)
+  and no "new"/"now"/"recently". Traceability lives in git and the PR.
 - Keep app code and reusable crypto/package code separated.
 - Preserve Swift 6 concurrency assumptions. Add `Sendable` only when the type
   really is safe to move across isolation boundaries.
