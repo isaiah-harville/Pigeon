@@ -127,8 +127,20 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
   (`register_push`/`unregister_push`), a config-gated APNs gateway that fires the
   content-free alert on deposit (coalesced, with 410 token eviction); app-side
   opt-in (Relays → Push wake-ups), APNs registration, and per-relay token binding.
-- **Local Wi-Fi transport** — Network.framework/Multipeer for same-network reach;
-  another offline-capable `Transport` implementation.
+- **Local Wi-Fi transport** — *implemented* (#34) as `LocalWiFiTransport`, a
+  Multipeer Connectivity `Transport` running alongside BLE and the relay. It is a
+  dumb pipe carrying the same E2E ciphertext; the mesh dedups across BLE/Wi-Fi/relay.
+  No fragmentation (Multipeer gives reliable arbitrarily-sized sessions). Privacy:
+  a random per-launch peer name (no device name on the wire), no discovery metadata,
+  and `.required` session encryption as defence in depth over the already-E2E payload.
+  Open local-link trust model like BLE (accept any nearby peer; identity binding +
+  Olm enforce confidentiality/auth above). A deterministic invite tie-break avoids
+  forming two sessions per pair. Limitations: foreground-only (iOS suspends a
+  backgrounded app's Multipeer session — out-of-range/background reach is the relay's
+  job), needs `NSLocalNetworkUsageDescription`/`NSBonjourServices`, and discovery
+  needs both devices on the same local network (or Apple peer-to-peer Wi-Fi).
+  **Wi-Fi Aware** (infrastructure-less, longer range) is out of scope here — Multipeer
+  already covers the same-network case; Aware stays a Horizon item.
 
 ### 🔭 Horizon
 

@@ -250,6 +250,7 @@ struct MessageDetailMenu: View {
     let verb = message.mine ? "Sent via" : "Received via"
     switch channel {
     case .bluetooth: return "\(verb) Bluetooth"
+    case .localWiFi: return "\(verb) Wi-Fi"
     case .relay(let host): return "\(verb) relay · \(host)"
     }
   }
@@ -257,6 +258,7 @@ struct MessageDetailMenu: View {
   private func symbol(_ channel: TransportChannel) -> String {
     switch channel {
     case .bluetooth: return "dot.radiowaves.left.and.right"
+    case .localWiFi: return "wifi"
     case .relay: return "globe"
     }
   }

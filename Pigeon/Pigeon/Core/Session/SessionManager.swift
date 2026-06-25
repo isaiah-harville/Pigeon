@@ -124,7 +124,10 @@ final class SessionManager {
       let relay = RelayTransport(
         mailboxHex: mailboxHex
       ) { [identity] nonce in try? identity.sign(nonce) }
-      self.mesh = MeshService(transport: CompositeTransport([PeerTransport(), relay]))
+      // Local delivery runs over both BLE and same-network Wi-Fi (#34); the relay
+      // reaches peers out of local range. The mesh dedups across all three.
+      self.mesh = MeshService(
+        transport: CompositeTransport([PeerTransport(), LocalWiFiTransport(), relay]))
       self.relay = relay
     }
     // `self` is fully initialized here, so closures may capture it.

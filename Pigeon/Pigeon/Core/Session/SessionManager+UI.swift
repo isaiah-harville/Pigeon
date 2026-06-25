@@ -46,7 +46,7 @@ extension SessionManager {
   /// chat's chosen link (relay by default, Bluetooth when opted in or when no
   /// relay is configured) — #24.
   func chatChannels(for contact: Contact) -> Set<TransportKind> {
-    usesBluetooth(contact) ? [.bluetooth] : [.relay]
+    usesBluetooth(contact) ? TransportKind.local : [.relay]
   }
 
   /// Live reachability of the link this chat is set to use, so the header can

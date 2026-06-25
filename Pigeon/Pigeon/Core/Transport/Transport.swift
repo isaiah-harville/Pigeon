@@ -31,14 +31,19 @@ enum TransportStatus: String {
 /// routing metadata and keeps the relay zero-knowledge.
 enum TransportChannel: Codable, Equatable, Hashable {
   case bluetooth
+  case localWiFi
   case relay(host: String)
 
   /// Classifies the opaque, transport-scoped sender id from `onMessage`. The
-  /// relay tags its deliveries `"relay:<host>"`; BLE reports a raw peer UUID.
+  /// relay tags its deliveries `"relay:<host>"` and local Wi-Fi `"wifi:<name>"`;
+  /// BLE reports a raw peer UUID, so anything else is Bluetooth.
   init(peerID: String) {
-    let prefix = "relay:"
-    if peerID.hasPrefix(prefix) {
-      self = .relay(host: String(peerID.dropFirst(prefix.count)))
+    let relayPrefix = "relay:"
+    let wifiPrefix = "wifi:"
+    if peerID.hasPrefix(relayPrefix) {
+      self = .relay(host: String(peerID.dropFirst(relayPrefix.count)))
+    } else if peerID.hasPrefix(wifiPrefix) {
+      self = .localWiFi
     } else {
       self = .bluetooth
     }
@@ -50,10 +55,15 @@ enum TransportChannel: Codable, Equatable, Hashable {
 /// when the user switches an in-range chat to the internet — #24).
 enum TransportKind: CaseIterable {
   case bluetooth
+  case localWiFi
   case relay
 
   /// Every link — the unrestricted set, used as the "send everywhere" default.
   static var all: Set<TransportKind> { Set(allCases) }
+
+  /// The local (no-internet) links: Bluetooth mesh and same-network Wi-Fi. A chat
+  /// in local mode floods both, and the mesh dedup absorbs the overlap.
+  static var local: Set<TransportKind> { [.bluetooth, .localWiFi] }
 }
 
 /// A peer-to-peer byte pipe. Implementations handle their own discovery,
