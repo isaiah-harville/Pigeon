@@ -67,8 +67,24 @@ final class ConversationStore {
     persistedConversations[contactID] = nil
   }
 
-  func setPending(_ pending: Bool, messageID: UUID, contactID: Data) {
-    mutate(messageID: messageID, contactID: contactID) { $0.pending = pending }
+  /// Sets an outbound message's delivery state in both the in-memory view and the
+  /// disk mirror, so the Sent → Delivered status survives relaunch.
+  func setDelivery(_ status: DeliveryStatus, messageID: UUID, contactID: Data) {
+    mutate(messageID: messageID, contactID: contactID) { $0.delivery = status }
+  }
+
+  /// Flips an *undispatched* message to `.failed` (a no-op once it has reached
+  /// `.sent`/`.delivered`), so a confidence-window deadline can only fail a
+  /// message we never got onto a transport — never one already on its way.
+  func failIfStillSending(messageID: UUID, contactID: Data) {
+    mutate(messageID: messageID, contactID: contactID) { message in
+      if message.delivery == .sending { message.delivery = .failed }
+    }
+  }
+
+  /// The current delivery state of a message, or `nil` if it's gone or not ours.
+  func delivery(messageID: UUID, contactID: Data) -> DeliveryStatus? {
+    conversations[contactID]?.first { $0.id == messageID }?.delivery
   }
 
   func setTransport(_ channel: TransportChannel?, messageID: UUID, contactID: Data) {

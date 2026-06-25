@@ -57,6 +57,37 @@ struct MessageFooter: View {
   }
 }
 
+/// The delivery-confidence line under one of our own bubbles: an honest
+/// Sent → Delivered progression (we only ever claim what we can prove), and a
+/// tap-to-resend affordance when a message couldn't be dispatched. Auto-retry
+/// keeps running regardless; this just lets an anxious sender act immediately.
+struct MessageStatusLabel: View {
+  let status: DeliveryStatus
+  let onResend: () -> Void
+
+  var body: some View {
+    switch status {
+    case .sending: line("Sending…", icon: "clock")
+    case .sent: line("Sent", icon: "checkmark")
+    case .delivered: line("Delivered", icon: "checkmark.circle.fill")
+    case .failed:
+      Button(action: onResend) {
+        Label("Not delivered · Resend", systemImage: "exclamationmark.arrow.circlepath")
+          .font(.caption2.weight(.semibold))
+      }
+      .buttonStyle(.plain)
+      .foregroundStyle(.red)
+      .accessibilityHint("Resend this message")
+    }
+  }
+
+  private func line(_ text: String, icon: String) -> some View {
+    Label(text, systemImage: icon)
+      .font(.caption2)
+      .foregroundStyle(.secondary)
+  }
+}
+
 struct MessageBubbleContent: View {
   let message: ChatMessage
 

@@ -184,6 +184,9 @@ final class SessionManager {
     // so the relay still holds them — pull them again now that we can ack.
     if drainLockedInbox() { relay?.resubscribeOwnRelays() }
     for contact in contacts { ensureEstablishing(contactID: contact.id) }
+    // Re-arm/settle delivery deadlines lost to the relaunch, so a message killed
+    // mid-send doesn't read "Sending…" forever (#106).
+    reconcileDeliveryStatuses(now: Date())
     maybeRotateFallbackKey()
   }
 
@@ -322,6 +325,10 @@ final class SessionManager {
     message.replySnippet = replySnippet
     message.transport = outboundChannel(for: contact)
     record(message, for: contact.id)
+    // Arm the confidence deadline now: if it can't reach a transport within the
+    // window the status drops to "Not delivered" with a resend (#106). A
+    // successful transmit below moves it to `.sent`, which the deadline ignores.
+    armDeliveryDeadline(messageID: message.id, contactID: contact.id)
     if establishedContactIDs.contains(contact.id) {
       transmit(message, to: contact)
     } else {
@@ -343,6 +350,12 @@ final class SessionManager {
       setTransport(channel, messageID: message.id, contactID: contact.id)
     }
     sendEnvelope(.message, payload: ciphertext, to: contact)
+    // Encrypted and handed to the mesh — it's on its way (store-and-forward keeps
+    // it moving). Move it to `.sent` unless the peer's ack already made it
+    // `.delivered`, so a late resend can't clobber a confirmed delivery.
+    if conversationStore.delivery(messageID: message.id, contactID: contact.id) != .delivered {
+      setDelivery(.sent, messageID: message.id, contactID: contact.id)
+    }
   }
 
 }

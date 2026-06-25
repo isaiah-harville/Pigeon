@@ -128,12 +128,13 @@ extension SessionManager {
     // Any decryptable ack proves the peer holds the session, so the initiation
     // has landed — stop resending it.
     pendingInitiation[contact.id] = nil
-    // A message-id ack additionally clears that message's pending flag; the
-    // establishment sentinel clears nothing further.
+    // A message-id ack additionally confirms that message end-to-end — the only
+    // proof of delivery we have — so mark it delivered; the establishment sentinel
+    // confirms nothing further.
     if let idString = String(data: plaintext, encoding: .utf8),
       let id = UUID(uuidString: idString)
     {
-      setPending(false, messageID: id, contactID: contact.id)
+      setDelivery(.delivered, messageID: id, contactID: contact.id)
     }
     persist()
   }
