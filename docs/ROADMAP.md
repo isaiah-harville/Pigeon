@@ -171,8 +171,11 @@ Several are audit blockers (see [SECURITY_MODEL.md](SECURITY_MODEL.md) → Audit
 - **Re-handshake DoS** — mesh envelopes are unauthenticated, so a spoofed
   `rehandshakeRequest`/handshake can force a session reset (no content breach —
   the binding check holds). Rate-limit / harden.
-- **BLE MTU** — raise the fixed conservative fragment size to the negotiated MTU
-  per connection; consider write-without-response for throughput.
+- **BLE MTU** — fragment size now follows the negotiated ATT MTU per connection
+  (smallest usable length across active write/notify paths, minus the fragment
+  header), with the old conservative size kept as a safe floor. Write-with-response
+  is retained deliberately (flow control + reliable long writes; this app favours
+  delivery certainty over raw throughput).
 - **Connection topology** — dedupe the two-way central/peripheral link per pair.
 - **Store-and-forward** — relay-level store-and-forward (holding *others'*
   packets) is future work (see data mules). The local queue now has a retention

@@ -11,10 +11,13 @@
 //  the `pigeon-mesh` fragmenter and reassembled per source. Encryption (the Olm
 //  session) and mesh relaying layer on top of this.
 //
-//  Current limitations (tracked): uses write-with-response (reliable but slower)
-//  and a conservative fixed fragment size; if two devices connect to each other
-//  in both roles, a message may be delivered twice — the mesh dedup layer
-//  absorbs duplicates.
+//  Fragment size follows the negotiated ATT MTU per connection (#30), with a
+//  conservative floor so any link stays safe. We deliberately keep
+//  write-with-response: it gives flow control and reliable long writes, and this
+//  app values delivery certainty over raw throughput — MTU-sized fragments already
+//  cut the number of writes. Current limitation (tracked): if two devices connect
+//  to each other in both roles, a message may be delivered twice — the mesh dedup
+//  layer absorbs duplicates.
 //
 
 import CoreBluetooth
@@ -118,7 +121,7 @@ final class PeerTransport: NSObject, Transport {
     let fragments: [Fragment]
     do {
       fragments = try fragmenter.fragment(
-        message, maxPayloadPerFragment: BluetoothConstants.maxFragmentPayload)
+        message, maxPayloadPerFragment: fragmentPayloadBudget())
     } catch {
       note("Failed to fragment message: \(error)")
       return
@@ -161,6 +164,40 @@ final class PeerTransport: NSObject, Transport {
       peripheral.discoverServices([BluetoothConstants.service])
     }
     note("Bluetooth refresh requested")
+  }
+
+  // MARK: - Fragment sizing (#30)
+
+  /// The per-fragment payload budget for this broadcast: the smallest usable
+  /// length negotiated across every path this message will travel (each connected
+  /// peripheral's write length and each subscribed central's notify length), so a
+  /// link that negotiated a larger ATT MTU sends fewer fragments while every target
+  /// can still receive each one. Falls back to the conservative floor when no path
+  /// is up yet. A single fragmentation per broadcast keeps the dumb-pipe model.
+  private func fragmentPayloadBudget() -> Int {
+    var lengths: [Int] = []
+    for (id, peripheral) in peripherals
+    where peripheral.state == .connected && inboundCharacteristics[id] != nil {
+      lengths.append(peripheral.maximumWriteValueLength(for: .withResponse))
+    }
+    for central in subscribedCentrals {
+      lengths.append(central.maximumUpdateValueLength)
+    }
+    return Self.fragmentPayloadBudget(smallestNegotiatedLength: lengths.min())
+  }
+
+  /// Clamps the smallest negotiated value length (whole-fragment bytes, header
+  /// included) to a usable payload size: subtract the fragment header, never go
+  /// below the safe floor nor above the ceiling. `nil` (no live path) yields the
+  /// floor. Pure, so the MTU policy is unit-tested without CoreBluetooth.
+  static func fragmentPayloadBudget(smallestNegotiatedLength: Int?) -> Int {
+    guard let length = smallestNegotiatedLength else {
+      return BluetoothConstants.maxFragmentPayload
+    }
+    let usable = length - BluetoothConstants.fragmentHeaderSize
+    return min(
+      max(usable, BluetoothConstants.maxFragmentPayload),
+      BluetoothConstants.maxFragmentPayloadCeiling)
   }
 
   // MARK: - Helpers
