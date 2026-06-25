@@ -176,7 +176,19 @@ Several are audit blockers (see [SECURITY_MODEL.md](SECURITY_MODEL.md) → Audit
   header), with the old conservative size kept as a safe floor. Write-with-response
   is retained deliberately (flow control + reliable long writes; this app favours
   delivery certainty over raw throughput).
-- **Connection topology** — dedupe the two-way central/peripheral link per pair.
+- **Connection topology** — two dual-role devices form *two* central↔peripheral
+  links per pair, so each message crosses BLE twice. This is an **efficiency**
+  issue only: the mesh dedup layer already drops the duplicate, so no duplicate is
+  ever delivered to the user. A correct dedup can't be done locally — CoreBluetooth
+  exposes the same physical peer as a `CBPeripheral` (central role) and a
+  `CBCentral` (peripheral role) under *unrelated* UUIDs, with the MAC hidden, so the
+  two roles can't be correlated without an app-level handshake. The safe design
+  (when built): advertise a per-process instance id, exchange it over each link
+  (advertisement + a small control write so a subscribed central can be attributed),
+  then suppress the redundant notify to an instance we already write to — keeping
+  *both* links for redundancy and falling back to today's behaviour whenever the
+  instance is unknown. Deferred deliberately: it needs on-device BLE verification and
+  must not risk the delivery path, and correctness is already covered by dedup.
 - **Store-and-forward** — relay-level store-and-forward (holding *others'*
   packets) is future work (see data mules). The local queue now has a retention
   policy: an unacked outbound message is auto-resent for a week-long horizon, then
