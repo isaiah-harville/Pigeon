@@ -23,7 +23,7 @@ publication require permission from the Pigeon maintainers.
 
 The repo has the **app** (`Pigeon/`) plus three Rust crates — `pigeon-core/`,
 `pigeon-mesh/`, and `pigeon-relay/` — and `Pigeon/PigeonFFI/`, the thin Swift
-package that vends the generated FFI bindings + XCFramework.
+package that vends the generated FFI bindings + XCFramework. The xcodeproject uses file-system-scnchronized groups (auto-include).
 
 **Rust migration (#79–#83):** the pairwise messaging core is the Rust
 `pigeon-core`, built on Olm (via the audited `vodozemac` crate) — not a
@@ -143,6 +143,8 @@ and the app's `Pigeon/PigeonTests/` target. Docs of note: `docs/SECURITY_MODEL.m
 ## Coding Style
 
 - Follow existing Swift style: small types, explicit names, focused comments.
+- Comments describe current behavior, not history: no issue/PR numbers (`(#42)`)
+  and no "new"/"now"/"recently". Traceability lives in git and the PR.
 - Keep app code and reusable crypto/package code separated.
 - Preserve Swift 6 concurrency assumptions. Add `Sendable` only when the type
   really is safe to move across isolation boundaries.

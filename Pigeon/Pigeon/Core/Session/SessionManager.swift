@@ -17,7 +17,7 @@ import PigeonFFI
 /// the device whose identity key sorts first is the **initiator** (it opens the
 /// Olm session against the peer's published prekey), the other is the
 /// **responder**. Establishment and pending sends are re-driven by concrete
-/// connectivity events (a link coming up — #82), since either device may add the
+/// connectivity events (a link coming up), since either device may add the
 /// contact (scan the QR) or come online at a different moment.
 @MainActor
 @Observable
@@ -88,6 +88,12 @@ final class SessionManager {
   /// once unlocked. See `LockedInbox`.
   var lockedInbox = LockedInbox()
 
+  /// Throttles re-handshakes that *network* input can trigger, so a spoofed or
+  /// replayed `.rehandshakeRequest` (or a flood of undecryptable `.message`
+  /// envelopes) can't force endless session resets. User-initiated resets
+  /// bypass it. See `RehandshakeGate`.
+  var rehandshakeGate = RehandshakeGate(cooldown: RehandshakeGate.defaultCooldown)
+
   var myID: Data { identity.publicKey.rawRepresentation }
 
   /// Locked until the vault is unlocked with Face ID / Touch ID.
@@ -118,7 +124,10 @@ final class SessionManager {
       let relay = RelayTransport(
         mailboxHex: mailboxHex
       ) { [identity] nonce in try? identity.sign(nonce) }
-      self.mesh = MeshService(transport: CompositeTransport([PeerTransport(), relay]))
+      // Local delivery runs over both BLE and same-network Wi-Fi; the relay
+      // reaches peers out of local range. The mesh dedups across all three.
+      self.mesh = MeshService(
+        transport: CompositeTransport([PeerTransport(), LocalWiFiTransport(), relay]))
       self.relay = relay
     }
     // `self` is fully initialized here, so closures may capture it.
@@ -139,7 +148,7 @@ final class SessionManager {
     self.mesh.onMessage = { [weak self] data, channel in
       self?.handleInbound(data, channel: channel)
     }
-    // Event-driven delivery (#82): a link coming up re-drives establishment and
+    // Event-driven delivery: a link coming up re-drives establishment and
     // flushes pending sends, replacing the old 3s polling timer.
     self.mesh.onConnectivity = { [weak self] in self?.flushOnConnectivity() }
   }
@@ -178,6 +187,11 @@ final class SessionManager {
     // so the relay still holds them — pull them again now that we can ack.
     if drainLockedInbox() { relay?.resubscribeOwnRelays() }
     for contact in contacts { ensureEstablishing(contactID: contact.id) }
+    // Purge queue entries that outlived the retention window while the app was
+    // closed, then re-arm/settle the deadlines lost to the relaunch so a
+    // message killed mid-send doesn't read "Sending…" forever.
+    expireStaleDeliveries(now: Date())
+    reconcileDeliveryStatuses(now: Date())
     maybeRotateFallbackKey()
   }
 
@@ -288,7 +302,10 @@ final class SessionManager {
     persist()
     refreshRelay()  // open a publish connection to the new contact's relays
     note("Added contact \"\(name)\"")
-    // Re-scanning forces a fresh handshake (manual recovery if one stalled).
+    // Re-scanning forces a fresh handshake (manual recovery if one stalled). This
+    // is an explicit user action, so it supersedes the re-handshake throttle —
+    // clear the cooldown so the recovery isn't suppressed.
+    rehandshakeGate.clear(bundle.identityKey)
     resetSession(for: bundle.identityKey)
     establishIfNeeded(contactID: bundle.identityKey)
     return true
@@ -302,7 +319,7 @@ final class SessionManager {
 
   /// Sends `text` to `contact`. The message stays *pending* until the peer
   /// acknowledges it; it is sent at once when a session exists and queued
-  /// otherwise, then resent on the next connectivity event (#82), so it is never
+  /// otherwise, then resent on the next connectivity event, so it is never
   /// silently dropped on a disconnect.
   func send(_ text: String, to contact: Contact) {
     send(text, replySnippet: nil, to: contact)
@@ -313,6 +330,10 @@ final class SessionManager {
     message.replySnippet = replySnippet
     message.transport = outboundChannel(for: contact)
     record(message, for: contact.id)
+    // Arm the confidence deadline now: if it can't reach a transport within the
+    // window the status drops to "Not delivered" with a resend. A
+    // successful transmit below moves it to `.sent`, which the deadline ignores.
+    armDeliveryDeadline(messageID: message.id, contactID: contact.id)
     if establishedContactIDs.contains(contact.id) {
       transmit(message, to: contact)
     } else {
@@ -334,6 +355,12 @@ final class SessionManager {
       setTransport(channel, messageID: message.id, contactID: contact.id)
     }
     sendEnvelope(.message, payload: ciphertext, to: contact)
+    // Encrypted and handed to the mesh — it's on its way (store-and-forward keeps
+    // it moving). Move it to `.sent` unless the peer's ack already made it
+    // `.delivered`, so a late resend can't clobber a confirmed delivery.
+    if conversationStore.delivery(messageID: message.id, contactID: contact.id) != .delivered {
+      setDelivery(.sent, messageID: message.id, contactID: contact.id)
+    }
   }
 
 }

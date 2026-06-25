@@ -32,7 +32,7 @@ struct ChatTimelineMarker: View {
 
 enum ChatTimelineIcon {
   static func name(for text: String) -> String? {
-    if text.hasPrefix("Switched to Bluetooth") { return "dot.radiowaves.left.and.right" }
+    if text.hasPrefix("Switched to Local") { return "dot.radiowaves.left.and.right" }
     if text.hasPrefix("Switched to relay") { return "globe" }
     if text.hasPrefix("Ephemeral") { return "clock.arrow.circlepath" }
     return nil
@@ -54,6 +54,37 @@ struct MessageFooter: View {
     }
     .font(.caption2)
     .foregroundStyle(.secondary)
+  }
+}
+
+/// The delivery-confidence line under one of our own bubbles: an honest
+/// Sent → Delivered progression (we only ever claim what we can prove), and a
+/// tap-to-resend affordance when a message couldn't be dispatched. Auto-retry
+/// keeps running regardless; this just lets an anxious sender act immediately.
+struct MessageStatusLabel: View {
+  let status: DeliveryStatus
+  let onResend: () -> Void
+
+  var body: some View {
+    switch status {
+    case .sending: line("Sending…", icon: "clock")
+    case .sent: line("Sent", icon: "checkmark")
+    case .delivered: line("Delivered", icon: "checkmark.circle.fill")
+    case .failed, .expired:
+      Button(action: onResend) {
+        Label("Not delivered · Resend", systemImage: "exclamationmark.arrow.circlepath")
+          .font(.caption2.weight(.semibold))
+      }
+      .buttonStyle(.plain)
+      .foregroundStyle(.red)
+      .accessibilityHint("Resend this message")
+    }
+  }
+
+  private func line(_ text: String, icon: String) -> some View {
+    Label(text, systemImage: icon)
+      .font(.caption2)
+      .foregroundStyle(.secondary)
   }
 }
 
@@ -134,7 +165,7 @@ struct MessageContextMenu: View {
   let onReact: (String) -> Void
   let onReply: () -> Void
   /// Present only for a still-pending message of our own, so the user can force
-  /// a resend now instead of waiting for the next connectivity event (#82).
+  /// a resend now instead of waiting for the next connectivity event.
   var onRetry: (() -> Void)?
 
   private let quickReactions = ["👍", "❤️", "😂"]
@@ -199,7 +230,7 @@ extension ChatMessage {
 
 /// Long-press detail for a message: the link it travelled over plus the full
 /// timestamp. The link is the genuinely-observed arrival transport for received
-/// messages, and the link it was last sent over for sent ones (#24).
+/// messages, and the link it was last sent over for sent ones.
 struct MessageDetailMenu: View {
   let message: ChatMessage
 
@@ -219,6 +250,7 @@ struct MessageDetailMenu: View {
     let verb = message.mine ? "Sent via" : "Received via"
     switch channel {
     case .bluetooth: return "\(verb) Bluetooth"
+    case .localWiFi: return "\(verb) Wi-Fi"
     case .relay(let host): return "\(verb) relay · \(host)"
     }
   }
@@ -226,6 +258,7 @@ struct MessageDetailMenu: View {
   private func symbol(_ channel: TransportChannel) -> String {
     switch channel {
     case .bluetooth: return "dot.radiowaves.left.and.right"
+    case .localWiFi: return "wifi"
     case .relay: return "globe"
     }
   }

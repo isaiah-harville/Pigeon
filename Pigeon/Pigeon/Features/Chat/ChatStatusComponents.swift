@@ -55,18 +55,18 @@ struct ChatStatusBanner: View {
 
 /// The chat's chosen link and whether it can carry a message *right now*, shown
 /// live in the header so users can tell at a glance if they're reachable over
-/// the transport this chat uses — relay or Bluetooth (#24). Reads observable
+/// the transport this chat uses — relay or Bluetooth. Reads observable
 /// transport state, so the trailing dot and text refresh as links come and go.
 struct ConnectionSummary: View {
   @Environment(SessionManager.self) private var session
   let contact: Contact
 
   var body: some View {
-    let bluetooth = session.usesBluetooth(contact)
+    let local = session.usesBluetooth(contact)
     let reachable = session.chosenLinkReachable(for: contact)
     HStack(spacing: 6) {
-      Image(systemName: bluetooth ? "dot.radiowaves.left.and.right" : "globe")
-      Text(detail(bluetooth: bluetooth, reachable: reachable))
+      Image(systemName: local ? "dot.radiowaves.left.and.right" : "globe")
+      Text(detail(local: local, reachable: reachable))
       Spacer()
       Circle()
         .fill(reachable ? Color.green : Color.secondary)
@@ -77,11 +77,11 @@ struct ConnectionSummary: View {
     .foregroundStyle(.secondary)
   }
 
-  private func detail(bluetooth: Bool, reachable: Bool) -> String {
-    if bluetooth {
+  private func detail(local: Bool, reachable: Bool) -> String {
+    if local {
       let peers = session.connectedPeerCount
       return reachable
-        ? "Bluetooth · \(peers) peer\(peers == 1 ? "" : "s")" : "Bluetooth · waiting for peer"
+        ? "Local · \(peers) peer\(peers == 1 ? "" : "s")" : "Local · waiting for peer"
     }
     if let host = session.relayHosts.first { return "Relay · \(host)" }
     return "Relay · connecting…"
@@ -89,19 +89,20 @@ struct ConnectionSummary: View {
 }
 
 /// A thin pill above the composer to pick the chat's link. Relay is the default
-/// (we encourage relays); Bluetooth is the opt-in second option. Tap a segment
-/// or swipe to switch; the choice is mirrored to the peer (#24).
+/// (we encourage relays); Local is the opt-in second option, which floods both
+/// nearby radios — Bluetooth mesh and same-network Wi-Fi — at once. Tap a segment
+/// or swipe to switch; the choice is mirrored to the peer.
 struct TransportPill: View {
   @Environment(SessionManager.self) private var session
   let contact: Contact
 
   var body: some View {
-    let bluetooth = session.usesBluetooth(contact)
+    let local = session.usesBluetooth(contact)
     HStack(spacing: 2) {
-      segment("Relay", "globe", selected: !bluetooth) {
+      segment("Relay", "globe", selected: !local) {
         session.setChatUsesBluetooth(false, for: contact)
       }
-      segment("Bluetooth", "dot.radiowaves.left.and.right", selected: bluetooth) {
+      segment("Local", "dot.radiowaves.left.and.right", selected: local) {
         session.setChatUsesBluetooth(true, for: contact)
       }
     }
@@ -113,7 +114,7 @@ struct TransportPill: View {
         session.setChatUsesBluetooth(value.translation.width > 0, for: contact)
       }
     )
-    .animation(.easeInOut(duration: 0.15), value: bluetooth)
+    .animation(.easeInOut(duration: 0.15), value: local)
   }
 
   private func segment(
@@ -133,7 +134,7 @@ struct TransportPill: View {
 }
 
 /// Lets the user pin a conversation to one of the contact's advertised relays,
-/// or leave it automatic; hidden when the contact advertises none (#18).
+/// or leave it automatic; hidden when the contact advertises none.
 struct RelayPicker: View {
   @Environment(SessionManager.self) private var session
   let contact: Contact

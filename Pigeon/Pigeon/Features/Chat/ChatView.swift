@@ -148,26 +148,27 @@ struct ChatView: View {
       HStack(alignment: .bottom, spacing: 4) {
         if message.mine { Spacer(minLength: 48) }
         messageText(message)
-        if message.mine {
-          if message.pending {
-            Button {
-              session.retryDelivery(to: contact)
-            } label: {
-              Image(systemName: "clock")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Retry sending")
-          }
-        } else {
-          Spacer(minLength: 48)
-        }
+        if !message.mine { Spacer(minLength: 48) }
       }
       MessageReactions(message: message)
       MessageFooter(message: message)
+      if let status = message.delivery, showsStatus(message) {
+        MessageStatusLabel(status: status) { session.retryDelivery(to: contact) }
+      }
     }
     .frame(maxWidth: .infinity, alignment: message.mine ? .trailing : .leading)
+  }
+
+  /// The most recent outbound message, the only one whose status line shows by
+  /// default (matching iMessage); failed messages always show theirs.
+  private var lastOutgoingID: UUID? {
+    messages.last { $0.mine && !$0.system }?.id
+  }
+
+  /// Show the Sent → Delivered line under the latest outbound message, plus under
+  /// any not-delivered one so a stuck message stays actionable.
+  private func showsStatus(_ message: ChatMessage) -> Bool {
+    message.mine && (message.delivery?.needsAttention == true || message.id == lastOutgoingID)
   }
 
   private func messageText(_ message: ChatMessage) -> some View {
@@ -178,7 +179,7 @@ struct ChatView: View {
         message.mine ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.fill.tertiary),
         in: BubbleShape(mine: message.mine)
       )
-      .opacity(message.pending ? 0.6 : 1)
+      .opacity(message.delivery == .sending ? 0.6 : 1)
       .contextMenu {
         MessageContextMenu(
           message: message,

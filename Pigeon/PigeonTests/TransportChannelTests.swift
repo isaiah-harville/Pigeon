@@ -3,7 +3,7 @@
 //  PigeonTests
 //
 //  Classification of the transport-scoped sender id into the channel the UI
-//  shows (#15). The id is locally observed, never read from the wire.
+//  shows. The id is locally observed, never read from the wire.
 //
 
 import XCTest

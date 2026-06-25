@@ -65,6 +65,8 @@ same PR as behavior changes when any of these change:
 - storage or Keychain behavior
 - build, release, deployment, or contribution workflow
 
+Write comments to explain the *why* of the code in front of you, not its history. Describe the current behavior plainly.
+
 Build the docs locally with:
 
 ```sh

@@ -31,14 +31,19 @@ enum TransportStatus: String {
 /// routing metadata and keeps the relay zero-knowledge.
 enum TransportChannel: Codable, Equatable, Hashable {
   case bluetooth
+  case localWiFi
   case relay(host: String)
 
   /// Classifies the opaque, transport-scoped sender id from `onMessage`. The
-  /// relay tags its deliveries `"relay:<host>"`; BLE reports a raw peer UUID.
+  /// relay tags its deliveries `"relay:<host>"` and local Wi-Fi `"wifi:<name>"`;
+  /// BLE reports a raw peer UUID, so anything else is Bluetooth.
   init(peerID: String) {
-    let prefix = "relay:"
-    if peerID.hasPrefix(prefix) {
-      self = .relay(host: String(peerID.dropFirst(prefix.count)))
+    let relayPrefix = "relay:"
+    let wifiPrefix = "wifi:"
+    if peerID.hasPrefix(relayPrefix) {
+      self = .relay(host: String(peerID.dropFirst(relayPrefix.count)))
+    } else if peerID.hasPrefix(wifiPrefix) {
+      self = .localWiFi
     } else {
       self = .bluetooth
     }
@@ -47,13 +52,18 @@ enum TransportChannel: Codable, Equatable, Hashable {
 
 /// Identifies which kind of link a concrete transport is, so callers can
 /// restrict a send to a subset of links (e.g. force a message over the relay
-/// when the user switches an in-range chat to the internet — #24).
+/// when the user switches an in-range chat to the internet).
 enum TransportKind: CaseIterable {
   case bluetooth
+  case localWiFi
   case relay
 
   /// Every link — the unrestricted set, used as the "send everywhere" default.
   static var all: Set<TransportKind> { Set(allCases) }
+
+  /// The local (no-internet) links: Bluetooth mesh and same-network Wi-Fi. A chat
+  /// in local mode floods both, and the mesh dedup absorbs the overlap.
+  static var local: Set<TransportKind> { [.bluetooth, .localWiFi] }
 }
 
 /// A peer-to-peer byte pipe. Implementations handle their own discovery,
@@ -85,7 +95,7 @@ protocol Transport: AnyObject {
   /// Fired when this transport's reachability *improves* — a peer connects and
   /// its channel is ready, or a relay authenticates — so the session layer can
   /// (re)drive establishment and flush pending messages on the event instead of
-  /// polling on a timer (#82). Coarse and best-effort: it may fire more than
+  /// polling on a timer. Coarse and best-effort: it may fire more than
   /// once per real change, so consumers must be idempotent. Never fired for a
   /// drop (nothing to send when a link goes away).
   var onConnectivity: (() -> Void)? { get set }
@@ -100,7 +110,7 @@ protocol Transport: AnyObject {
 
   /// Sends restricted to `channels` (pass `TransportKind.all` for every link).
   /// Lets the session force a message onto a specific link, e.g. relay-only when
-  /// a chat is switched off Bluetooth (#24).
+  /// a chat is switched off Bluetooth.
   func broadcast(_ message: Data, to recipient: Data?, over channels: Set<TransportKind>)
 
   /// User-initiated recovery nudge. Transports should restart discovery or

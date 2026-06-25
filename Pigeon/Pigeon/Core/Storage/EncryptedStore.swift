@@ -25,7 +25,7 @@ struct PersistedContact: Codable {
   /// stores written before relay support still decode.
   var relayURLs: [String] = []
   /// The relay the user prefers for this conversation (absolute URL string), or
-  /// `nil` for automatic. Defaults nil so older stores still decode (#18).
+  /// `nil` for automatic. Defaults nil so older stores still decode.
   var preferredRelayURL: String?
   /// The contact's published Olm prekey bundle, as its wire encoding. `nil` for
   /// contacts / cards without prekeys. Defaults nil so older stores decode.

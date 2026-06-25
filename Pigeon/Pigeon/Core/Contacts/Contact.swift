@@ -20,8 +20,7 @@ struct Contact: Identifiable, Equatable {
   var relayURLs: [URL] = []
   /// The relay the user prefers for this conversation, chosen from `relayURLs`.
   /// `nil` means automatic (use all advertised relays). Delivery falls back to
-  /// the contact's other advertised relays, then our own, if this one is down
-  /// (#18).
+  /// the contact's other advertised relays, then our own, if this one is down.
   var preferredRelayURL: URL?
   /// The contact's published prekey bundle (their signed/fallback Olm prekey),
   /// learned from their QR card. Required to open a session: the initiator runs

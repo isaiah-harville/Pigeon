@@ -12,7 +12,7 @@ import PigeonFFI
 
 extension SessionManager {
 
-  // MARK: - Connectivity-driven delivery (#82)
+  // MARK: - Connectivity-driven delivery
 
   /// Re-drives every contact when a link comes up: (re)establish stalled sessions
   /// and flush unacked messages. This is the event-driven replacement for the old
@@ -23,6 +23,7 @@ extension SessionManager {
   /// the relay still retains each deposited copy, so a later reconnect delivers.
   func flushOnConnectivity() {
     guard isUnlocked else { return }  // can't decrypt/sign or read contacts yet
+    expireStaleDeliveries(now: Date())
     for contact in contacts {
       if establishedContactIDs.contains(contact.id) {
         sendPending(to: contact)
@@ -80,9 +81,70 @@ extension SessionManager {
     }
   }
 
-  /// Flips a message's pending flag in both the in-memory view and the disk mirror.
-  func setPending(_ pending: Bool, messageID: UUID, contactID: Data) {
-    conversationStore.setPending(pending, messageID: messageID, contactID: contactID)
+  /// Records an outbound message's delivery state in both the in-memory view and
+  /// the disk mirror, driving the Sent → Delivered status under the bubble.
+  func setDelivery(_ status: DeliveryStatus, messageID: UUID, contactID: Data) {
+    conversationStore.setDelivery(status, messageID: messageID, contactID: contactID)
+  }
+
+  // MARK: - Delivery confidence window
+
+  /// How long an outbound message may sit *undispatched* before its status drops
+  /// to "Not delivered" with a resend affordance. Long enough that establishment +
+  /// a first send completes on a healthy link, short enough to surface a genuinely
+  /// unreachable peer. Once dispatched (`.sent`) a message never times out — it's
+  /// in store-and-forward and only the recipient's ack moves it to `.delivered`.
+  static let deliveryConfidenceWindow: TimeInterval = 30
+
+  /// How long we keep auto-resending an unacknowledged outbound message before
+  /// retiring it from the local queue to `.expired`. A long-horizon safety
+  /// valve, not a deadline: the relay retains deposited copies and every reconnect
+  /// retries, so a peer offline for hours or days still receives the message.
+  /// Expiry only stops the *local* queue from growing without bound and, after a
+  /// week with no ack, surfaces a genuinely-undeliverable message as "Not
+  /// delivered" (resend revives it) rather than resending it silently forever.
+  /// Relay-side retention is a separate, server-side policy.
+  static let deliveryRetentionWindow: TimeInterval = 7 * 24 * 60 * 60
+
+  /// Retires unacknowledged outbound messages past the retention window to
+  /// `.expired`, persisting only when something changed. Run at unlock and on every
+  /// connectivity flush, so stale queue entries are purged across app restarts.
+  func expireStaleDeliveries(now: Date) {
+    if conversationStore.expireStale(retention: Self.deliveryRetentionWindow, now: now) {
+      persist()
+    }
+  }
+
+  /// Arms the confidence deadline for a freshly-queued message: after the window,
+  /// if it still hasn't reached a transport, mark it failed so the user sees an
+  /// honest "Not delivered" and can resend. Self-cancelling — the closure re-reads
+  /// the live state, so a message that became `.sent`/`.delivered` meanwhile is
+  /// left untouched.
+  func armDeliveryDeadline(messageID: UUID, contactID: Data) {
+    Task { [weak self] in
+      try? await Task.sleep(for: .seconds(Self.deliveryConfidenceWindow))
+      self?.conversationStore.failIfStillSending(messageID: messageID, contactID: contactID)
+      self?.persist()
+    }
+  }
+
+  /// After a relaunch, the in-flight deadlines are gone, so reconcile persisted
+  /// statuses against the wall clock: an outbound message still `.sending` past
+  /// the window is failed now; a newer one gets a fresh deadline. Keeps a message
+  /// killed mid-send from showing "Sending…" forever.
+  func reconcileDeliveryStatuses(now: Date) {
+    let window = Self.deliveryConfidenceWindow
+    for contact in contacts {
+      for message in conversationStore.pending(for: contact.id) where message.delivery == .sending {
+        if message.delivery?.timedOut(age: now.timeIntervalSince(message.date), window: window)
+          == true
+        {
+          setDelivery(.failed, messageID: message.id, contactID: contact.id)
+        } else {
+          armDeliveryDeadline(messageID: message.id, contactID: contact.id)
+        }
+      }
+    }
   }
 
   /// Records the link a message is being dispatched over, in both the in-memory

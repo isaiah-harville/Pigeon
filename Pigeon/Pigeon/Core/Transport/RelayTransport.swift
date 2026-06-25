@@ -62,7 +62,7 @@ final class RelayTransport: Transport {
   var connectedPeerCount: Int { 0 }
   var onMessage: ((_ message: Data, _ peerID: String) -> Void)?
   /// Fired when a relay connection comes up (we can publish to it now), so the
-  /// session layer flushes pending work on the event rather than on a timer (#82).
+  /// session layer flushes pending work on the event rather than on a timer.
   var onConnectivity: (() -> Void)?
 
   /// Our own mailbox address: lowercase hex of our Ed25519 identity public key.
@@ -78,7 +78,7 @@ final class RelayTransport: Transport {
   var relaysForRecipient: (Data) -> [URL] = { _ in [] }
   /// The relay the user prefers for a given recipient's conversation, or `nil`
   /// for automatic. When set and reachable we deposit there; otherwise we fall
-  /// back to the contact's other relays (#18).
+  /// back to the contact's other relays.
   var preferredRelayForRecipient: (Data) -> URL? = { _ in nil }
 
   /// Whether we can durably take responsibility for a delivered envelope right
@@ -102,9 +102,21 @@ final class RelayTransport: Transport {
   private let urlSession = URLSession(configuration: .default)
   private var connections: [URL: Connection] = [:]
 
+  /// Outbound deposits that found no *ready* relay when first attempted, held for
+  /// re-send the instant a usable relay link comes up).
+  /// Without this an envelope generated while our publish-only
+  /// socket to the recipient's relay isn't ready yet — notably a delivery ack a
+  /// freshly relaunched device emits before its links are up — is dropped and
+  /// never retried, so "delivered" can wedge permanently. App *messages* survive
+  /// because the session layer re-drives `pending` ones on connectivity, but
+  /// acks and control envelopes aren't pending; this covers them too. The mesh's
+  /// UUID/`SeenCache` dedup keeps any resulting duplicate harmless. Bounded so a
+  /// peer that stays unreachable can't grow it without limit.
+  private var pendingDeposits = DepositQueue(bound: 256)
+
   /// Watches the OS network path so relays reconnect the instant connectivity
   /// returns (Wi-Fi ↔ cellular, airplane mode off), rather than waiting out the
-  /// supervise backoff (#76). `@ObservationIgnored` — it drives reconnects, not UI.
+  /// supervise backoff. `@ObservationIgnored` — it drives reconnects, not UI.
   @ObservationIgnored private let pathMonitor = NWPathMonitor()
   /// Whether the OS last reported a usable path. Tracked so we react only to the
   /// *transition* back to reachable, ignoring interface flaps while already up.
@@ -160,32 +172,6 @@ final class RelayTransport: Transport {
   }
 
   // MARK: - Transport
-
-  func broadcast(_ message: Data, to recipient: Data?) {
-    // Only directly-addressed messages go over the relay; flood packets don't.
-    guard let recipient else { return }
-    let preferred = preferredRelayForRecipient(recipient)
-    let targets = Self.deliveryTargets(
-      preferred: preferred, advertised: relaysForRecipient(recipient))
-    let ready = targets.filter { connections[$0]?.ready == true && connections[$0]?.socket != nil }
-    guard !ready.isEmpty else { return }
-
-    // Honor an explicitly chosen relay when it's reachable; otherwise fan out to
-    // every reachable relay so a dead one doesn't strand the message (#18).
-    let chosen: [URL]
-    if let preferred, ready.contains(preferred) {
-      chosen = [preferred]
-    } else {
-      chosen = ready
-    }
-
-    let ciphertext = message.base64EncodedString()
-    let recipientHex = Self.hex(recipient)
-    for url in chosen {
-      guard let socket = connections[url]?.socket else { continue }
-      send(socket, ["type": "publish", "recipient": recipientHex, "ciphertext": ciphertext])
-    }
-  }
 
   func refreshConnections() {
     guard !connections.isEmpty || !myRelays.isEmpty else { return }
@@ -259,6 +245,7 @@ final class RelayTransport: Transport {
     connection.ready = true
     note("Relay \(host(url)) \(connection.authenticate ? "online" : "ready")")
     refreshLinkState()
+    flushPendingDeposits()  // re-drive deposits queued while no relay was ready
     onConnectivity?()  // can publish to this relay now — flush pending work
 
     // Heartbeat alongside the blocking receive loop: a half-open socket (network
@@ -375,7 +362,7 @@ extension RelayTransport {
   }
 }
 
-// MARK: - Network path (proactive reconnect, #76)
+// MARK: - Network path (proactive reconnect)
 
 extension RelayTransport {
 
@@ -475,6 +462,68 @@ extension RelayTransport {
   }
 }
 
+// MARK: - Send (deposit + send-side store-and-forward)
+
+extension RelayTransport {
+
+  func broadcast(_ message: Data, to recipient: Data?) {
+    // Only directly-addressed messages go over the relay; flood packets don't.
+    guard let recipient else { return }
+    // No ready relay for this recipient yet: hold the deposit and retry on the
+    // next connectivity event rather than dropping it.
+    guard attemptDeposit(message, to: recipient) else {
+      enqueueDeposit(message, to: recipient)
+      return
+    }
+  }
+
+  /// Tries to deposit `message` to a recipient's reachable relays right now.
+  /// Returns `true` if it was published to at least one ready relay, `false` if
+  /// none were ready (so the caller can queue it for later).
+  @discardableResult
+  private func attemptDeposit(_ message: Data, to recipient: Data) -> Bool {
+    let preferred = preferredRelayForRecipient(recipient)
+    let targets = Self.deliveryTargets(
+      preferred: preferred, advertised: relaysForRecipient(recipient))
+    let ready = targets.filter { connections[$0]?.ready == true && connections[$0]?.socket != nil }
+    guard !ready.isEmpty else { return false }
+
+    // Honor an explicitly chosen relay when it's reachable; otherwise fan out to
+    // every reachable relay so a dead one doesn't strand the message.
+    let chosen: [URL]
+    if let preferred, ready.contains(preferred) {
+      chosen = [preferred]
+    } else {
+      chosen = ready
+    }
+
+    let ciphertext = message.base64EncodedString()
+    let recipientHex = Self.hex(recipient)
+    var published = false
+    for url in chosen {
+      guard let socket = connections[url]?.socket else { continue }
+      send(socket, ["type": "publish", "recipient": recipientHex, "ciphertext": ciphertext])
+      published = true
+    }
+    return published
+  }
+
+  /// Holds a deposit that found no ready relay, dropping the oldest once the
+  /// bound is reached so an unreachable recipient can't grow the queue without
+  /// limit. Re-driven by `flushPendingDeposits` on the next connectivity event.
+  private func enqueueDeposit(_ message: Data, to recipient: Data) {
+    pendingDeposits.enqueue(.init(recipient: recipient, message: message))
+  }
+
+  /// Re-attempts every queued deposit, keeping the ones that still find no ready
+  /// relay. Called from `serve` when a relay link comes up, so acks and control
+  /// envelopes deposited while offline are delivered the moment a usable link
+  /// appears — mirroring the session layer's `pending`-message re-drive.
+  func flushPendingDeposits() {
+    pendingDeposits.flush { attemptDeposit($0.message, to: $0.recipient) }
+  }
+}
+
 // MARK: - Pure routing decisions (unit-tested)
 
 extension RelayTransport {
@@ -492,7 +541,7 @@ extension RelayTransport {
 
   /// As above, but ordered to honor a user-chosen relay for this conversation:
   /// the preferred relay first (when it's one the recipient advertises), then
-  /// their remaining relays, so a dead preferred falls through to the rest (#18).
+  /// their remaining relays, so a dead preferred falls through to the rest.
   static func deliveryTargets(preferred: URL?, advertised: [URL]) -> [URL] {
     guard let preferred, advertised.contains(preferred) else { return advertised }
     return [preferred] + advertised.filter { $0 != preferred }

@@ -27,7 +27,7 @@ final class MeshService {
 
   /// Fired when an underlying link becomes usable (a peer connects, a relay
   /// authenticates), so the session layer can (re)drive establishment and flush
-  /// pending sends on the event instead of polling (#82).
+  /// pending sends on the event instead of polling.
   var onConnectivity: (() -> Void)?
 
   // UI passthroughs so views don't need to know about the transport.
@@ -53,7 +53,7 @@ final class MeshService {
   /// key, passed to the transport as a delivery hint (used by the relay to
   /// address a mailbox; ignored by flood transports like BLE). `over` restricts
   /// the send to specific links (pass `TransportKind.all` for every link), e.g.
-  /// relay-only for a chat the user switched off Bluetooth (#24).
+  /// relay-only for a chat the user switched off Bluetooth.
   func send(_ message: Data, to recipient: Data?, over channels: Set<TransportKind>) {
     let packet = router.originate(message)
     transport.broadcast(packet.encoded(), to: recipient, over: channels)

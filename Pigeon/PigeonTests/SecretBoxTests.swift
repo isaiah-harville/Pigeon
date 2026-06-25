@@ -4,7 +4,7 @@
 //
 //  At-rest seal/open: round-trips, authentication (tamper detection), and the
 //  wrong-key path. Ported from PigeonCrypto's suite when SecretBox moved into
-//  the app during the pigeon-core cutover (#80).
+//  the app during the pigeon-core cutover.
 //
 
 import CryptoKit
