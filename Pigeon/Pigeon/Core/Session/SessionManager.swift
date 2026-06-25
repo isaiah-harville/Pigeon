@@ -88,6 +88,12 @@ final class SessionManager {
   /// once unlocked. See `LockedInbox`.
   var lockedInbox = LockedInbox()
 
+  /// Throttles re-handshakes that *network* input can trigger, so a spoofed or
+  /// replayed `.rehandshakeRequest` (or a flood of undecryptable `.message`
+  /// envelopes) can't force endless session resets (#33). User-initiated resets
+  /// bypass it. See `RehandshakeGate`.
+  var rehandshakeGate = RehandshakeGate(cooldown: RehandshakeGate.defaultCooldown)
+
   var myID: Data { identity.publicKey.rawRepresentation }
 
   /// Locked until the vault is unlocked with Face ID / Touch ID.
@@ -288,7 +294,10 @@ final class SessionManager {
     persist()
     refreshRelay()  // open a publish connection to the new contact's relays
     note("Added contact \"\(name)\"")
-    // Re-scanning forces a fresh handshake (manual recovery if one stalled).
+    // Re-scanning forces a fresh handshake (manual recovery if one stalled). This
+    // is an explicit user action, so it supersedes the re-handshake throttle —
+    // clear the cooldown so the recovery isn't suppressed (#33).
+    rehandshakeGate.clear(bundle.identityKey)
     resetSession(for: bundle.identityKey)
     establishIfNeeded(contactID: bundle.identityKey)
     return true

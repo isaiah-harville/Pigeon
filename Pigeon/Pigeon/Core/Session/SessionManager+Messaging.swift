@@ -211,8 +211,11 @@ extension SessionManager {
   }
 
   /// Recovers a lost/stale session. The initiator re-establishes; the responder
-  /// asks the initiator to do so.
+  /// asks the initiator to do so. Triggered by *network* input (an undecryptable
+  /// message, a missing session for an inbound message), so it's rate-limited per
+  /// contact: a spoofed flood can't drive endless resets or re-request spam (#33).
   func requestRehandshake(with contact: Contact) {
+    guard rehandshakeGate.allow(contact.id, now: Date()) else { return }
     if isInitiator(toward: contact.id) {
       resetSession(for: contact.id)
       establishIfNeeded(contactID: contact.id)
@@ -232,12 +235,15 @@ extension SessionManager {
       return
     }
     // Otherwise re-establish only if we're established (peer lost it) or never
-    // started.
-    if establishedContactIDs.contains(contact.id) || sessions[contact.id] == nil {
-      note("\"\(contact.displayName)\" requested re-establishment")
-      resetSession(for: contact.id)
-      establishIfNeeded(contactID: contact.id)
-    }
+    // started. The request is unauthenticated (empty payload), so rate-limit the
+    // destructive reset per contact — a spoofed `.rehandshakeRequest` flood then
+    // costs at most one teardown per cooldown window rather than one per packet
+    // (#33). A genuinely lost peer simply re-requests after the window.
+    guard establishedContactIDs.contains(contact.id) || sessions[contact.id] == nil else { return }
+    guard rehandshakeGate.allow(contact.id, now: Date()) else { return }
+    note("\"\(contact.displayName)\" requested re-establishment")
+    resetSession(for: contact.id)
+    establishIfNeeded(contactID: contact.id)
   }
 
   // MARK: - Establishment (async-first, prekey-based)
