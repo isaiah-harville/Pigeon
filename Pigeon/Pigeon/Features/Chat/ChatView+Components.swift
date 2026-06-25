@@ -32,7 +32,7 @@ struct ChatTimelineMarker: View {
 
 enum ChatTimelineIcon {
   static func name(for text: String) -> String? {
-    if text.hasPrefix("Switched to Bluetooth") { return "dot.radiowaves.left.and.right" }
+    if text.hasPrefix("Switched to Local") { return "dot.radiowaves.left.and.right" }
     if text.hasPrefix("Switched to relay") { return "globe" }
     if text.hasPrefix("Ephemeral") { return "clock.arrow.circlepath" }
     return nil

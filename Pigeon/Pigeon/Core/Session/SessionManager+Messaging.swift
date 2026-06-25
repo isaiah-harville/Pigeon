@@ -162,7 +162,7 @@ extension SessionManager {
     if changed && announce {
       let text: String
       if useBluetooth {
-        text = "Switched to Bluetooth"
+        text = "Switched to Local"
       } else if let host = relayHost(for: contactID) {
         text = "Switched to relay · \(host)"
       } else {
