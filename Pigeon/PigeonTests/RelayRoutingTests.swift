@@ -31,7 +31,7 @@ final class RelayRoutingTests: XCTestCase {
     XCTAssertTrue(RelayTransport.deliveryTargets(advertised: []).isEmpty)
   }
 
-  // MARK: - Per-conversation preferred relay (#18)
+  // MARK: - Per-conversation preferred relay
 
   func testPreferredRelayIsOrderedFirstWithOthersAsFallback() {
     let a = url("wss://a.example/ws")
@@ -113,5 +113,51 @@ final class RelayRoutingTests: XCTestCase {
   func testCanConsumeDefaultsToTrue() {
     let relay = RelayTransport(mailboxHex: "00", sign: { _ in nil })
     XCTAssertTrue(relay.canConsume())
+  }
+
+  // MARK: - Send-side store-and-forward queue
+
+  private func deposit(_ to: UInt8, _ body: UInt8) -> RelayTransport.DepositQueue.Deposit {
+    .init(recipient: Data([to]), message: Data([body]))
+  }
+
+  func testFlushRedeliversQueuedDepositWhenRelayBecomesReady() {
+    // Reproduces the ack-drop wedge: a deposit (e.g. a delivery ack) made while
+    // no relay link was ready must go out the instant one comes up, not vanish.
+    var queue = RelayTransport.DepositQueue(bound: 8)
+    queue.enqueue(deposit(1, 42))
+    XCTAssertEqual(queue.count, 1)
+
+    var sent: [RelayTransport.DepositQueue.Deposit] = []
+    queue.flush {
+      sent.append($0)
+      return true
+    }  // a relay is ready now
+    XCTAssertEqual(sent, [deposit(1, 42)])
+    XCTAssertTrue(queue.isEmpty, "a delivered deposit must not be retained")
+  }
+
+  func testFlushRetainsDepositsThatStillFindNoReadyRelay() {
+    var queue = RelayTransport.DepositQueue(bound: 8)
+    queue.enqueue(deposit(1, 1))
+    queue.enqueue(deposit(2, 2))
+    queue.flush { _ in false }  // still nothing ready
+    XCTAssertEqual(queue.deposits, [deposit(1, 1), deposit(2, 2)])
+  }
+
+  func testFlushKeepsOnlyTheUndeliverableDeposits() {
+    var queue = RelayTransport.DepositQueue(bound: 8)
+    queue.enqueue(deposit(1, 1))  // reachable
+    queue.enqueue(deposit(2, 2))  // unreachable
+    queue.flush { $0.recipient == Data([1]) }
+    XCTAssertEqual(queue.deposits, [deposit(2, 2)])
+  }
+
+  func testQueueDropsOldestPastItsBound() {
+    var queue = RelayTransport.DepositQueue(bound: 2)
+    queue.enqueue(deposit(1, 1))
+    queue.enqueue(deposit(2, 2))
+    queue.enqueue(deposit(3, 3))  // evicts the oldest
+    XCTAssertEqual(queue.deposits, [deposit(2, 2), deposit(3, 3)])
   }
 }

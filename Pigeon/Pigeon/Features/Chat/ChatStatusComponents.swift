@@ -133,7 +133,7 @@ struct TransportPill: View {
 }
 
 /// Lets the user pin a conversation to one of the contact's advertised relays,
-/// or leave it automatic; hidden when the contact advertises none (#18).
+/// or leave it automatic; hidden when the contact advertises none.
 struct RelayPicker: View {
   @Environment(SessionManager.self) private var session
   let contact: Contact

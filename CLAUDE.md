@@ -23,7 +23,7 @@ publication require permission from the Pigeon maintainers.
 
 The repo has the **app** (`Pigeon/`) plus three Rust crates — `pigeon-core/`,
 `pigeon-mesh/`, and `pigeon-relay/` — and `Pigeon/PigeonFFI/`, the thin Swift
-package that vends the generated FFI bindings + XCFramework.
+package that vends the generated FFI bindings + XCFramework. The xcodeproject uses file-system-scnchronized groups (auto-include).
 
 **Rust migration (#79–#83):** the pairwise messaging core is the Rust
 `pigeon-core`, built on Olm (via the audited `vodozemac` crate) — not a

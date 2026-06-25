@@ -171,7 +171,7 @@ extension SessionManager {
   }
 
   /// The relay preferred for this conversation (`nil` = automatic), and the
-  /// contact's advertised relays the picker chooses from (#18).
+  /// contact's advertised relays the picker chooses from.
   func preferredRelay(for contact: Contact) -> URL? {
     contacts.first { $0.id == contact.id }?.preferredRelayURL
   }
@@ -181,7 +181,7 @@ extension SessionManager {
   }
 
   /// Pins this conversation to a chosen relay (or `nil` for automatic) and
-  /// reconnects so a connection to the chosen relay is open (#18).
+  /// reconnects so a connection to the chosen relay is open.
   func setPreferredRelay(_ url: URL?, for contact: Contact) {
     guard let index = contacts.firstIndex(where: { $0.id == contact.id }) else { return }
     contacts[index].preferredRelayURL = url
