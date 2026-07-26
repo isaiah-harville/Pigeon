@@ -89,7 +89,7 @@ struct ContactsListView: View {
       VStack(spacing: 6) {
         Text("No contacts yet")
           .font(.title3.weight(.semibold))
-        Text("Add someone by scanning their Pigeon QR code in person.")
+        Text("Scan someone nearby or exchange Pigeon contact links from anywhere.")
           .font(.callout)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)

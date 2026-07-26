@@ -107,10 +107,10 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
   documented exception to "no new network services beyond the relay."
 - **Encrypted storage** — biometric-gated `Vault` key + `EncryptedStore`;
   **per-chat ephemeral mode** (synced to the peer, future-messages-only).
-- **Onboarding & UI** — name onboarding, QR identity card (name auto-populates on
-  scan; edit + copy-fingerprint), contact verification via safety number, contacts
-  book + conversations list (avatars, previews, lock state, swipe-to-delete), chat
-  with auto-scroll, rename.
+- **Onboarding & UI** — name onboarding, QR identity card and shareable remote
+  contact links (name auto-populates on import; edit + copy-fingerprint), contact
+  verification via safety number, contacts book + conversations list (avatars,
+  previews, lock state, swipe-to-delete), chat with auto-scroll, rename.
 - **Notifications** — in-app foreground banner + local notification (no server).
 - **`Transport` abstraction** — BLE, local Wi-Fi, and the relay are each one
   implementation of a `Transport` protocol; `MeshService` runs over any transport

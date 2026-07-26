@@ -4,6 +4,19 @@
 <dict>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>com.isaiah-harville.Pigeon.contact</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>pigeon</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Pigeon uses the local network to discover nearby devices and exchange end-to-end encrypted messages over Wi-Fi when you're on the same network.</string>
 	<key>NSBonjourServices</key>

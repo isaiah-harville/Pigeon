@@ -151,4 +151,55 @@ final class ContactsBookTests: XCTestCase {
     XCTAssertNil(b.sessions[aID], "session is reset")
     XCTAssertFalse(b.establishedContactIDs.contains(aID))
   }
+
+  /// Two people can exchange contact links remotely, establish over the same
+  /// async-first path as QR cards, and keep the contact/session across relaunch.
+  func testRemoteContactLinksEstablishAndPersistWithoutRescan() throws {
+    let bus = TestBus()
+    let seedA = newSeed()
+    let (keyA, keyB) = (SymmetricKey(size: .bits256), SymmetricKey(size: .bits256))
+    wipe(keyA, "cbookLinkA.store")
+    wipe(keyB, "cbookLinkB.store")
+
+    let a = try launch(seed: seedA, key: keyA, storeFile: "cbookLinkA.store", bus: bus)
+    let b = try launch(seed: newSeed(), key: keyB, storeFile: "cbookLinkB.store", bus: bus)
+    a.setMyName("Alice")
+    b.setMyName("Bob")
+
+    let aCard = try XCTUnwrap(
+      a.myCard?.shareURL.flatMap { ContactCard(scanned: $0.absoluteString) })
+    let bCard = try XCTUnwrap(
+      b.myCard?.shareURL.flatMap { ContactCard(scanned: $0.absoluteString) })
+
+    let initiator = a.isInitiator(toward: b.myID) ? a : b
+    if initiator === a {
+      b.addContact(
+        aCard.bundle, name: aCard.name, relayURLs: aCard.relayURLs,
+        prekeyBundle: aCard.prekeyBundle, verifiedInPerson: false)
+      a.addContact(
+        bCard.bundle, name: bCard.name, relayURLs: bCard.relayURLs,
+        prekeyBundle: bCard.prekeyBundle, verifiedInPerson: false)
+    } else {
+      a.addContact(
+        bCard.bundle, name: bCard.name, relayURLs: bCard.relayURLs,
+        prekeyBundle: bCard.prekeyBundle, verifiedInPerson: false)
+      b.addContact(
+        aCard.bundle, name: aCard.name, relayURLs: aCard.relayURLs,
+        prekeyBundle: aCard.prekeyBundle, verifiedInPerson: false)
+    }
+
+    XCTAssertTrue(a.establishedContactIDs.contains(b.myID))
+    XCTAssertTrue(b.establishedContactIDs.contains(a.myID))
+    XCTAssertFalse(contact(a, b.myID).verifiedInPerson)
+    XCTAssertFalse(contact(b, a.myID).verifiedInPerson)
+
+    a.send("hello from afar", to: contact(a, b.myID))
+    XCTAssertTrue(
+      b.messages(with: contact(b, a.myID)).contains { $0.text == "hello from afar" })
+
+    let relaunched = try launch(
+      seed: seedA, key: keyA, storeFile: "cbookLinkA.store", bus: bus)
+    XCTAssertNotNil(relaunched.sessions[b.myID])
+    XCTAssertFalse(contact(relaunched, b.myID).verifiedInPerson)
+  }
 }

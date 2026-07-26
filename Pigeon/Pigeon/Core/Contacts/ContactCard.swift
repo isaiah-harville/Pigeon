@@ -29,6 +29,8 @@ struct ContactCard {
   let prekeyBundle: PigeonPrekeyBundle?
 
   private static let version: UInt8 = 0x03
+  private static let shareScheme = "pigeon"
+  private static let shareHost = "contact"
 
   init(
     name: String, bundle: PigeonIdentityBundle, relayURLs: [URL], relaySignature: Data,
@@ -58,10 +60,23 @@ struct ContactCard {
     return (try? encodeContactCardPayload(payload).base64EncodedString()) ?? ""
   }
 
-  /// Parses a scanned QR string, or returns nil if it isn't a Pigeon card.
+  /// A tappable contact link suitable for sharing with someone who is not
+  /// physically present. The link contains only the same signed public material
+  /// as the QR card; private keys never leave this device.
+  var shareURL: URL? {
+    var components = URLComponents()
+    components.scheme = Self.shareScheme
+    components.host = Self.shareHost
+    components.queryItems = [URLQueryItem(name: "card", value: Self.base64URL(encoded()))]
+    return components.url
+  }
+
+  /// Parses a scanned QR payload, pasted code, or shared Pigeon contact link.
+  /// Returns nil if the input is not a valid, self-consistent contact card.
   init?(scanned string: String) {
     let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard let raw = Data(base64Encoded: trimmed),
+    let encoded = Self.cardPayload(from: trimmed) ?? trimmed
+    guard let raw = Data(base64Encoded: Self.base64Standard(encoded)),
       let payload = try? decodeContactCardPayload(raw),
       payload.version == UInt32(Self.version),
       let bundle = try? PigeonIdentityBundle(decoding: payload.identityBundle)
@@ -96,5 +111,37 @@ struct ContactCard {
     } else {
       self.prekeyBundle = nil
     }
+  }
+
+  private static func cardPayload(from string: String) -> String? {
+    guard let components = URLComponents(string: string),
+      components.scheme?.lowercased() == shareScheme,
+      components.host?.lowercased() == shareHost
+    else {
+      return nil
+    }
+    return components.queryItems?.first { $0.name == "card" }?.value
+  }
+
+  /// Base64 uses `+` and `/`, which survive a `URLComponents` round trip but are
+  /// mangled by any intermediary that form-decodes a query (`+` becomes a space).
+  /// Links travel through channels we don't control, so they carry base64url.
+  private static func base64URL(_ base64: String) -> String {
+    base64
+      .replacingOccurrences(of: "+", with: "-")
+      .replacingOccurrences(of: "/", with: "_")
+      .replacingOccurrences(of: "=", with: "")
+  }
+
+  /// Restores standard base64 (with padding) from base64url. Standard base64
+  /// contains neither `-` nor `_`, so scanned QR payloads pass through unchanged.
+  private static func base64Standard(_ encoded: String) -> String {
+    var standard =
+      encoded
+      .replacingOccurrences(of: "-", with: "+")
+      .replacingOccurrences(of: "_", with: "/")
+    let remainder = standard.count % 4
+    if remainder > 0 { standard += String(repeating: "=", count: 4 - remainder) }
+    return standard
   }
 }

@@ -30,6 +30,12 @@ struct PigeonApp: App {
   @State private var startupError: String?
   @State private var vault = Vault()
 
+  /// A contact link tapped elsewhere on the device, held here rather than in
+  /// `ContentView` because a link can arrive while identity is still loading and
+  /// `ContentView` isn't in the hierarchy yet. `ContentView` presents it once the
+  /// app is unlocked and past onboarding.
+  @State private var pendingContactCode: String?
+
   init() {
     let startup = Self.loadServices()
     _services = State(initialValue: startup.services)
@@ -40,7 +46,7 @@ struct PigeonApp: App {
     WindowGroup {
       Group {
         if let services {
-          ContentView()
+          ContentView(pendingContactCode: $pendingContactCode)
             .environment(services.identity)
             .environment(services.session)
             .environment(vault)
@@ -48,6 +54,7 @@ struct PigeonApp: App {
           StartupRecoveryView(message: startupError)
         }
       }
+      .onOpenURL(perform: queueContactImport)
       .task { retryStartupIfNeeded() }
       .onChange(of: scenePhase) { _, phase in
         if phase == .active { retryStartupIfNeeded() }
@@ -62,6 +69,15 @@ struct PigeonApp: App {
         ) { _ in retryStartupIfNeeded() }
       #endif
     }
+  }
+
+  /// Holds a tapped contact link for `ContentView` to present. Only a real
+  /// contact card is kept; anything else on our scheme isn't ours to act on.
+  /// Adding still needs an explicit confirmation in the sheet.
+  private func queueContactImport(_ url: URL) {
+    let code = url.absoluteString
+    guard ContactCard(scanned: code) != nil else { return }
+    pendingContactCode = code
   }
 
   /// Builds the services once, if we don't already have them. Idempotent.
