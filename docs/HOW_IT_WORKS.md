@@ -134,33 +134,36 @@ follows.
 
 ---
 
-## Step 1 — Becoming contacts, in person
+## Step 1 — Becoming contacts, nearby or remote
 
-![Identity and trust: in-person QR setup](diagrams/pigeon_01_identity.png)
+![Identity and trust: exchanging contact cards](diagrams/pigeon_01_identity.png)
 
-*Two phones generate keys, exchange public ContactCards by QR, and verify a safety
-number — no server involved.*
+*Two phones generate keys, exchange public ContactCards by QR or contact link,
+and verify a safety number.*
 
 Pigeon has no accounts, phone numbers, or central directory. **You are your key
-pair**, addressed by your fingerprint. Trust is established the hard-to-fool way:
-**in person.**
+pair**, addressed by your fingerprint. Nearby contacts can scan QR codes. People
+anywhere in the world can exchange `pigeon://contact` links through a channel
+they already use; the link contains the same public card and Pigeon clearly marks
+that contact as not verified in person.
 
 1. **Each phone generates its keys** (an Ed25519 identity key, plus an Olm
    account holding a Curve25519 identity key and a pool of prekeys) on first
    launch and stores the private halves in the **Keychain** (details in
    [Where the secrets live](#where-the-secrets-live)).
-2. **You show each other a QR code** encoding a **ContactCard**: your *public*
-   Ed25519 identity key, your *public* Olm Curve25519 key, a signed *prekey*
-   bundle (so people can message you while you're offline — see Step 2), a display
-   name, and any relay addresses. It's all public — safe even if photographed by a
-   stranger.
+2. **You exchange a ContactCard** by scanning each other's QR codes or sharing
+   contact links. The card contains your *public* Ed25519 identity key, your
+   *public* Olm Curve25519 key, a signed *prekey* bundle (so people can message
+   you while you're offline — see Step 2), a display name, and any relay
+   addresses. It's all public — safe even if photographed or forwarded.
 3. **Each phone verifies the card is internally consistent.** The card carries an
    Ed25519 signature, made by the identity key, over the Curve25519 key. Checking
    it proves the two keys belong together — an attacker can't staple their own
    Curve25519 key onto your identity.
 4. **You compare a safety number.** Pigeon derives one 60-digit number from *both*
    public identity keys — identical on both phones — and you confirm they match
-   (read aloud or scanned). This mirrors Signal's "safety number" design
+   in person or over a trusted channel. Until this happens, a remotely imported
+   contact remains visibly unverified. This mirrors Signal's "safety number" design
    ([Signal][safetynum]); Pigeon computes it by iterated SHA-512 hashing over the
    two keys sorted into a fixed order, so the result is the same on both devices
    and grinding a collision is expensive.
@@ -417,11 +420,12 @@ security audit and must not be treated as proven-secure. See the
   phone is in hand.
 - **No key is ever sent to any server.** Servers handle locked boxes only.
 
-That's the whole system: verify a friend once, in person; agree on a secret no one
-else can compute, even when they're offline (an Olm session from published
-prekeys); authenticate who you're talking to (the identity binding check); give
-every message its own disposable key (the Double Ratchet); and let any courier
-carry the locked box, because none of them hold the key to open it.
+That's the whole system: exchange cards once and verify the safety number; agree
+on a secret no one else can compute, even when the other person is offline (an
+Olm session from published prekeys); authenticate who you're talking to (the
+identity binding check); give every message its own disposable key (the Double
+Ratchet); and let any courier carry the locked box, because none of them hold the
+key to open it.
 
 ---
 

@@ -155,7 +155,7 @@ struct ChatsListView: View {
         Text(
           hasContacts
             ? "Open a contact from your contacts book to start chatting."
-            : "Add someone by scanning their Pigeon QR code in person."
+            : "Scan someone nearby or exchange contact links from anywhere."
         )
         .font(.callout)
         .foregroundStyle(.secondary)

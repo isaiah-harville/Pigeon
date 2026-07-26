@@ -2,9 +2,9 @@
 //  ContactCardTests.swift
 //  PigeonTests
 //
-//  The QR card wire format: round-trips, a minimal (no-relay) card, and the
-//  security-critical rule that advertised relay URLs are honoured only when
-//  signed by the card's own identity key.
+//  The contact card wire format: QR and share-link round-trips, a minimal
+//  (no-relay) card, and the security-critical rule that advertised relay URLs
+//  are honoured only when signed by the card's own identity key.
 //
 
 import CryptoKit
@@ -51,6 +51,54 @@ final class ContactCardTests: XCTestCase {
     let decoded = ContactCard(scanned: card.encoded())
     XCTAssertEqual(decoded?.name, "Bob")
     XCTAssertEqual(decoded?.relayURLs, urls)
+  }
+
+  func testSharedContactLinkRoundTrip() throws {
+    let (idKey, bundle) = try makeIdentity()
+    let urls = [URL(string: "wss://remote.example/ws")!]
+    let signature = try idKey.signature(for: ContactCard.relayPayload(urls))
+    let card = ContactCard(
+      name: "Remote Alice", bundle: bundle, relayURLs: urls,
+      relaySignature: signature, prekeyBundle: nil)
+
+    let shareURL = try XCTUnwrap(card.shareURL)
+    let decoded = ContactCard(scanned: shareURL.absoluteString)
+
+    XCTAssertEqual(shareURL.scheme, "pigeon")
+    XCTAssertEqual(shareURL.host, "contact")
+    XCTAssertEqual(decoded?.name, "Remote Alice")
+    XCTAssertEqual(decoded?.bundle, bundle)
+    XCTAssertEqual(decoded?.relayURLs, urls)
+  }
+
+  /// The link travels through channels we don't control, so its payload must stay
+  /// inside the base64url alphabet: a `+` would be form-decoded to a space by some
+  /// intermediary and the card would arrive corrupt.
+  func testSharedContactLinkPayloadIsURLSafe() throws {
+    let (idKey, bundle) = try makeIdentity()
+    let urls = [URL(string: "wss://remote.example/ws")!]
+    let signature = try idKey.signature(for: ContactCard.relayPayload(urls))
+    let card = ContactCard(
+      name: "Remote Alice", bundle: bundle, relayURLs: urls,
+      relaySignature: signature, prekeyBundle: nil)
+
+    let shareURL = try XCTUnwrap(card.shareURL)
+    let payload = try XCTUnwrap(
+      URLComponents(string: shareURL.absoluteString)?
+        .queryItems?.first { $0.name == "card" }?.value)
+
+    let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+      .union(CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789-_"))
+    XCTAssertTrue(
+      payload.unicodeScalars.allSatisfy(allowed.contains),
+      "share link payload must be base64url: \(payload)")
+    // Nothing needed percent-encoding, so the raw link text is what we parse back.
+    XCTAssertTrue(shareURL.absoluteString.hasSuffix(payload))
+  }
+
+  func testMalformedSharedContactLinkIsRejected() {
+    XCTAssertNil(ContactCard(scanned: "pigeon://contact?card=not-a-card"))
+    XCTAssertNil(ContactCard(scanned: "https://example.com/?card=anything"))
   }
 
   func testUnsignedRelayURLsAreDropped() throws {

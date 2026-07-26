@@ -2,8 +2,8 @@
 //  AddContactView.swift
 //  Pigeon
 //
-//  Scan or paste a peer's QR card to add them. The contact's name comes from
-//  their card; it can be edited later in the chat.
+//  Scan a nearby peer's QR card or import a shared contact link from anywhere.
+//  The contact's name comes from their card; it can be edited later in the chat.
 //
 
 import SwiftUI
@@ -12,20 +12,37 @@ struct AddContactView: View {
   @Environment(SessionManager.self) private var session
   @Environment(\.dismiss) private var dismiss
 
-  @State private var pasted = ""
+  @State private var pasted: String
   @State private var error: String?
-  @State private var showManualEntry = false
+  @State private var showManualEntry: Bool
   @State private var showingMyQR = false
   @State private var showingMyFingerprint = false
   @State private var addedName: String?
+  /// Whether the contact we added arrived over a link rather than the camera. The
+  /// other person isn't in the room, so telling them to scan our QR is useless —
+  /// we point at the share link instead.
+  @State private var addedRemotely = false
   /// Whether we presented our own code (QR or fingerprint) before scanning. If so
   /// the other person has already added us, so once we add them the exchange is
   /// complete — we don't flip back to our QR (we were the second to scan).
   @State private var didShowMyCode = false
 
-  /// The mutual exchange is finished: we added them *and* we'd already shown our
-  /// code first, so they've added us too.
-  private var isComplete: Bool { addedName != nil && didShowMyCode }
+  init() {
+    _pasted = State(initialValue: "")
+    _showManualEntry = State(initialValue: false)
+  }
+
+  /// Opened from a tapped contact link: prefill the code and open the panel it
+  /// belongs to, so the user only has to confirm.
+  init(initialCode: String) {
+    _pasted = State(initialValue: initialCode)
+    _showManualEntry = State(initialValue: !initialCode.isEmpty)
+  }
+
+  /// Nothing more to do on the scanner: either the in-person exchange is mutual
+  /// (we showed our code first, then added theirs), or we added a remote contact
+  /// and the rest of the exchange happens over their channel, not the camera.
+  private var isComplete: Bool { addedName != nil && (didShowMyCode || addedRemotely) }
 
   var body: some View {
     NavigationStack {
@@ -62,15 +79,17 @@ struct AddContactView: View {
   }
 
   private var scannerHintText: String {
-    if isComplete {
-      return "Added \(addedName ?? ""). You're all set."
-    }
     if let addedName {
-      return "Added \(addedName). Now have them scan your QR code to add you back."
+      if addedRemotely {
+        return "Added \(addedName). Send them your contact link so they can add you back."
+      }
+      return isComplete
+        ? "Added \(addedName). You're all set."
+        : "Added \(addedName). Now have them scan your QR code to add you back."
     }
     return showingMyQR
       ? "Have the other person scan this QR code to add you."
-      : "Point your camera at the other person's Pigeon QR code."
+      : "Scan someone nearby, or exchange contact links if they're far away."
   }
 
   @ViewBuilder
@@ -155,35 +174,25 @@ struct AddContactView: View {
   }
 
   private var manualEntryTitle: String {
-    showingMyFingerprint ? "My fingerprint" : "Enter a code manually"
+    showingMyFingerprint ? "My fingerprint" : "Add someone remotely"
   }
 
   private var manualEntryFields: some View {
-    VStack(spacing: 12) {
-      TextField("Pigeon contact code", text: $pasted, axis: .vertical)
-        .lineLimit(2...4)
-        .font(.caption.monospaced())
-        .textFieldStyle(.roundedBorder)
-      Button {
-        // Pasted codes arrive over some out-of-band channel, so the safety
+    RemoteContactExchangeView(
+      code: $pasted,
+      myShareURL: session.myCard?.shareURL,
+      onAdd: {
+        // Shared codes arrive over an out-of-band channel, so the safety
         // number wasn't compared face to face — mark the contact unverified.
         handle(pasted, verifiedInPerson: false)
-      } label: {
-        Text("Add Contact").frame(maxWidth: .infinity)
-      }
-      .buttonStyle(.borderedProminent)
-      .disabled(pasted.isEmpty)
-      Button {
+      },
+      onShowFingerprint: {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
           showingMyFingerprint = true
           didShowMyCode = true
         }
-      } label: {
-        Label("Show My Fingerprint", systemImage: "number")
-          .frame(maxWidth: .infinity)
       }
-      .buttonStyle(.bordered)
-    }
+    )
     .padding(.top, 4)
   }
 
@@ -218,14 +227,17 @@ struct AddContactView: View {
     {
       error = nil
       pasted = ""
-      // Mutual exchange: if we hadn't already shown our code, flip to our own QR
-      // so the other person can scan us back without leaving this screen. If we
-      // *had* shown it first, they've already added us, so this completes the
-      // exchange (see `isComplete`) and we don't show our QR again.
+      // Mutual exchange: if we scanned them in person and hadn't already shown our
+      // code, flip to our own QR so they can scan us back without leaving this
+      // screen. If we *had* shown it first, they've already added us, so this
+      // completes the exchange (see `isComplete`). A remote contact can't scan
+      // anything, so we keep the link panel open for them to share back instead.
       withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
         addedName = name
+        addedRemotely = !verifiedInPerson
         showingMyFingerprint = false
-        showingMyQR = !didShowMyCode
+        showingMyQR = verifiedInPerson && !didShowMyCode
+        if !verifiedInPerson { showManualEntry = true }
       }
     } else {
       error = "Couldn't add this contact (invalid binding, or it's your own code)."

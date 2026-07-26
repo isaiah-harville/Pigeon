@@ -39,6 +39,7 @@ struct IdentityQRView: View {
       VStack(spacing: 16) {
         qrCodeImage
         nameButton
+        shareButton
         fingerprintBlock
         trustHint
       }
@@ -91,6 +92,23 @@ struct IdentityQRView: View {
     }
   }
 
+  @ViewBuilder
+  private var shareButton: some View {
+    if let shareURL = session.myCard?.shareURL {
+      ShareLink(
+        item: shareURL,
+        subject: Text("My Pigeon contact"),
+        message: Text(
+          "Add me in Pigeon, then send me your contact link too. "
+            + "We should compare safety numbers before trusting the chat.")
+      ) {
+        Label("Share Contact Link", systemImage: "square.and.arrow.up")
+      }
+      .buttonStyle(.borderedProminent)
+      .buttonBorderShape(.capsule)
+    }
+  }
+
   private var trustHint: some View {
     Text(trustHintText)
       .font(.footnote)
@@ -101,8 +119,8 @@ struct IdentityQRView: View {
 
   private var trustHintText: String {
     """
-    Have the other person scan this in Add Contact, then compare your safety \
-    numbers before trusting the chat.
+    Scan in person, or exchange contact links from anywhere. Shared-link contacts \
+    remain unverified until you compare safety numbers over a trusted channel.
     """
   }
 

@@ -115,19 +115,22 @@ sessions in `pigeon-core`). The mesh layer relays opaque ciphertext;
 - **Secure Enclave is deliberately not used**: it supports only P-256, which is
   incompatible with the X25519/Ed25519 stack the protocols require.
 - The public key's **SHA-256 fingerprint** is the device's address/handle.
-- Public identities are exchanged **in person via QR code**. From a pair of
+- Public identities are exchanged **in person via QR code** or remotely as a
+  `pigeon://contact` link containing the same public ContactCard. A remotely
+  imported card is explicitly marked **not verified in person**. From a pair of
   public keys we derive a **60-digit safety number** (order-independent,
-  iterated hashing) that users compare out of band to detect MITM.
+  iterated hashing) that users compare over a trusted channel to detect MITM.
 - **Identity reset** generates a fresh key, irreversibly invalidating all
   existing trust relationships. This is, and must remain, user-visible.
 
 > **Identity ↔ Olm-key binding:** Olm authenticates a session by its
 > **Curve25519** identity key, while Pigeon's *identity* is **Ed25519**. These are
 > bound via `IdentityBundle` — the Curve25519 identity key is signed by the
-> Ed25519 identity, and the signed bundle is the QR payload. At establishment,
-> the session's reported peer identity is checked against the verified bundle, so
-> comparing safety numbers authenticates the encrypted channel. (Still in scope
-> for the overall audit.) See [Audit Readiness](#audit-readiness-pre-audit-notes).
+> Ed25519 identity, and the signed bundle is carried by the QR/contact-link
+> payload. At establishment, the session's reported peer identity is checked
+> against the imported bundle, so comparing safety numbers authenticates the
+> encrypted channel. (Still in scope for the overall audit.) See
+> [Audit Readiness](#audit-readiness-pre-audit-notes).
 
 ---
 
@@ -275,8 +278,8 @@ once.
   Relays handle ciphertext only.
 - **Session establishment is async-first:** Olm establishes a session from the
   recipient's published prekeys (signed prekey + a one-time prekey carried in the
-  QR card or shared over mesh/relay), so the first encrypted message can be sent
-  without the recipient being online. There is no interactive handshake. The
+  QR card/contact link or shared over mesh/relay), so the first encrypted message
+  can be sent without the recipient being online. There is no interactive handshake. The
   prekey path has its own replay/exhaustion considerations, handled inside Olm's
   one-time-key accounting (see §5.7).
 
@@ -301,7 +304,7 @@ Pigeon keeps the trust cost minimal:
   are all unchanged and enforced end-to-end below it.
 - It is **opt-in** and **self-hostable** (run your own; a homelab/Kubernetes or
   small VPS deployment is sufficient). The design is **federated** — each user
-  advertises the relay(s) they can be reached at in their QR contact card, and a
+  advertises the relay(s) they can be reached at in their ContactCard, and a
   sender deposits only on *that recipient's* relays. Independent relays, chosen
   per user, like email or Nostr relays — no single central party, no
   server-to-server protocol.
