@@ -10,6 +10,19 @@
 # Re-run whenever the FFI surface in src/lib.rs changes.
 set -euo pipefail
 
+# Xcode scheme actions use a minimal, non-login PATH. Add the standard Rust and
+# Homebrew locations explicitly so this script behaves the same from Xcode,
+# Terminal, and CI without sourcing user shell configuration.
+CARGO_BIN_DIR="${CARGO_HOME:-$HOME/.cargo}/bin"
+export PATH="$CARGO_BIN_DIR:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+for tool in rustup cargo xcodebuild protoc protoc-gen-swift; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "error: Required build tool '$tool' was not found in PATH." >&2
+    exit 1
+  fi
+done
+
 cd "$(dirname "$0")"
 CRATE_DIR="$(pwd)"
 LIB_NAME="libpigeon_ffi.a"
