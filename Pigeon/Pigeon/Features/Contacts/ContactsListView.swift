@@ -143,9 +143,12 @@ private struct ContactBookRow: View {
     HStack(spacing: 14) {
       ContactAvatar(name: contact.displayName, seed: contact.id, size: 44)
       VStack(alignment: .leading, spacing: 3) {
-        Text(contact.displayName)
-          .font(.headline)
-          .lineLimit(1)
+        HStack(spacing: 5) {
+          Text(contact.displayName)
+            .font(.headline)
+            .lineLimit(1)
+          VerifiedBadge(verified: session.isVerifiedInPerson(contact))
+        }
         if !session.isVerifiedInPerson(contact) {
           Text("Not verified in person")
             .font(.caption)

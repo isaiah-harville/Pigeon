@@ -212,6 +212,7 @@ private struct ContactRow: View {
       Text(contact.displayName)
         .font(.headline)
         .lineLimit(1)
+      VerifiedBadge(verified: session.isVerifiedInPerson(contact))
       if session.isEphemeral(contact) {
         Image(systemName: "clock.arrow.circlepath")
           .font(.caption2)

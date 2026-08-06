@@ -31,25 +31,35 @@ struct ChatStatusBanner: View {
         }
       }
       .foregroundStyle(isSecure ? .green : .secondary)
-      if !session.isVerifiedInPerson(contact) {
-        Button {
-          showSafetyNumber = true
-        } label: {
-          HStack(spacing: 6) {
-            Image(systemName: "exclamationmark.shield.fill")
-            Text("Not verified in person — compare the safety number")
-            Spacer()
-          }
-          .foregroundStyle(.orange)
-        }
-        .buttonStyle(.plain)
-      }
+      trustRow
       ConnectionSummary(contact: contact)
     }
     .font(.footnote)
     .padding(.horizontal)
     .padding(.vertical, 6)
     .background(.bar)
+  }
+
+  /// Who's on the other end, separate from whether the chat is encrypted: both
+  /// states are shown (verified as reassurance, unverified as a nudge), and
+  /// either opens the safety number to compare.
+  private var trustRow: some View {
+    let verified = session.isVerifiedInPerson(contact)
+    return Button {
+      showSafetyNumber = true
+    } label: {
+      HStack(spacing: 6) {
+        VerifiedBadge(verified: verified, font: .footnote)
+        Text(
+          verified
+            ? "Verified in person"
+            : "Not verified in person — compare the safety number"
+        )
+        .foregroundStyle(verified ? Color.green : Color.orange)
+        Spacer()
+      }
+    }
+    .buttonStyle(.plain)
   }
 }
 
