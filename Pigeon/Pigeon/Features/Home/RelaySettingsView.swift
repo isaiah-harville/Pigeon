@@ -19,6 +19,7 @@ struct RelaySettingsView: View {
   @State private var newURL = ""
   @State private var pinger = RelayPinger()
   @State private var pushEnabled = RelaySettings.pushEnabled
+  @State private var showHostingDocs = false
 
   var body: some View {
     relayList
@@ -30,15 +31,42 @@ struct RelaySettingsView: View {
       }
       .onDisappear { pinger.stop() }
       .onChange(of: entries.map(\.url)) { _, urls in pinger.start(urls: urls) }
+      .docsBrowser(DocsLink.hostARelay, isPresented: $showHostingDocs)
   }
 
   private var relayList: some View {
     List {
       statusSection
       relaysSection
+      hostingSection
       pushSection
     }
     .animation(.default, value: sortedEntries)
+  }
+
+  /// Relays are federated and anyone can run one, so the settings screen points
+  /// at the setup guide rather than treating hosting as an expert-only thing.
+  private var hostingSection: some View {
+    Section {
+      Button {
+        showHostingDocs = true
+      } label: {
+        HStack {
+          Label("How to host a relay", systemImage: "server.rack")
+          Spacer()
+          Image(systemName: "arrow.up.right.square")
+            .foregroundStyle(.secondary)
+        }
+        .contentShape(Rectangle())
+      }
+    } footer: {
+      Text(
+        """
+        Run your own relay so your messages don't depend on anyone else's \
+        server. The guide opens in Pigeon.
+        """
+      )
+    }
   }
 
   private var pushSection: some View {
@@ -180,7 +208,11 @@ struct RelaySettingsView: View {
     """
   }
 
-  // MARK: - Mutations
+}
+
+// MARK: - Mutations & status
+
+extension RelaySettingsView {
 
   private func toggle(_ entry: RelayEntry) {
     guard let index = entries.firstIndex(where: { $0.url == entry.url }) else { return }
@@ -207,8 +239,6 @@ struct RelaySettingsView: View {
   private func save() {
     session.setRelayEntries(entries)
   }
-
-  // MARK: - Status
 
   private var stateColor: Color {
     switch session.relayLinkState {
