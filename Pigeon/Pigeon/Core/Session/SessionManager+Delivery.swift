@@ -177,7 +177,7 @@ extension SessionManager {
   /// guard once attached.
   func persist() {
     guard isUnlocked else { return }
-    persistence.save(snapshot())
+    recordSaveOutcome(persistence.save(snapshot()))
   }
 
   /// Re-seals only the crypto blob (account + per-contact session pickles). The
@@ -187,7 +187,21 @@ extension SessionManager {
   /// indices), so this is called on every session-encrypted send.
   func persistCrypto() {
     guard isUnlocked else { return }
-    persistence.saveCrypto(snapshot())
+    recordSaveOutcome(persistence.saveCrypto(snapshot()))
+  }
+
+  /// Surfaces a failed write once per run of failures. A save that doesn't land
+  /// means the sealed state is behind the live one — for the crypto blob that is
+  /// a stale ratchet pickle, so it must not pass silently. Coalesced so a burst
+  /// of failed writes doesn't flood the activity log.
+  private func recordSaveOutcome(_ saved: Bool) {
+    if saved {
+      didWarnAboutSaveFailure = false
+      return
+    }
+    guard !didWarnAboutSaveFailure else { return }
+    didWarnAboutSaveFailure = true
+    note("Couldn't save to the encrypted store")
   }
 
   /// Snapshots the live state (contacts, conversation mirror, ephemeral/Bluetooth
