@@ -62,13 +62,23 @@ pub fn publish(
         });
         return;
     }
-    // Fan out to any live, authenticated readers. A channel that is closed or
-    // backed up loses its subscription: the queue is the durable path, so its
-    // client receives everything on its next subscribe rather than the relay
-    // buffering without limit for a reader that has stopped draining.
-    store
-        .subscribers_mut(&recipient)
-        .retain(|s| s.tx.try_send(live.clone()).is_ok());
+    // Fan out to any live, authenticated readers, distinguishing the two ways a
+    // send can fail:
+    //
+    //   Full   — the reader is behind. Skip this live delivery (it stays queued,
+    //            and an unacked envelope is never lost) but *keep* the
+    //            subscription: dropping it would silently stop every future live
+    //            delivery to a client whose socket is still perfectly healthy,
+    //            with nothing to tell it to reconnect.
+    //   Closed — the connection is gone. Drop it.
+    //
+    // Either way the relay never buffers past the channel bound.
+    store.subscribers_mut(&recipient).retain(|s| {
+        !matches!(
+            s.tx.try_send(live.clone()),
+            Err(mpsc::error::TrySendError::Closed(_))
+        )
+    });
     drop(store);
 
     // Wake any suspended/terminated device registered for this mailbox. No-op
@@ -106,7 +116,12 @@ pub fn register_push(
         });
         return;
     }
-    state.push.register(mailbox, token);
+    if !state.push.register(mailbox, token) {
+        let _ = tx.try_send(ServerMsg::Error {
+            message: "push registry full".into(),
+        });
+        return;
+    }
     let _ = tx.try_send(ServerMsg::Ok {
         detail: "push registered".into(),
     });

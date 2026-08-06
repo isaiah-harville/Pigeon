@@ -324,19 +324,48 @@ fn byte_accounting_tracks_deposits_acks_and_expiry() {
 }
 
 #[test]
-fn a_subscriber_that_stops_draining_loses_its_subscription() {
+fn a_backed_up_subscriber_is_kept_but_never_buffered_past_the_bound() {
+    let st = state(3600, usize::MAX);
+    let (publisher, _pub_rx) = channel();
+    let (sub, mut sub_rx) = channel();
+    register_subscriber(&st, &addr(1), 1, sub);
+
+    // Never drain `sub_rx` during the burst: the channel fills, and the relay
+    // stops buffering rather than growing without limit.
+    let burst = SUBSCRIBER_CHANNEL_CAPACITY + 10;
+    for _ in 0..burst {
+        publish(&st, &publisher, addr(1), "b25l".into());
+    }
+
+    // The subscription survives — a healthy socket that fell behind must keep
+    // receiving once it catches up, and the skipped envelopes are still queued.
+    assert_eq!(subscriber_count(&st, &addr(1)), 1);
+    assert_eq!(queue_len(&st, &addr(1)), burst);
+
+    let mut buffered = 0;
+    while sub_rx.try_recv().is_ok() {
+        buffered += 1;
+    }
+    assert_eq!(buffered, SUBSCRIBER_CHANNEL_CAPACITY);
+
+    // Caught up: live delivery resumes.
+    publish(&st, &publisher, addr(1), "bmV3".into());
+    assert!(matches!(
+        sub_rx.try_recv().unwrap(),
+        ServerMsg::Envelope { .. }
+    ));
+}
+
+#[test]
+fn a_disconnected_subscriber_is_dropped() {
     let st = state(3600, usize::MAX);
     let (publisher, _pub_rx) = channel();
     let (sub, sub_rx) = channel();
     register_subscriber(&st, &addr(1), 1, sub);
+    drop(sub_rx); // the connection went away
 
-    // Never read `sub_rx`: the channel fills and the subscriber is dropped
-    // rather than the relay buffering for it without limit.
-    for _ in 0..(SUBSCRIBER_CHANNEL_CAPACITY + 10) {
-        publish(&st, &publisher, addr(1), "b25l".into());
-    }
+    publish(&st, &publisher, addr(1), "b25l".into());
     assert_eq!(subscriber_count(&st, &addr(1)), 0);
-    drop(sub_rx);
 }
 
 /// The id of the oldest envelope in a mailbox.

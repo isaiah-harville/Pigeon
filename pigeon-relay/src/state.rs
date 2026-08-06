@@ -22,9 +22,10 @@ pub const PUBKEY_LEN: usize = 32;
 pub const MAX_CIPHERTEXT_LEN: usize = 256 * 1024;
 
 /// Capacity of a subscriber's outbound channel, in messages. Bounded so a
-/// reader that stops draining cannot make the relay buffer without limit: a
-/// subscriber whose channel fills is dropped, and since the mailbox queue is the
-/// durable path, its client simply receives everything on its next subscribe.
+/// reader that stops draining cannot make the relay buffer without limit: once
+/// the channel is full, live deliveries to that reader are skipped rather than
+/// queued in memory. Nothing is lost — the mailbox queue is the durable path and
+/// an unacked envelope stays there until the client drains it.
 pub const SUBSCRIBER_CHANNEL_CAPACITY: usize = 256;
 
 #[derive(Clone)]

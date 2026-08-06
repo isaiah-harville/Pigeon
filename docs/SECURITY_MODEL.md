@@ -466,8 +466,10 @@ authoritative to-do list for reaching audit readiness.
     bounded on every axis: per-envelope size, per-mailbox queue depth, mailbox
     count (`PIGEON_RELAY_MAX_MAILBOXES`), a global ciphertext ceiling
     (`PIGEON_RELAY_MAX_TOTAL_BYTES`, enforced by evicting from the *largest*
-    mailbox so a flooder pays for its own pressure), age expiry, and a bounded
-    per-subscriber outbound channel. Still open: mailboxes remain
+    mailbox so a flooder pays for its own pressure), age expiry, a bounded
+    per-subscriber outbound channel (a backed-up reader is skipped, never
+    buffered), and per-mailbox / total caps on registered push tokens. Still
+    open: mailboxes remain
     authentication-free by design, so there is no per-sender rate limit — a
     flooder can still consume its own share of the ceiling and force eviction
     churn. No plaintext, keys, or linkable logs server-side.

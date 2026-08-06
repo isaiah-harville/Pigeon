@@ -25,7 +25,7 @@
 //! token can only ever be attached to a mailbox by that mailbox's key holder. No
 //! new trust path is introduced.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -36,6 +36,18 @@ use serde::Serialize;
 /// hex chars); modern tokens are larger, so this is generously above any real
 /// token while still bounding memory against junk registrations.
 const MAX_TOKEN_LEN: usize = 200;
+
+/// Device tokens kept per mailbox. One user may legitimately run Pigeon on a
+/// handful of devices; past that, the oldest registration for that mailbox is
+/// dropped. Without a cap, a mailbox's key holder could register unbounded
+/// tokens — and since keys are free to generate, so is the abuse.
+const MAX_TOKENS_PER_MAILBOX: usize = 8;
+
+/// Mailboxes tracked in the push registry at once. Registration past this is
+/// refused rather than evicting someone else's wake-ups; tokens are re-sent by
+/// clients after every authenticated subscribe, so a refused registration heals
+/// on the next reconnect once there is room.
+const MAX_PUSH_MAILBOXES: usize = 50_000;
 
 /// The entire push payload: a fixed, visible alert that carries no sender,
 /// content, or count — just a generic prompt to open the app. A *visible* alert
@@ -95,8 +107,9 @@ fn now_secs() -> u64 {
 /// gateway. When `gateway` is `None` (self-hosted / third-party relays) the
 /// registry refuses registrations and never pushes.
 pub struct PushRegistry {
-    /// mailbox hex → device tokens (one user may have several devices).
-    tokens: Mutex<HashMap<String, HashSet<String>>>,
+    /// mailbox hex → device tokens, oldest first (one user may have several
+    /// devices). A `Vec` rather than a set so the cap can evict the oldest.
+    tokens: Mutex<HashMap<String, Vec<String>>>,
     /// mailbox hex → last time we pushed it, for coalescing bursts.
     last_push: Mutex<HashMap<String, Instant>>,
     /// Minimum gap between pushes to the same mailbox. A burst of deposits wakes
@@ -121,25 +134,39 @@ impl PushRegistry {
     }
 
     /// Binds `token` to `mailbox`. The caller must have already verified the
-    /// connection owns `mailbox`.
-    pub fn register(&self, mailbox: &str, token: String) {
-        self.tokens
-            .lock()
-            .unwrap()
-            .entry(mailbox.to_string())
-            .or_default()
-            .insert(token);
+    /// connection owns `mailbox`. Returns false when the registry is full — the
+    /// only refusal, since a mailbox at its own token cap simply evicts its
+    /// oldest token instead.
+    pub fn register(&self, mailbox: &str, token: String) -> bool {
+        let mut map = self.tokens.lock().unwrap();
+        if !map.contains_key(mailbox) && map.len() >= MAX_PUSH_MAILBOXES {
+            return false;
+        }
+        let tokens = map.entry(mailbox.to_string()).or_default();
+        if tokens.iter().any(|t| t == &token) {
+            return true; // already registered; re-registering is a no-op
+        }
+        tokens.push(token);
+        while tokens.len() > MAX_TOKENS_PER_MAILBOX {
+            tokens.remove(0);
+        }
+        true
     }
 
     /// Removes `token` from `mailbox` (opt-out / rotation), reclaiming the entry
     /// when its last token is gone.
     pub fn unregister(&self, mailbox: &str, token: &str) {
         let mut map = self.tokens.lock().unwrap();
-        if let Some(set) = map.get_mut(mailbox) {
-            set.remove(token);
-            if set.is_empty() {
-                map.remove(mailbox);
-            }
+        let Some(tokens) = map.get_mut(mailbox) else {
+            return;
+        };
+        tokens.retain(|t| t != token);
+        if tokens.is_empty() {
+            map.remove(mailbox);
+            // Nothing left to wake, so the coalescing clock for this mailbox is
+            // dead weight — drop it too, or it accumulates for every mailbox
+            // that ever registered.
+            self.last_push.lock().unwrap().remove(mailbox);
         }
     }
 
@@ -148,7 +175,7 @@ impl PushRegistry {
             .lock()
             .unwrap()
             .get(mailbox)
-            .map(|s| s.iter().cloned().collect())
+            .cloned()
             .unwrap_or_default()
     }
 
@@ -338,9 +365,9 @@ mod tests {
     #[test]
     fn register_and_unregister_track_tokens() {
         let r = registry();
-        r.register("mb", "aa".into());
-        r.register("mb", "bb".into());
-        r.register("mb", "aa".into()); // idempotent
+        assert!(r.register("mb", "aa".into()));
+        assert!(r.register("mb", "bb".into()));
+        assert!(r.register("mb", "aa".into())); // idempotent
         let mut tokens = r.tokens_for("mb");
         tokens.sort();
         assert_eq!(tokens, vec!["aa".to_string(), "bb".to_string()]);
@@ -351,6 +378,30 @@ mod tests {
         assert!(r.tokens_for("mb").is_empty());
         // Last token gone reclaims the mailbox entry.
         assert!(r.tokens.lock().unwrap().get("mb").is_none());
+    }
+
+    #[test]
+    fn a_mailbox_keeps_only_its_most_recent_tokens() {
+        let r = registry();
+        for i in 0..(MAX_TOKENS_PER_MAILBOX + 5) {
+            assert!(r.register("mb", format!("{i:02x}")));
+        }
+        let tokens = r.tokens_for("mb");
+        assert_eq!(tokens.len(), MAX_TOKENS_PER_MAILBOX);
+        // The oldest registrations were evicted, the newest kept.
+        assert!(!tokens.contains(&"00".to_string()));
+        assert!(tokens.contains(&format!("{:02x}", MAX_TOKENS_PER_MAILBOX + 4)));
+    }
+
+    #[test]
+    fn unregistering_the_last_token_clears_the_coalescing_clock() {
+        let r = registry();
+        r.register("mb", "aa".into());
+        assert!(r.should_push_at("mb", Instant::now()));
+        assert!(r.last_push.lock().unwrap().contains_key("mb"));
+
+        r.unregister("mb", "aa");
+        assert!(!r.last_push.lock().unwrap().contains_key("mb"));
     }
 
     #[test]
