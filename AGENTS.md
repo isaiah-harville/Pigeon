@@ -137,6 +137,25 @@ and the app's `Pigeon/PigeonTests/` target. Docs of note: `docs/SECURITY_MODEL.m
 - Use explicit domain separation strings for every KDF context.
 - Do not silently reset identity or trust state. User-facing identity changes
   must be deliberate and obvious.
+- **Delivery to a locked device is a product requirement.** Messages must keep
+  arriving while the screen is locked, and whatever the app does with them must
+  still be durable. Two distinct cases, and both must keep working:
+  - *Running, screen locks.* The vault DEK is already in memory, so Pigeon
+    decrypts, records, and **persists** normally. Anything on that path — file
+    protection classes, Keychain accessibility, background task assumptions —
+    must be writable/readable with the device locked. This is why the encrypted
+    store uses `completeFileProtectionUntilFirstUserAuthentication` rather than
+    `complete`: a `complete` file cannot be written while locked, so saves failed
+    silently, losing received messages and leaving the sealed Olm pickle behind
+    the live ratchet (index reuse after relaunch). Confidentiality still comes
+    from sealing the blob under the presence-gated DEK, not from the file class.
+  - *Cold background relaunch while locked.* The DEK is unreachable, so the app
+    cannot decrypt or persist: buffer in memory (`LockedInbox`), fire a
+    content-free notification, and deliberately **do not ack** the relay copy so
+    it is redelivered after unlock. Never widen DEK accessibility to "fix" this.
+- Never let a persistence failure pass silently. A save that does not land means
+  the sealed state is behind the live state; for the crypto blob that is a stale
+  ratchet pickle, which is a correctness *and* security problem.
 - For security-affecting code, add or update tests before considering the work
   complete.
 
@@ -209,6 +228,9 @@ same end-to-end ciphertext. See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md)
   logs, or any field that lets it read, link, or forge content.
 - Do not introduce unaudited crypto dependencies casually.
 - Do not weaken Keychain accessibility for convenience.
+- Do not break locked-device delivery (see Security Invariants). Tightening a
+  file-protection class or Keychain accessibility that sits on the receive path
+  is a regression, not hardening, unless the locked path still works end to end.
 - Do not paper over authentication failures with retries or fallback plaintext.
 - Do not store secrets in `UserDefaults`, files, logs, previews, screenshots, or
   test fixtures.
