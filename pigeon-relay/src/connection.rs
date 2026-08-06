@@ -18,7 +18,7 @@ use rand::RngCore;
 use tokio::sync::mpsc;
 
 use crate::mailbox::{
-    ack, flush_queue, publish, register_push, register_subscriber, remove_subscriber,
+    ack, flush_queue, publish, register_push, remove_subscriber, switch_subscription,
     verify_ownership,
 };
 use crate::protocol::{ClientMsg, ServerMsg};
@@ -95,8 +95,16 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 if verify_ownership(&mailbox, &nonce, &signature) {
                     // Register before flushing so a publish racing this auth is
                     // delivered live rather than missed (at-least-once; clients
-                    // dedup at the mesh layer).
-                    register_subscriber(&state, &mailbox, conn_id, tx.clone());
+                    // dedup at the mesh layer). Re-authenticating to a different
+                    // mailbox drops the previous registration, which the
+                    // disconnect path (last mailbox only) would otherwise strand.
+                    switch_subscription(
+                        &state,
+                        authed_mailbox.as_deref(),
+                        &mailbox,
+                        conn_id,
+                        tx.clone(),
+                    );
                     authed_mailbox = Some(mailbox.clone());
                     let _ = tx.send(ServerMsg::Ok {
                         detail: "authenticated".into(),

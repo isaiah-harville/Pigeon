@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 
 use crate::mailbox::{
     ack, expire_mailboxes, flush_queue, publish, register_push, register_subscriber,
-    remove_subscriber, verify_ownership,
+    remove_subscriber, switch_subscription, verify_ownership,
 };
 use crate::protocol::ServerMsg;
 use crate::push::PushRegistry;
@@ -236,5 +236,24 @@ fn remove_subscriber_removes_by_conn_id() {
     register_subscriber(&st, &addr(1), 1, s1);
     register_subscriber(&st, &addr(1), 2, s2);
     remove_subscriber(&st, &addr(1), 1);
+    assert_eq!(subscriber_count(&st, &addr(1)), 1);
+}
+
+#[test]
+fn switching_mailbox_drops_the_previous_subscription() {
+    let st = state(3600, 100);
+    let (tx, _rx) = channel();
+    switch_subscription(&st, None, &addr(1), 7, tx.clone());
+    switch_subscription(&st, Some(&addr(1)), &addr(2), 7, tx);
+    assert_eq!(subscriber_count(&st, &addr(1)), 0);
+    assert_eq!(subscriber_count(&st, &addr(2)), 1);
+}
+
+#[test]
+fn re_authenticating_the_same_mailbox_keeps_one_subscription() {
+    let st = state(3600, 100);
+    let (tx, _rx) = channel();
+    switch_subscription(&st, None, &addr(1), 7, tx.clone());
+    switch_subscription(&st, Some(&addr(1)), &addr(1), 7, tx);
     assert_eq!(subscriber_count(&st, &addr(1)), 1);
 }

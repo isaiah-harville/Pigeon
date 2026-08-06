@@ -105,6 +105,28 @@ pub fn register_push(
     });
 }
 
+/// Moves a connection's subscription from `previous` (if it had authenticated
+/// to a different mailbox) to `mailbox`. Without dropping the old registration,
+/// a connection that re-authenticates leaves a subscriber entry behind on the
+/// mailbox it no longer serves: the disconnect path only unregisters the last
+/// mailbox, so the stale entry lingers until some later deposit happens to
+/// notice its channel is dead — and until then that mailbox keeps being treated
+/// as having a live reader.
+pub fn switch_subscription(
+    state: &AppState,
+    previous: Option<&str>,
+    mailbox: &str,
+    conn_id: u64,
+    tx: mpsc::UnboundedSender<ServerMsg>,
+) {
+    if let Some(previous) = previous {
+        if previous != mailbox {
+            remove_subscriber(state, previous, conn_id);
+        }
+    }
+    register_subscriber(state, mailbox, conn_id, tx);
+}
+
 pub fn register_subscriber(
     state: &AppState,
     mailbox: &str,
