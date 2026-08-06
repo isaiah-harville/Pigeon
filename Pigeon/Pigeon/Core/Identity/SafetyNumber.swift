@@ -18,11 +18,22 @@ import Foundation
 ///   Bob derive the same number without coordinating who is "first".
 /// - Iterated hashing (`iterations`) makes brute-forcing a colliding key pair
 ///   expensive, mirroring the approach used by Signal's safety numbers.
+/// - Domain-separated and versioned: every round is bound to a context string
+///   that names this derivation and its version, so a safety-number digest can
+///   never collide with any other value Pigeon derives from the same key, and a
+///   future change to the derivation yields visibly different numbers rather
+///   than silently comparable ones.
 enum SafetyNumber {
 
   /// Number of hash iterations. Higher = more grinding cost for an attacker
   /// trying to fabricate a key whose safety number collides with a target.
   private static let iterations = 5200
+
+  /// Domain-separation prefix, matching the convention used for the identity
+  /// binding and prekey signatures in `pigeon-core`. Bump the version suffix if
+  /// the derivation ever changes — every safety number changes with it, so
+  /// contacts must re-compare in person.
+  private static let context = Data("Pigeon.SafetyNumber.v1".utf8)
 
   /// Computes the safety number for the local and remote identities.
   static func compute(local: IdentityPublicKey, remote: IdentityPublicKey) -> String {
@@ -48,10 +59,12 @@ enum SafetyNumber {
   }
 
   private static func iteratedDigest(of key: Data) -> Data {
-    var current = key
+    var current = context + key
     for _ in 0..<iterations {
-      // Re-mixing the original key each round binds every iteration to it.
+      // Re-mixing the context and the original key each round binds every
+      // iteration to both, so the chain can't be reused under another domain.
       var input = current
+      input.append(context)
       input.append(key)
       current = Data(SHA512.hash(data: input))
     }

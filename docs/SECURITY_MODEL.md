@@ -118,8 +118,11 @@ sessions in `pigeon-core`). The mesh layer relays opaque ciphertext;
 - Public identities are exchanged **in person via QR code** or remotely as a
   `pigeon://contact` link containing the same public ContactCard. A remotely
   imported card is explicitly marked **not verified in person**. From a pair of
-  public keys we derive a **60-digit safety number** (order-independent,
-  iterated hashing) that users compare over a trusted channel to detect MITM.
+  public keys we derive a **60-digit safety number** (order-independent, 5200
+  rounds of domain-separated iterated hashing under the versioned context
+  `Pigeon.SafetyNumber.v1`) that users compare over a trusted channel to detect
+  MITM. Bumping that context version changes every safety number, so contacts
+  must re-compare in person.
 - **Identity reset** generates a fresh key, irreversibly invalidating all
   existing trust relationships. This is, and must remain, user-visible.
 
