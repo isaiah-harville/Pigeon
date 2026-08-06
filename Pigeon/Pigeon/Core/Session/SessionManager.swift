@@ -255,8 +255,12 @@ final class SessionManager {
     }
     // A prekey bundle is honoured only if bound to this same identity.
     let prekeys = prekeyBundle.flatMap { $0.identityKey == bundle.identityKey ? $0 : nil }
+    // The name rides in an attacker-controlled card: the binding authenticates
+    // the key, never the label attached to it.
+    let sanitized = DisplayName.sanitize(name)
+    let displayName = sanitized.isEmpty ? "Unnamed" : sanitized
     var contact = Contact(
-      bundle: bundle, displayName: name, relayURLs: relayURLs,
+      bundle: bundle, displayName: displayName, relayURLs: relayURLs,
       prekeyBundle: prekeys, verifiedInPerson: verifiedInPerson)
     if let index = contacts.firstIndex(where: { $0.id == bundle.identityKey }) {
       // Re-scanning refreshes the card (a rotated prekey, new relays, the name
@@ -274,7 +278,7 @@ final class SessionManager {
     activeConversationIDs.insert(bundle.identityKey)
     persist()
     refreshRelay()  // open a publish connection to the new contact's relays
-    note("Added contact \"\(name)\"")
+    note("Added contact \"\(displayName)\"")
     // Re-scanning forces a fresh handshake (manual recovery if one stalled). This
     // is an explicit user action, so it supersedes the re-handshake throttle —
     // clear the cooldown so the recovery isn't suppressed.

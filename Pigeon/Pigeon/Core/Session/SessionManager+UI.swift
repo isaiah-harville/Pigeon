@@ -159,14 +159,14 @@ extension SessionManager {
 
   /// Sets the local user's own display name (shared in their QR card).
   func setMyName(_ name: String) {
-    myName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    myName = DisplayName.sanitize(name)
     persist()
   }
 
   /// Renames a contact locally (does not affect their card).
   func renameContact(_ contact: Contact, to name: String) {
     guard let index = contacts.firstIndex(where: { $0.id == contact.id }) else { return }
-    contacts[index].displayName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    contacts[index].displayName = DisplayName.sanitize(name)
     persist()
   }
 
@@ -257,6 +257,7 @@ extension SessionManager {
     activeConversationIDs.remove(contact.id)
     contacts.removeAll { $0.id == contact.id }
     resetSession(for: contact.id)
+    rehandshakeGate.clear(contact.id)  // don't keep a cooldown for a forgotten contact
     persist()
     refreshRelay()
   }
