@@ -2,7 +2,6 @@
 // Declared from `main.rs` as `#[cfg(test)] mod tests;` so it can reach the
 // crate-private mailbox operations.
 
-use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -18,14 +17,29 @@ use crate::mailbox::{
 };
 use crate::protocol::ServerMsg;
 use crate::push::PushRegistry;
-use crate::state::{is_valid_address, AppState, Config, MAX_CIPHERTEXT_LEN, PUBKEY_LEN};
+use crate::state::{
+    is_valid_address, AppState, Config, Store, MAX_CIPHERTEXT_LEN, PUBKEY_LEN,
+    SUBSCRIBER_CHANNEL_CAPACITY,
+};
 
 fn state(ttl_secs: u64, max_queue: usize) -> AppState {
+    bounded_state(ttl_secs, max_queue, usize::MAX, usize::MAX)
+}
+
+/// A relay with explicit capacity ceilings, for the bounds tests.
+fn bounded_state(
+    ttl_secs: u64,
+    max_queue: usize,
+    max_mailboxes: usize,
+    max_total_bytes: usize,
+) -> AppState {
     AppState {
-        mailboxes: Arc::new(Mutex::new(HashMap::new())),
+        mailboxes: Arc::new(Mutex::new(Store::default())),
         cfg: Config {
             ttl_secs,
             max_queue,
+            max_mailboxes,
+            max_total_bytes,
         },
         counter: Arc::new(AtomicU64::new(1)),
         // No gateway: deposits never attempt a push in these tests.
@@ -33,11 +47,8 @@ fn state(ttl_secs: u64, max_queue: usize) -> AppState {
     }
 }
 
-fn channel() -> (
-    mpsc::UnboundedSender<ServerMsg>,
-    mpsc::UnboundedReceiver<ServerMsg>,
-) {
-    mpsc::unbounded_channel()
+fn channel() -> (mpsc::Sender<ServerMsg>, mpsc::Receiver<ServerMsg>) {
+    mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY)
 }
 
 /// A syntactically valid 32-byte mailbox address (64 hex chars).
@@ -52,6 +63,14 @@ fn queue_len(state: &AppState, mailbox: &str) -> usize {
         .unwrap()
         .get(mailbox)
         .map_or(0, |m| m.queue.len())
+}
+
+fn total_bytes(state: &AppState) -> usize {
+    state.mailboxes.lock().unwrap().total_bytes()
+}
+
+fn mailbox_count(state: &AppState) -> usize {
+    state.mailboxes.lock().unwrap().len()
 }
 
 fn subscriber_count(state: &AppState, mailbox: &str) -> usize {
@@ -164,15 +183,10 @@ fn expire_drops_old_envelopes_and_reclaims_empty_mailboxes() {
     let st = state(3600, 100);
     let (tx, _rx) = channel();
     publish(&st, &tx, addr(1), "b25l".into());
-    st.mailboxes
-        .lock()
-        .unwrap()
-        .get_mut(&addr(1))
-        .unwrap()
-        .queue[0]
-        .ts = 0;
-    expire_mailboxes(&st, 100); // cutoff 100 > ts 0 -> dropped
-    assert_eq!(st.mailboxes.lock().unwrap().len(), 0);
+    // A cutoff just past the deposit's timestamp retires it.
+    expire_mailboxes(&st, crate::state::now() + 1);
+    assert_eq!(mailbox_count(&st), 0);
+    assert_eq!(total_bytes(&st), 0);
 }
 
 #[test]
@@ -256,4 +270,78 @@ fn re_authenticating_the_same_mailbox_keeps_one_subscription() {
     switch_subscription(&st, None, &addr(1), 7, tx.clone());
     switch_subscription(&st, Some(&addr(1)), &addr(1), 7, tx);
     assert_eq!(subscriber_count(&st, &addr(1)), 1);
+}
+
+#[test]
+fn deposits_to_a_new_mailbox_are_refused_at_the_mailbox_cap() {
+    let st = bounded_state(3600, 100, 2, usize::MAX);
+    let (tx, mut rx) = channel();
+    publish(&st, &tx, addr(1), "b25l".into());
+    publish(&st, &tx, addr(2), "b25l".into());
+    while rx.try_recv().is_ok() {} // drain the two `published` replies
+
+    publish(&st, &tx, addr(3), "b25l".into());
+    assert!(matches!(rx.try_recv().unwrap(), ServerMsg::Error { .. }));
+    assert_eq!(mailbox_count(&st), 2);
+    assert_eq!(queue_len(&st, &addr(3)), 0);
+
+    // An existing mailbox still accepts deposits at the cap.
+    publish(&st, &tx, addr(1), "dHdv".into());
+    assert_eq!(queue_len(&st, &addr(1)), 2);
+}
+
+#[test]
+fn the_global_byte_ceiling_evicts_from_the_largest_mailbox() {
+    // Room for ~10 four-byte envelopes across the whole relay.
+    let st = bounded_state(3600, 100, 100, 40);
+    let (tx, _rx) = channel();
+
+    publish(&st, &tx, addr(1), "b25l".into()); // one quiet mailbox
+    for _ in 0..20 {
+        publish(&st, &tx, addr(2), "Zmxvb2Q=".into()); // one flooding mailbox
+    }
+
+    assert!(total_bytes(&st) <= 40);
+    // The flooder paid for its own pressure; the quiet mailbox kept its mail.
+    assert_eq!(queue_len(&st, &addr(1)), 1);
+    assert!(queue_len(&st, &addr(2)) < 20);
+}
+
+#[test]
+fn byte_accounting_tracks_deposits_acks_and_expiry() {
+    let st = state(3600, 100);
+    let (tx, _rx) = channel();
+    publish(&st, &tx, addr(1), "b25l".into()); // 4 bytes
+    publish(&st, &tx, addr(1), "dHdvdHdv".into()); // 8 bytes
+    assert_eq!(total_bytes(&st), 12);
+
+    let first = state_first_id(&st, &addr(1));
+    ack(&st, &addr(1), &first);
+    assert_eq!(total_bytes(&st), 8);
+
+    expire_mailboxes(&st, crate::state::now() + 1);
+    assert_eq!(total_bytes(&st), 0);
+}
+
+#[test]
+fn a_subscriber_that_stops_draining_loses_its_subscription() {
+    let st = state(3600, usize::MAX);
+    let (publisher, _pub_rx) = channel();
+    let (sub, sub_rx) = channel();
+    register_subscriber(&st, &addr(1), 1, sub);
+
+    // Never read `sub_rx`: the channel fills and the subscriber is dropped
+    // rather than the relay buffering for it without limit.
+    for _ in 0..(SUBSCRIBER_CHANNEL_CAPACITY + 10) {
+        publish(&st, &publisher, addr(1), "b25l".into());
+    }
+    assert_eq!(subscriber_count(&st, &addr(1)), 0);
+    drop(sub_rx);
+}
+
+/// The id of the oldest envelope in a mailbox.
+fn state_first_id(state: &AppState, mailbox: &str) -> String {
+    state.mailboxes.lock().unwrap().get(mailbox).unwrap().queue[0]
+        .id
+        .clone()
 }

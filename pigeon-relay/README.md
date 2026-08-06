@@ -27,11 +27,19 @@ terminate TLS at your ingress (clients use `wss://`), and you have a relay.
 
 ### Configuration (environment)
 
-| Variable                  | Default        | Meaning                                  |
-| ------------------------- | -------------- | ---------------------------------------- |
-| `PIGEON_RELAY_ADDR`       | `0.0.0.0:8080` | Listen address.                          |
-| `PIGEON_RELAY_TTL_SECS`   | `604800` (7d)  | How long an undelivered envelope is kept.|
-| `PIGEON_RELAY_MAX_QUEUE`  | `1000`         | Max envelopes retained per mailbox.      |
+| Variable                        | Default          | Meaning                                        |
+| ------------------------------- | ---------------- | ---------------------------------------------- |
+| `PIGEON_RELAY_ADDR`             | `0.0.0.0:8080`   | Listen address.                                |
+| `PIGEON_RELAY_TTL_SECS`         | `2592000` (30d)  | How long an undelivered envelope is kept.      |
+| `PIGEON_RELAY_MAX_QUEUE`        | `1000`           | Max envelopes retained per mailbox.            |
+| `PIGEON_RELAY_MAX_MAILBOXES`    | `10000`          | Max mailboxes held at once.                    |
+| `PIGEON_RELAY_MAX_TOTAL_BYTES`  | `536870912`      | Hard ceiling on total stored ciphertext.       |
+
+Deposits are unauthenticated, so the last two are the abuse bound. Past
+`MAX_MAILBOXES` a deposit to a *new* address is refused (existing mailboxes keep
+working); past `MAX_TOTAL_BYTES` each deposit evicts the oldest envelope from
+whichever mailbox is holding the most, so a flooding address pays for its own
+pressure instead of evicting everyone else's mail.
 
 Storage is **in-memory and ephemeral** by design — a relay is a transient
 rendezvous, not durable storage. Run more than one for redundancy (see

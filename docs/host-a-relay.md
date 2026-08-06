@@ -56,20 +56,31 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     environment:
-      PIGEON_RELAY_TTL_SECS: "604800"
+      PIGEON_RELAY_TTL_SECS: "2592000"
       PIGEON_RELAY_MAX_QUEUE: "1000"
 ```
 
 ### Configuration
 
-| Variable                 | Default        | Meaning                                   |
-| ------------------------ | -------------- | ----------------------------------------- |
-| `PIGEON_RELAY_ADDR`      | `0.0.0.0:8080` | Listen address inside the container.      |
-| `PIGEON_RELAY_TTL_SECS`  | `604800` (7d)  | How long an undelivered envelope is kept. |
-| `PIGEON_RELAY_MAX_QUEUE` | `1000`         | Max envelopes retained per mailbox.       |
+| Variable                       | Default         | Meaning                                    |
+| ------------------------------ | --------------- | ------------------------------------------ |
+| `PIGEON_RELAY_ADDR`            | `0.0.0.0:8080`  | Listen address inside the container.       |
+| `PIGEON_RELAY_TTL_SECS`        | `2592000` (30d) | How long an undelivered envelope is kept.  |
+| `PIGEON_RELAY_MAX_QUEUE`       | `1000`          | Max envelopes retained per mailbox.        |
+| `PIGEON_RELAY_MAX_MAILBOXES`   | `10000`         | Max mailboxes held at once.                |
+| `PIGEON_RELAY_MAX_TOTAL_BYTES` | `536870912`     | Hard ceiling on total stored ciphertext.   |
 
 Lower the TTL and queue size if you want a relay that forgets faster; both trade
 deliverability for retention.
+
+The last two are your capacity ceiling, and they matter because **anyone can
+deposit** — a sender is anonymous to the relay, so there is no account to rate
+limit. Past `MAX_MAILBOXES`, a deposit addressed to a *new* mailbox is refused
+and existing mailboxes keep working. Past `MAX_TOTAL_BYTES`, each deposit evicts
+the oldest envelope from whichever mailbox is holding the most, so an address
+flooding the relay pays for its own pressure rather than evicting everyone
+else's mail. Set them to what your host can actually afford: with the defaults,
+stored ciphertext stays under 512 MiB.
 
 ## 2. Terminate TLS
 
@@ -164,8 +175,8 @@ do — you do not need to serve the world for it to work.
 
 ## Operating notes
 
-- **Sizing.** Memory scales with queued, undelivered envelopes
-  (`MAX_QUEUE` × mailbox count). A small VPS handles a community.
+- **Sizing.** Memory is capped by `MAX_TOTAL_BYTES` (512 MiB by default) plus a
+  small per-connection overhead. A small VPS handles a community.
 - **Backups.** None. State is intentionally ephemeral.
 - **Updates.** `docker pull` the `latest` tag and recreate the container.
   Versioned tags (e.g. `1.2.3`) are published for pinning.

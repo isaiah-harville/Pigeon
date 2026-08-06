@@ -462,9 +462,15 @@ authoritative to-do list for reaching audit readiness.
     link, or tamper with content beyond drop/delay/replay.
 14. **Replay/freshness across the relay.** Store-and-forward over a relay must
     not widen the prekey/message replay surface (ties to item 3).
-15. **Relay abuse & retention.** Authentication-free mailboxes invite spam/DoS
-    and unbounded storage; define rate-limiting, per-recipient quotas, and
-    ciphertext age expiry. No plaintext, keys, or linkable logs server-side.
+15. **Relay abuse & retention.** ⚠️ **Partially addressed.** Storage is now
+    bounded on every axis: per-envelope size, per-mailbox queue depth, mailbox
+    count (`PIGEON_RELAY_MAX_MAILBOXES`), a global ciphertext ceiling
+    (`PIGEON_RELAY_MAX_TOTAL_BYTES`, enforced by evicting from the *largest*
+    mailbox so a flooder pays for its own pressure), age expiry, and a bounded
+    per-subscriber outbound channel. Still open: mailboxes remain
+    authentication-free by design, so there is no per-sender rate limit — a
+    flooder can still consume its own share of the ceiling and force eviction
+    churn. No plaintext, keys, or linkable logs server-side.
 16. **Transport authenticity.** A malicious relay must not be able to forge
     "delivered" state or inject packets that bypass mesh dedup/auth.
 
