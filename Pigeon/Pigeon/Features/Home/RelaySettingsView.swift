@@ -155,6 +155,12 @@ struct RelaySettingsView: View {
             .foregroundStyle(.tint)
             .accessibilityLabel("Verified Pigeon relay")
         }
+        if !RelaySettings.isSecureEndpoint(entry.url) {
+          Image(systemName: "exclamationmark.triangle.fill")
+            .font(.footnote)
+            .foregroundStyle(.orange)
+            .accessibilityLabel("Not encrypted in transit")
+        }
         Spacer(minLength: 8)
         pingLabel(entry.url)
       }
@@ -203,8 +209,9 @@ struct RelaySettingsView: View {
     """
     Pigeon deposits end-to-end-encrypted ciphertext for your contacts on enabled \
     relays so they can reach you off Bluetooth. Tap to enable or disable a relay; \
-    swipe to delete. Use wss:// (TLS). A relay never sees message content, but \
-    does see connection metadata.
+    swipe to delete. A relay never sees message content, but does see connection \
+    metadata. Prefer wss:// — a ws:// relay is flagged, since without TLS that \
+    metadata is exposed to the network too.
     """
   }
 

@@ -61,4 +61,11 @@ final class RelaySettingsTests: XCTestCase {
     XCTAssertFalse(RelaySettings.isValidEndpoint("wss://"))  // no host
     XCTAssertFalse(RelaySettings.isValidEndpoint("garbage"))
   }
+
+  func testOnlyWssCountsAsSecure() throws {
+    let secure = try XCTUnwrap(URL(string: "wss://relay.example/ws"))
+    let insecure = try XCTUnwrap(URL(string: "ws://relay.example/ws"))
+    XCTAssertTrue(RelaySettings.isSecureEndpoint(secure))
+    XCTAssertFalse(RelaySettings.isSecureEndpoint(insecure))
+  }
 }
