@@ -1,14 +1,13 @@
 included:
   - Pigeon/Pigeon
-  - PigeonCrypto
-  - PigeonMesh
+  - Pigeon/PigeonFFI/Sources
 
 excluded:
   - Pigeon/Pigeon.xcodeproj
-  - PigeonCrypto/.build
-  - PigeonCrypto/.swiftpm
-  - PigeonMesh/.build
-  - PigeonMesh/.swiftpm
+  # Build output: the UniFFI/protobuf bindings are generated, not written.
+  - Pigeon/PigeonFFI/Sources/PigeonFFI/Generated
+  - Pigeon/PigeonFFI/.build
+  - Pigeon/PigeonFFI/.swiftpm
   - DerivedData
   - .build
 
