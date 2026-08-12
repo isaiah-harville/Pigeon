@@ -10,6 +10,11 @@
 # Re-run whenever the FFI surface in src/lib.rs changes.
 set -euo pipefail
 
+if [[ "${PIGEON_SKIP_FFI_BUILD:-0}" == "1" ]]; then
+  echo "==> Skipping PigeonFFI rebuild (using prebuilt artifacts)"
+  exit 0
+fi
+
 # Xcode scheme actions use a minimal, non-login PATH. Add the standard Rust and
 # Homebrew locations explicitly so this script behaves the same from Xcode,
 # Terminal, and CI without sourcing user shell configuration.
