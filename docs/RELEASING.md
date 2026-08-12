@@ -17,6 +17,10 @@ requires a version bump whenever component code, protocol, packaging, or
 deployment files change. It also rejects a tag whose version does not exactly
 match its declared source. Documentation-only changes do not require a bump.
 
+Push release tags individually. GitHub does not create push events when more
+than three tags are pushed at once, so a larger batch silently skips the release
+workflows.
+
 Merges to `main` publish the `latest` website and relay container images.
 `website-vX.Y.Z` and `relay-vX.Y.Z` publish the corresponding `vX.Y.Z` image tag
 without moving `latest`.
