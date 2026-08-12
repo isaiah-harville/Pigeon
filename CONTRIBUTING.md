@@ -15,7 +15,7 @@ and honest about what is implemented versus what is only designed.
 Read these first:
 
 - [README.md](README.md)
-- [CLAUDE.md](CLAUDE.md)
+- [AGENTS.md](AGENTS.md)
 - [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md)
 - [docs/ROADMAP.md](docs/ROADMAP.md)
 

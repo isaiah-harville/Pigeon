@@ -105,13 +105,15 @@ final class SessionPersistence {
 
   /// Writes the full state: the bulk blob (contacts + conversations + flags) and
   /// the crypto blob (account + per-contact session state). No-op before `attach`.
-  func save(_ snapshot: Snapshot) {
-    guard let store else { return }
+  /// Returns whether both blobs reached disk.
+  @discardableResult
+  func save(_ snapshot: Snapshot) -> Bool {
+    guard let store else { return false }
     var conversationsByKey: [String: [ChatMessage]] = [:]
     for (id, messages) in snapshot.conversations {
       conversationsByKey[id.base64EncodedString()] = messages
     }
-    store.save(
+    let bulkSaved = store.save(
       PersistedState(
         contacts: snapshot.contacts.map(Self.encodeContact),
         conversations: conversationsByKey,
@@ -121,14 +123,17 @@ final class SessionPersistence {
         myName: snapshot.myName,
         olmAccountPickle: nil,  // crypto lives in the sibling blob now
         olmFallbackKey: nil))
-    saveCrypto(snapshot)
+    return saveCrypto(snapshot) && bulkSaved
   }
 
   /// Re-seals only the crypto blob (account + per-contact session state). Cheap
   /// fast-path for the hot ratchet-advance path, where the bulk conversation
   /// history is unchanged and need not be re-encoded. No-op before `attach`.
-  func saveCrypto(_ snapshot: Snapshot) {
-    guard let cryptoStore else { return }
+  /// Returns whether the blob reached disk: a failure here means the sealed
+  /// ratchet state now lags the live one, which the caller should surface.
+  @discardableResult
+  func saveCrypto(_ snapshot: Snapshot) -> Bool {
+    guard let cryptoStore else { return false }
     // The session pickle is re-exported here so the sealed ratchet state never
     // lags the live one (a stale pickle would reuse Olm message indices). Secret
     // — only ever written sealed.
@@ -148,7 +153,7 @@ final class SessionPersistence {
     crypto.olmFallbackKey = snapshot.account?.exportFallbackKey()
     crypto.fallbackRotatedAt = snapshot.fallbackRotatedAt?.timeIntervalSince1970
     crypto.sessions = sessions
-    cryptoStore.save(crypto)
+    return cryptoStore.save(crypto)
   }
 
   // MARK: - Account

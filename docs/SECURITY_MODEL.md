@@ -118,8 +118,11 @@ sessions in `pigeon-core`). The mesh layer relays opaque ciphertext;
 - Public identities are exchanged **in person via QR code** or remotely as a
   `pigeon://contact` link containing the same public ContactCard. A remotely
   imported card is explicitly marked **not verified in person**. From a pair of
-  public keys we derive a **60-digit safety number** (order-independent,
-  iterated hashing) that users compare over a trusted channel to detect MITM.
+  public keys we derive a **60-digit safety number** (order-independent, 5200
+  rounds of domain-separated iterated hashing under the versioned context
+  `Pigeon.SafetyNumber.v1`) that users compare over a trusted channel to detect
+  MITM. Bumping that context version changes every safety number, so contacts
+  must re-compare in person.
 - **Identity reset** generates a fresh key, irreversibly invalidating all
   existing trust relationships. This is, and must remain, user-visible.
 
@@ -459,9 +462,17 @@ authoritative to-do list for reaching audit readiness.
     link, or tamper with content beyond drop/delay/replay.
 14. **Replay/freshness across the relay.** Store-and-forward over a relay must
     not widen the prekey/message replay surface (ties to item 3).
-15. **Relay abuse & retention.** Authentication-free mailboxes invite spam/DoS
-    and unbounded storage; define rate-limiting, per-recipient quotas, and
-    ciphertext age expiry. No plaintext, keys, or linkable logs server-side.
+15. **Relay abuse & retention.** ⚠️ **Partially addressed.** Storage is now
+    bounded on every axis: per-envelope size, per-mailbox queue depth, mailbox
+    count (`PIGEON_RELAY_MAX_MAILBOXES`), a global ciphertext ceiling
+    (`PIGEON_RELAY_MAX_TOTAL_BYTES`, enforced by evicting from the *largest*
+    mailbox so a flooder pays for its own pressure), age expiry, a bounded
+    per-subscriber outbound channel (a backed-up reader is skipped, never
+    buffered), and per-mailbox / total caps on registered push tokens. Still
+    open: mailboxes remain
+    authentication-free by design, so there is no per-sender rate limit — a
+    flooder can still consume its own share of the ceiling and force eviction
+    churn. No plaintext, keys, or linkable logs server-side.
 16. **Transport authenticity.** A malicious relay must not be able to forge
     "delivered" state or inject packets that bypass mesh dedup/auth.
 

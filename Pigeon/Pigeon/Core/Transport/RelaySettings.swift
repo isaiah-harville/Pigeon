@@ -74,4 +74,15 @@ enum RelaySettings {
     else { return false }
     return true
   }
+
+  /// Whether an endpoint is TLS-protected (`wss://`). Plain `ws://` still works —
+  /// it is the practical option for a relay you run on your own LAN — but it
+  /// leaves the relay link unencrypted, so the connection metadata the relay
+  /// would see (mailbox keys, timing, sizes) is visible to the network too, and
+  /// an active attacker on the path can drop or reorder deposits. Message
+  /// *content* stays end-to-end encrypted either way. The UI marks these so the
+  /// trade-off is visible rather than silent.
+  static func isSecureEndpoint(_ url: URL) -> Bool {
+    url.scheme?.lowercased() == "wss"
+  }
 }

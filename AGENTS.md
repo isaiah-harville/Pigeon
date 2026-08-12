@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 ## Project Mission
 
@@ -21,26 +21,26 @@ publication require permission from the Pigeon maintainers.
 
 ## Current Architecture
 
-The repo has the **app** (`Pigeon/`) plus three Rust crates — `pigeon-core/`,
-`pigeon-mesh/`, and `pigeon-relay/` — and `Pigeon/PigeonFFI/`, the thin Swift
-package that vends the generated FFI bindings + XCFramework. The xcodeproject uses file-system-scnchronized groups (auto-include).
+The repo has the **app** (`Pigeon/`), a four-crate Rust workspace
+(`pigeon-core/`, `pigeon-mesh/`, `pigeon-ffi/`, and `pigeon-relay/`), and
+`Pigeon/PigeonFFI/`, the thin Swift package that vends the generated FFI
+bindings and XCFramework. The Xcode project uses file-system-synchronized
+groups (auto-include).
 
-**Rust migration (#79–#83):** the pairwise messaging core is the Rust
-`pigeon-core`, built on Olm (via the audited `vodozemac` crate) — not a
-clean-room Noise XX + X3DH + Double Ratchet. The iOS app reaches it through a
-UniFFI bridge (`pigeon-ffi`) packaged as the `PigeonFFI` package's XCFramework
-(#80, done). The old Swift `PigeonCrypto` package has been deleted; do not
-reintroduce it. The remaining migration work is the shared protobuf wire format
-(#81) and follow-ups (#82–#83).
+The pairwise messaging core is `pigeon-core`, built on Olm through the audited
+`vodozemac` crate—not a clean-room Noise XX + X3DH + Double Ratchet
+implementation. The iOS app reaches it through the `pigeon-ffi` UniFFI bridge,
+packaged in the `PigeonFFI` XCFramework. The shared protobuf wire schema lives
+under `proto/pigeon/wire/v1/`. The old Swift `PigeonCrypto` package has been
+deleted; do not reintroduce it.
 
 - `Pigeon/` contains the SwiftUI app and Xcode project (`Pigeon/Pigeon.xcodeproj`,
   scheme `Pigeon`). Source lives under `Pigeon/Pigeon/`, split into `Core/`
   (model/logic) and `Features/` (SwiftUI views).
-- `pigeon-core/` is a standalone Rust crate (`AGPL-3.0-only`) — the pairwise
+- `pigeon-core/` is a Rust workspace crate (`AGPL-3.0-only`) — the pairwise
   messaging core built on Olm/`vodozemac`. It keeps Pigeon's identity binding (a
   long-term Ed25519 key signs Olm's Curve25519 identity key) on top of Olm's
-  session establishment + Double Ratchet. It is NOT a Cargo-workspace member of
-  `pigeon-relay`.
+  session establishment + Double Ratchet.
 - `pigeon-ffi/` is the UniFFI crate (the only crate that links UniFFI, so
   `pigeon-core` and `pigeon-mesh` stay binding-free). `build-xcframework.sh`
   builds the Apple static libs, generates the Swift bindings + protobuf, and
@@ -137,6 +137,25 @@ and the app's `Pigeon/PigeonTests/` target. Docs of note: `docs/SECURITY_MODEL.m
 - Use explicit domain separation strings for every KDF context.
 - Do not silently reset identity or trust state. User-facing identity changes
   must be deliberate and obvious.
+- **Delivery to a locked device is a product requirement.** Messages must keep
+  arriving while the screen is locked, and whatever the app does with them must
+  still be durable. Two distinct cases, and both must keep working:
+  - *Running, screen locks.* The vault DEK is already in memory, so Pigeon
+    decrypts, records, and **persists** normally. Anything on that path — file
+    protection classes, Keychain accessibility, background task assumptions —
+    must be writable/readable with the device locked. This is why the encrypted
+    store uses `completeFileProtectionUntilFirstUserAuthentication` rather than
+    `complete`: a `complete` file cannot be written while locked, so saves failed
+    silently, losing received messages and leaving the sealed Olm pickle behind
+    the live ratchet (index reuse after relaunch). Confidentiality still comes
+    from sealing the blob under the presence-gated DEK, not from the file class.
+  - *Cold background relaunch while locked.* The DEK is unreachable, so the app
+    cannot decrypt or persist: buffer in memory (`LockedInbox`), fire a
+    content-free notification, and deliberately **do not ack** the relay copy so
+    it is redelivered after unlock. Never widen DEK accessibility to "fix" this.
+- Never let a persistence failure pass silently. A save that does not land means
+  the sealed state is behind the live state; for the crypto blob that is a stale
+  ratchet pickle, which is a correctness *and* security problem.
 - For security-affecting code, add or update tests before considering the work
   complete.
 
@@ -177,9 +196,7 @@ If a command fails because a sandbox blocks SwiftPM or Clang cache writes under
 the user home directory, report that clearly and rerun only with explicit user
 approval.
 
-## Expected Agent Workflow
-
-Be conservative with tokens.
+## Agent Workflow
 
 1. Read `README.md`, this file, and any relevant files under `docs/`.
 2. Inspect the code paths involved before planning a change.
@@ -211,6 +228,9 @@ same end-to-end ciphertext. See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md)
   logs, or any field that lets it read, link, or forge content.
 - Do not introduce unaudited crypto dependencies casually.
 - Do not weaken Keychain accessibility for convenience.
+- Do not break locked-device delivery (see Security Invariants). Tightening a
+  file-protection class or Keychain accessibility that sits on the receive path
+  is a regression, not hardening, unless the locked path still works end to end.
 - Do not paper over authentication failures with retries or fallback plaintext.
 - Do not store secrets in `UserDefaults`, files, logs, previews, screenshots, or
   test fixtures.

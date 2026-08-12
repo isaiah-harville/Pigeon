@@ -98,6 +98,9 @@ final class SessionManager {
 
   /// Locked until the vault is unlocked with Face ID / Touch ID.
   private(set) var isUnlocked = false
+  /// Whether we've already reported that writes to the encrypted store are
+  /// failing, so a run of failures logs once rather than per save.
+  var didWarnAboutSaveFailure = false
   /// Owns the encrypted store and the codec between the live state and disk
   /// (including building the bound Olm account). See `SessionPersistence`.
   let persistence = SessionPersistence()
@@ -231,41 +234,6 @@ final class SessionManager {
     relay?.reconfigure(relayURLs)
   }
 
-  /// Whether `contact`'s chat is in ephemeral (don't-persist-new-messages) mode.
-  func isEphemeral(_ contact: Contact) -> Bool { ephemeralContactIDs.contains(contact.id) }
-
-  /// Toggles ephemeral mode for one chat. Affects only future messages;
-  /// already-saved history is left on disk untouched. The change is mirrored
-  /// to the peer so both sides of the chat go ephemeral together.
-  func setEphemeral(_ on: Bool, for contact: Contact) {
-    applyEphemeral(on, for: contact.id, announce: true)
-    sendEphemeralState(to: contact)
-  }
-
-  /// Applies an ephemeral change locally and adds a system notice in the chat.
-  func applyEphemeral(_ on: Bool, for contactID: Data, announce: Bool) {
-    let changed = ephemeralContactIDs.contains(contactID) != on
-    if on { ephemeralContactIDs.insert(contactID) } else { ephemeralContactIDs.remove(contactID) }
-    if changed && announce {
-      record(
-        ChatMessage(
-          mine: false, text: on ? "Ephemeral enabled" : "Ephemeral disabled", system: true),
-        for: contactID)
-    }
-    persist()
-  }
-
-  /// Sends our current ephemeral state for this chat to the peer (encrypted).
-  func sendEphemeralState(to contact: Contact) {
-    guard let session = sessions[contact.id], establishedContactIDs.contains(contact.id) else {
-      return
-    }
-    let byte: UInt8 = ephemeralContactIDs.contains(contact.id) ? 1 : 0
-    let command = Data([0x01, byte])  // 0x01 = ephemeral cmd
-    guard let ciphertext = try? session.encrypt(plaintext: command) else { return }
-    sendEnvelope(.control, payload: ciphertext, to: contact)
-  }
-
   // MARK: - Contacts
 
   /// Verifies and stores a scanned contact bundle, then begins establishing a
@@ -287,11 +255,20 @@ final class SessionManager {
     }
     // A prekey bundle is honoured only if bound to this same identity.
     let prekeys = prekeyBundle.flatMap { $0.identityKey == bundle.identityKey ? $0 : nil }
-    let contact = Contact(
-      bundle: bundle, displayName: name, relayURLs: relayURLs,
+    // The name rides in an attacker-controlled card: the binding authenticates
+    // the key, never the label attached to it.
+    let sanitized = DisplayName.sanitize(name)
+    let displayName = sanitized.isEmpty ? "Unnamed" : sanitized
+    var contact = Contact(
+      bundle: bundle, displayName: displayName, relayURLs: relayURLs,
       prekeyBundle: prekeys, verifiedInPerson: verifiedInPerson)
     if let index = contacts.firstIndex(where: { $0.id == bundle.identityKey }) {
-      // Refresh the full bundle (e.g. a rotated static key), not just the name.
+      // Re-scanning refreshes the card (a rotated prekey, new relays, the name
+      // they publish). The relay the *user* pinned for this chat is our setting,
+      // not theirs, so carry it over — as long as the new card still advertises
+      // it, since pinning a relay they no longer read would strand the chat.
+      let pinned = contacts[index].preferredRelayURL
+      contact.preferredRelayURL = pinned.flatMap { relayURLs.contains($0) ? $0 : nil }
       contacts[index] = contact
     } else {
       contacts.append(contact)
@@ -301,7 +278,7 @@ final class SessionManager {
     activeConversationIDs.insert(bundle.identityKey)
     persist()
     refreshRelay()  // open a publish connection to the new contact's relays
-    note("Added contact \"\(name)\"")
+    note("Added contact \"\(displayName)\"")
     // Re-scanning forces a fresh handshake (manual recovery if one stalled). This
     // is an explicit user action, so it supersedes the re-handshake throttle —
     // clear the cooldown so the recovery isn't suppressed.
@@ -386,5 +363,48 @@ extension SessionManager {
   var lastInitiationIn: [Data: Data] {
     get { sessionRegistry.lastInitiationIn }
     set { sessionRegistry.lastInitiationIn = newValue }
+  }
+}
+
+// MARK: - Ephemeral chats
+
+/// The ephemeral (don't-persist-new-messages) mode for one chat, mirrored to the
+/// peer so both sides go ephemeral together. In an extension so it doesn't count
+/// against the coordinator's type-body length.
+extension SessionManager {
+
+  /// Whether `contact`'s chat is in ephemeral (don't-persist-new-messages) mode.
+  func isEphemeral(_ contact: Contact) -> Bool { ephemeralContactIDs.contains(contact.id) }
+
+  /// Toggles ephemeral mode for one chat. Affects only future messages;
+  /// already-saved history is left on disk untouched. The change is mirrored
+  /// to the peer so both sides of the chat go ephemeral together.
+  func setEphemeral(_ on: Bool, for contact: Contact) {
+    applyEphemeral(on, for: contact.id, announce: true)
+    sendEphemeralState(to: contact)
+  }
+
+  /// Applies an ephemeral change locally and adds a system notice in the chat.
+  func applyEphemeral(_ on: Bool, for contactID: Data, announce: Bool) {
+    let changed = ephemeralContactIDs.contains(contactID) != on
+    if on { ephemeralContactIDs.insert(contactID) } else { ephemeralContactIDs.remove(contactID) }
+    if changed && announce {
+      record(
+        ChatMessage(
+          mine: false, text: on ? "Ephemeral enabled" : "Ephemeral disabled", system: true),
+        for: contactID)
+    }
+    persist()
+  }
+
+  /// Sends our current ephemeral state for this chat to the peer (encrypted).
+  func sendEphemeralState(to contact: Contact) {
+    guard let session = sessions[contact.id], establishedContactIDs.contains(contact.id) else {
+      return
+    }
+    let byte: UInt8 = ephemeralContactIDs.contains(contact.id) ? 1 : 0
+    let command = Data([0x01, byte])  // 0x01 = ephemeral cmd
+    guard let ciphertext = try? session.encrypt(plaintext: command) else { return }
+    sendEnvelope(.control, payload: ciphertext, to: contact)
   }
 }

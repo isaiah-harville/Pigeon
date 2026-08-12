@@ -12,7 +12,7 @@ use zeroize::Zeroize;
 use crate::error::Error;
 
 /// Domain-separation prefix for the identity binding signature. Every KDF/sig
-/// context in Pigeon is explicitly separated (see CLAUDE.md security invariants).
+/// context in Pigeon is explicitly separated (see AGENTS.md security invariants).
 const BINDING_CONTEXT: &[u8] = b"Pigeon.IdentityBinding.v1";
 /// Domain-separation prefix for prekey signatures. The signed message also
 /// covers the one-time flag so an attacker cannot downgrade a one-time prekey

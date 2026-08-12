@@ -40,11 +40,9 @@ jobs:
             exit 1
           fi
 
-  # Build the gitignored PigeonFFI XCFramework + generated bindings once from
-  # the Rust crates, then share them with every job that links PigeonFFI so the
-  # expensive Rust/UniFFI build runs a single time per workflow. The build
-  # output is cached across runs keyed on its inputs, so unchanged core/mesh/ffi/
-  # proto sources skip the rebuild (toolchain install, brew, and cargo) entirely.
+  # Main builds the gitignored PigeonFFI XCFramework + generated bindings. Pull
+  # requests restore that output from main and never run the expensive Apple
+  # Rust/UniFFI build themselves.
   xcframework:
     name: Build PigeonFFI XCFramework
     runs-on: macos-26
@@ -62,18 +60,20 @@ jobs:
             Pigeon/PigeonFFI/PigeonFFIBindings.xcframework
             Pigeon/PigeonFFI/Sources/PigeonFFI/Generated
           key: pigeon-ffi-xcframework-v1-${{ runner.os }}-${{ hashFiles('pigeon-core/**', 'pigeon-ffi/**', 'pigeon-mesh/**', 'proto/**', 'Cargo.lock') }}
+          restore-keys: |
+            pigeon-ffi-xcframework-v1-${{ runner.os }}-
 
       - uses: dtolnay/rust-toolchain@stable
-        if: steps.xcframework-cache.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.xcframework-cache.outputs.cache-hit != 'true'
       - name: Cache cargo build (target + registry)
-        if: steps.xcframework-cache.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.xcframework-cache.outputs.cache-hit != 'true'
         uses: Swatinem/rust-cache@v2
       - name: Install protobuf tooling
-        if: steps.xcframework-cache.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.xcframework-cache.outputs.cache-hit != 'true'
         run: brew install protobuf swift-protobuf
 
       - name: Build PigeonFFI XCFramework
-        if: steps.xcframework-cache.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.xcframework-cache.outputs.cache-hit != 'true'
         run: bash pigeon-ffi/build-xcframework.sh
 
       - name: Upload PigeonFFI build artifacts
@@ -105,6 +105,8 @@ jobs:
     name: iOS App Build & Tests
     runs-on: macos-26
     needs: xcframework
+    env:
+      PIGEON_SKIP_FFI_BUILD: 1
     steps:
       - uses: actions/checkout@v4
 

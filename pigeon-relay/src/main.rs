@@ -24,7 +24,6 @@
 //! [`mailbox`] (deposit/ack/expiry operations), [`connection`] (the per-socket
 //! loop), and [`push`] (the opt-in APNs wake-up gateway, official relay only).
 
-use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -39,7 +38,7 @@ mod push;
 mod state;
 
 use push::PushRegistry;
-use state::{now, AppState, Config};
+use state::{now, AppState, Config, Store};
 
 /// Periodically expires old envelopes and reclaims empty mailboxes, bounding
 /// memory without any persistence (envelopes are ephemeral by design).
@@ -64,6 +63,8 @@ async fn main() {
     let cfg = Config {
         ttl_secs: env_u64("PIGEON_RELAY_TTL_SECS", 30 * 24 * 3600),
         max_queue: env_u64("PIGEON_RELAY_MAX_QUEUE", 1000) as usize,
+        max_mailboxes: env_u64("PIGEON_RELAY_MAX_MAILBOXES", 10_000) as usize,
+        max_total_bytes: env_u64("PIGEON_RELAY_MAX_TOTAL_BYTES", 512 * 1024 * 1024) as usize,
     };
 
     // Opt-in APNs wake-up gateway. Configured only on the official deployment;
@@ -77,7 +78,7 @@ async fn main() {
     let push = Arc::new(PushRegistry::new(gateway, push_min_interval));
 
     let state = AppState {
-        mailboxes: Arc::new(Mutex::new(HashMap::new())),
+        mailboxes: Arc::new(Mutex::new(Store::default())),
         cfg,
         counter: Arc::new(AtomicU64::new(1)),
         push,

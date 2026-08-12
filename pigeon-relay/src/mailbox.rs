@@ -15,7 +15,8 @@ use tokio::sync::mpsc;
 use crate::protocol::ServerMsg;
 use crate::push;
 use crate::state::{
-    is_valid_address, now, AppState, StoredEnvelope, Subscriber, MAX_CIPHERTEXT_LEN, PUBKEY_LEN,
+    is_valid_address, now, AppState, Deposit, StoredEnvelope, Subscriber, MAX_CIPHERTEXT_LEN,
+    PUBKEY_LEN,
 };
 
 /// Raw length of an Ed25519 signature, in bytes.
@@ -23,18 +24,18 @@ const SIG_LEN: usize = 64;
 
 pub fn publish(
     state: &AppState,
-    tx: &mpsc::UnboundedSender<ServerMsg>,
+    tx: &mpsc::Sender<ServerMsg>,
     recipient: String,
     ciphertext: String,
 ) {
     if !is_valid_address(&recipient) {
-        let _ = tx.send(ServerMsg::Error {
+        let _ = tx.try_send(ServerMsg::Error {
             message: "invalid recipient".into(),
         });
         return;
     }
     if ciphertext.is_empty() || ciphertext.len() > MAX_CIPHERTEXT_LEN {
-        let _ = tx.send(ServerMsg::Error {
+        let _ = tx.try_send(ServerMsg::Error {
             message: "invalid ciphertext".into(),
         });
         return;
@@ -47,29 +48,45 @@ pub fn publish(
         ts: now(),
     };
 
-    let mut mailboxes = state.mailboxes.lock().unwrap();
-    let mailbox = mailboxes.entry(recipient.clone()).or_default();
-    mailbox.queue.push_back(envelope.clone());
-    while mailbox.queue.len() > state.cfg.max_queue {
-        mailbox.queue.pop_front();
-    }
-    // Fan out to any live, authenticated readers; drop dead channels.
     let live = ServerMsg::Envelope {
         id: envelope.id.clone(),
         ciphertext: envelope.ciphertext.clone(),
         ts: envelope.ts,
     };
-    mailbox
-        .subscribers
-        .retain(|s| s.tx.send(live.clone()).is_ok());
-    drop(mailboxes);
+
+    let mut store = state.mailboxes.lock().unwrap();
+    if store.deposit(&recipient, envelope, &state.cfg) == Deposit::AtCapacity {
+        drop(store);
+        let _ = tx.try_send(ServerMsg::Error {
+            message: "relay at capacity".into(),
+        });
+        return;
+    }
+    // Fan out to any live, authenticated readers, distinguishing the two ways a
+    // send can fail:
+    //
+    //   Full   — the reader is behind. Skip this live delivery (it stays queued,
+    //            and an unacked envelope is never lost) but *keep* the
+    //            subscription: dropping it would silently stop every future live
+    //            delivery to a client whose socket is still perfectly healthy,
+    //            with nothing to tell it to reconnect.
+    //   Closed — the connection is gone. Drop it.
+    //
+    // Either way the relay never buffers past the channel bound.
+    store.subscribers_mut(&recipient).retain(|s| {
+        !matches!(
+            s.tx.try_send(live.clone()),
+            Err(mpsc::error::TrySendError::Closed(_))
+        )
+    });
+    drop(store);
 
     // Wake any suspended/terminated device registered for this mailbox. No-op
     // unless push is configured and the coalescing window has elapsed; runs off
     // the connection task so it never blocks the deposit.
     push::notify_deposit(state.push.clone(), recipient);
 
-    let _ = tx.send(ServerMsg::Published { id });
+    let _ = tx.try_send(ServerMsg::Published { id });
 }
 
 /// Binds an APNs device token to the connection's authenticated mailbox. Rejects
@@ -77,51 +94,78 @@ pub fn publish(
 /// token) and relays that have no push gateway configured.
 pub fn register_push(
     state: &AppState,
-    tx: &mpsc::UnboundedSender<ServerMsg>,
+    tx: &mpsc::Sender<ServerMsg>,
     authed_mailbox: Option<&str>,
     token: String,
 ) {
     let Some(mailbox) = authed_mailbox else {
-        let _ = tx.send(ServerMsg::Error {
+        let _ = tx.try_send(ServerMsg::Error {
             message: "not authenticated".into(),
         });
         return;
     };
     if !state.push.enabled() {
-        let _ = tx.send(ServerMsg::Error {
+        let _ = tx.try_send(ServerMsg::Error {
             message: "push not supported".into(),
         });
         return;
     }
     if !push::is_valid_token(&token) {
-        let _ = tx.send(ServerMsg::Error {
+        let _ = tx.try_send(ServerMsg::Error {
             message: "invalid token".into(),
         });
         return;
     }
-    state.push.register(mailbox, token);
-    let _ = tx.send(ServerMsg::Ok {
+    if !state.push.register(mailbox, token) {
+        let _ = tx.try_send(ServerMsg::Error {
+            message: "push registry full".into(),
+        });
+        return;
+    }
+    let _ = tx.try_send(ServerMsg::Ok {
         detail: "push registered".into(),
     });
+}
+
+/// Moves a connection's subscription from `previous` (if it had authenticated
+/// to a different mailbox) to `mailbox`. Without dropping the old registration,
+/// a connection that re-authenticates leaves a subscriber entry behind on the
+/// mailbox it no longer serves: the disconnect path only unregisters the last
+/// mailbox, so the stale entry lingers until some later deposit happens to
+/// notice its channel is dead — and until then that mailbox keeps being treated
+/// as having a live reader.
+pub fn switch_subscription(
+    state: &AppState,
+    previous: Option<&str>,
+    mailbox: &str,
+    conn_id: u64,
+    tx: mpsc::Sender<ServerMsg>,
+) {
+    if let Some(previous) = previous {
+        if previous != mailbox {
+            remove_subscriber(state, previous, conn_id);
+        }
+    }
+    register_subscriber(state, mailbox, conn_id, tx);
 }
 
 pub fn register_subscriber(
     state: &AppState,
     mailbox: &str,
     conn_id: u64,
-    tx: mpsc::UnboundedSender<ServerMsg>,
+    tx: mpsc::Sender<ServerMsg>,
 ) {
-    let mut mailboxes = state.mailboxes.lock().unwrap();
-    let entry = mailboxes.entry(mailbox.to_string()).or_default();
-    entry.subscribers.retain(|s| s.conn_id != conn_id);
-    entry.subscribers.push(Subscriber { conn_id, tx });
+    let mut store = state.mailboxes.lock().unwrap();
+    let subscribers = store.subscribers_mut(mailbox);
+    subscribers.retain(|s| s.conn_id != conn_id);
+    subscribers.push(Subscriber { conn_id, tx });
 }
 
-pub fn flush_queue(state: &AppState, mailbox: &str, tx: &mpsc::UnboundedSender<ServerMsg>) {
-    let mailboxes = state.mailboxes.lock().unwrap();
-    if let Some(entry) = mailboxes.get(mailbox) {
+pub fn flush_queue(state: &AppState, mailbox: &str, tx: &mpsc::Sender<ServerMsg>) {
+    let store = state.mailboxes.lock().unwrap();
+    if let Some(entry) = store.get(mailbox) {
         for envelope in &entry.queue {
-            let _ = tx.send(ServerMsg::Envelope {
+            let _ = tx.try_send(ServerMsg::Envelope {
                 id: envelope.id.clone(),
                 ciphertext: envelope.ciphertext.clone(),
                 ts: envelope.ts,
@@ -131,17 +175,15 @@ pub fn flush_queue(state: &AppState, mailbox: &str, tx: &mpsc::UnboundedSender<S
 }
 
 pub fn ack(state: &AppState, mailbox: &str, id: &str) {
-    let mut mailboxes = state.mailboxes.lock().unwrap();
-    if let Some(entry) = mailboxes.get_mut(mailbox) {
-        entry.queue.retain(|e| e.id != id);
-    }
+    state.mailboxes.lock().unwrap().ack(mailbox, id);
 }
 
 pub fn remove_subscriber(state: &AppState, mailbox: &str, conn_id: u64) {
-    let mut mailboxes = state.mailboxes.lock().unwrap();
-    if let Some(entry) = mailboxes.get_mut(mailbox) {
-        entry.subscribers.retain(|s| s.conn_id != conn_id);
-    }
+    state
+        .mailboxes
+        .lock()
+        .unwrap()
+        .remove_subscriber(mailbox, conn_id);
 }
 
 /// Verifies that whoever sent `signature` holds the private key for `mailbox`,
@@ -172,9 +214,5 @@ pub fn verify_ownership(mailbox_hex: &str, nonce: &[u8], signature_b64: &str) ->
 /// Drops envelopes older than `cutoff` and reclaims mailboxes with no queue and
 /// no live subscribers. Bounds memory; envelopes are ephemeral by design.
 pub fn expire_mailboxes(state: &AppState, cutoff: u64) {
-    let mut mailboxes = state.mailboxes.lock().unwrap();
-    mailboxes.retain(|_, mailbox| {
-        mailbox.queue.retain(|e| e.ts >= cutoff);
-        !(mailbox.queue.is_empty() && mailbox.subscribers.is_empty())
-    });
+    state.mailboxes.lock().unwrap().expire(cutoff);
 }

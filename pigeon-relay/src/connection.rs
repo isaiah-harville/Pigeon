@@ -18,11 +18,11 @@ use rand::RngCore;
 use tokio::sync::mpsc;
 
 use crate::mailbox::{
-    ack, flush_queue, publish, register_push, register_subscriber, remove_subscriber,
+    ack, flush_queue, publish, register_push, remove_subscriber, switch_subscription,
     verify_ownership,
 };
 use crate::protocol::{ClientMsg, ServerMsg};
-use crate::state::{is_valid_address, AppState};
+use crate::state::{is_valid_address, AppState, SUBSCRIBER_CHANNEL_CAPACITY};
 
 pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, state))
@@ -31,7 +31,9 @@ pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> 
 async fn handle_socket(socket: WebSocket, state: AppState) {
     let conn_id = state.counter.fetch_add(1, Ordering::Relaxed);
     let (mut ws_tx, mut ws_rx) = socket.split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<ServerMsg>();
+    // Bounded: a client that stops draining loses its subscription rather than
+    // making the relay buffer for it (see SUBSCRIBER_CHANNEL_CAPACITY).
+    let (tx, mut rx) = mpsc::channel::<ServerMsg>(SUBSCRIBER_CHANNEL_CAPACITY);
 
     // Single writer task: everything outbound (live envelopes + replies) flows
     // through `tx` so we never write to the socket from two places.
@@ -58,7 +60,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         };
 
         let Ok(cmsg) = serde_json::from_str::<ClientMsg>(&text) else {
-            let _ = tx.send(ServerMsg::Error {
+            let _ = tx.try_send(ServerMsg::Error {
                 message: "malformed message".into(),
             });
             continue;
@@ -73,21 +75,21 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             }
             ClientMsg::Subscribe { mailbox } => {
                 if !is_valid_address(&mailbox) {
-                    let _ = tx.send(ServerMsg::Error {
+                    let _ = tx.try_send(ServerMsg::Error {
                         message: "invalid mailbox".into(),
                     });
                     continue;
                 }
                 let mut nonce = vec![0u8; 32];
                 rand::thread_rng().fill_bytes(&mut nonce);
-                let _ = tx.send(ServerMsg::Challenge {
+                let _ = tx.try_send(ServerMsg::Challenge {
                     nonce: B64.encode(&nonce),
                 });
                 pending_challenge = Some((mailbox, nonce));
             }
             ClientMsg::Auth { signature } => {
                 let Some((mailbox, nonce)) = pending_challenge.take() else {
-                    let _ = tx.send(ServerMsg::Error {
+                    let _ = tx.try_send(ServerMsg::Error {
                         message: "subscribe first".into(),
                     });
                     continue;
@@ -95,15 +97,23 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 if verify_ownership(&mailbox, &nonce, &signature) {
                     // Register before flushing so a publish racing this auth is
                     // delivered live rather than missed (at-least-once; clients
-                    // dedup at the mesh layer).
-                    register_subscriber(&state, &mailbox, conn_id, tx.clone());
+                    // dedup at the mesh layer). Re-authenticating to a different
+                    // mailbox drops the previous registration, which the
+                    // disconnect path (last mailbox only) would otherwise strand.
+                    switch_subscription(
+                        &state,
+                        authed_mailbox.as_deref(),
+                        &mailbox,
+                        conn_id,
+                        tx.clone(),
+                    );
                     authed_mailbox = Some(mailbox.clone());
-                    let _ = tx.send(ServerMsg::Ok {
+                    let _ = tx.try_send(ServerMsg::Ok {
                         detail: "authenticated".into(),
                     });
                     flush_queue(&state, &mailbox, &tx);
                 } else {
-                    let _ = tx.send(ServerMsg::Error {
+                    let _ = tx.try_send(ServerMsg::Error {
                         message: "authentication failed".into(),
                     });
                 }
@@ -112,7 +122,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 if let Some(mailbox) = &authed_mailbox {
                     ack(&state, mailbox, &id);
                 } else {
-                    let _ = tx.send(ServerMsg::Error {
+                    let _ = tx.try_send(ServerMsg::Error {
                         message: "not authenticated".into(),
                     });
                 }
@@ -123,11 +133,11 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             ClientMsg::UnregisterPush { token } => {
                 if let Some(mailbox) = &authed_mailbox {
                     state.push.unregister(mailbox, &token);
-                    let _ = tx.send(ServerMsg::Ok {
+                    let _ = tx.try_send(ServerMsg::Ok {
                         detail: "push unregistered".into(),
                     });
                 } else {
-                    let _ = tx.send(ServerMsg::Error {
+                    let _ = tx.try_send(ServerMsg::Error {
                         message: "not authenticated".into(),
                     });
                 }

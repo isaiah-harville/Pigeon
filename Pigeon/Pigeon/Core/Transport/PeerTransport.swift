@@ -72,7 +72,7 @@ final class PeerTransport: NSObject, Transport {
 
   // Outbound fragmenter + per-source reassemblers.
   private var fragmenter = Fragmenter()
-  private var reassemblers: [UUID: Reassembler] = [:]
+  private var reassembly = ReassemblyPool()
   private var sweepTimer: Timer?
   /// Notifications waiting for the peripheral transmit queue to drain.
   private var pendingNotifications: [Data] = []
@@ -229,18 +229,11 @@ final class PeerTransport: NSObject, Transport {
     }
   }
 
-  private func reassembler(for source: UUID) -> Reassembler {
-    if let existing = reassemblers[source] { return existing }
-    let made = Reassembler()
-    reassemblers[source] = made
-    return made
-  }
-
   /// Decodes a fragment from raw BLE bytes and delivers a completed message.
   private func receive(_ data: Data, from source: UUID) {
     do {
       let fragment = try Fragment(decoding: data)
-      if let message = try reassembler(for: source).ingest(fragment) {
+      if let message = try reassembly.reassembler(for: source).ingest(fragment) {
         note("Received \(message.count)B from \(source.uuidString.prefix(8))")
         onMessage?(message, source.uuidString)
       }
@@ -315,7 +308,7 @@ extension PeerTransport: CBCentralManagerDelegate {
     error _: Error?
   ) {
     inboundCharacteristics[peripheral.identifier] = nil
-    reassemblers[peripheral.identifier] = nil
+    reassembly.drop(peripheral.identifier)
     updateConnectedCount()
     note("Disconnected \(peripheral.identifier.uuidString.prefix(8)); will reconnect")
     // Keep the peripheral retained and issue a pending connect: CoreBluetooth
@@ -456,5 +449,6 @@ extension PeerTransport: CBPeripheralManagerDelegate {
     didUnsubscribeFrom _: CBCharacteristic
   ) {
     subscribedCentrals.removeAll { $0.identifier == central.identifier }
+    reassembly.drop(central.identifier)
   }
 }

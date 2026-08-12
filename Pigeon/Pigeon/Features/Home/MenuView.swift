@@ -37,6 +37,7 @@ struct MenuView: View {
       appearanceSection
       privacySection
       activitySection
+      linksSection
     }
   }
 
@@ -168,6 +169,19 @@ struct MenuView: View {
     Reach contacts who are out of Bluetooth range. \
     Relay servers are federated and open-sourced — we encourage you to host your own.
     """
+  }
+
+  private var linksSection: some View {
+    Section {
+      Link(destination: URL(string: "https://pigeonwire.app/")!) {
+        Label("Pigeon website", systemImage: "globe")
+      }
+      Link(destination: URL(string: "https://github.com/isaiah-harville/Pigeon")!) {
+        Label("GitHub repository", systemImage: "chevron.left.forwardslash.chevron.right")
+      }
+    } header: {
+      Text("Links")
+    }
   }
 
   @ViewBuilder

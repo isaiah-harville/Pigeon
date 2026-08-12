@@ -90,31 +90,37 @@ final class Vault {
   nonisolated private static func createKey() throws -> Data {
     let keyData = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
 
-    // Prefer a presence-gated item; fall back to device-unlock-only if the
-    // device has no biometrics/passcode (e.g. a dev Mac), so the app still works.
-    if let access = SecAccessControlCreateWithFlags(
-      nil,
-      kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-      .userPresence, nil)
-    {
-      let query: [String: Any] = [
-        kSecClass as String: kSecClassGenericPassword,
-        kSecAttrService as String: service,
-        kSecAttrAccount as String: account,
-        kSecValueData as String: keyData,
-        kSecAttrAccessControl as String: access,
-      ]
-      if SecItemAdd(query as CFDictionary, nil) == errSecSuccess { return keyData }
-    }
+    // Only a device with no biometrics *and* no passcode may store the DEK
+    // ungated (e.g. a dev Mac) — otherwise the app couldn't run at all there.
+    // Everywhere else the presence gate is mandatory: a failure to apply it is
+    // surfaced, never silently downgraded to an item any process running as this
+    // app could read whenever the device is unlocked.
+    return try store(keyData, presenceGated: canGateOnPresence)
+  }
 
-    let fallback: [String: Any] = [
+  /// Whether this device can enforce a user-presence gate at all — false only
+  /// when neither biometrics nor a passcode is enrolled.
+  nonisolated private static var canGateOnPresence: Bool {
+    LAContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: nil)
+  }
+
+  nonisolated private static func store(_ keyData: Data, presenceGated: Bool) throws -> Data {
+    var query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
       kSecAttrAccount as String: account,
       kSecValueData as String: keyData,
-      kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
     ]
-    let status = SecItemAdd(fallback as CFDictionary, nil)
+    if presenceGated {
+      guard
+        let access = SecAccessControlCreateWithFlags(
+          nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, .userPresence, nil)
+      else { throw VaultError.accessControlFailed }
+      query[kSecAttrAccessControl as String] = access
+    } else {
+      query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+    }
+    let status = SecItemAdd(query as CFDictionary, nil)
     guard status == errSecSuccess else { throw VaultError.keychainFailed(status) }
     return keyData
   }

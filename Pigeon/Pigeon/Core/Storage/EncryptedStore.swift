@@ -138,12 +138,31 @@ struct EncryptedStore {
     return value
   }
 
-  /// Encodes, encrypts, and writes the blob atomically with file protection.
-  func save<T: Encodable>(_ value: T) {
+  /// Encodes, encrypts, and writes the blob atomically. Returns whether the write
+  /// landed, so a caller that just advanced the ratchet can tell that its state
+  /// did *not* reach disk rather than assuming it did.
+  ///
+  /// File protection is deliberately `untilFirstUserAuthentication` rather than
+  /// `complete`. Pigeon keeps working while the *device* is locked — that is what
+  /// background delivery is — and a `complete` file cannot be written in that
+  /// state, so every save during a locked-screen session failed silently. That
+  /// lost received messages and, worse, left the sealed Olm session pickle
+  /// lagging the live ratchet, which reuses message indices after a relaunch.
+  /// The blob's real protection is its own encryption: it is sealed under the
+  /// vault DEK, which lives in the Keychain behind a user-presence gate, so the
+  /// file-system class is defence in depth, not the boundary.
+  @discardableResult
+  func save<T: Encodable>(_ value: T) -> Bool {
     guard let plaintext = try? JSONEncoder().encode(value),
       let blob = try? SecretBox.seal(plaintext, key: key)
-    else { return }
-    try? blob.write(to: url, options: [.atomic, .completeFileProtection])
+    else { return false }
+    do {
+      try blob.write(
+        to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+      return true
+    } catch {
+      return false
+    }
   }
 
   /// Removes this on-disk blob (used when switching to ephemeral mode / wipe).

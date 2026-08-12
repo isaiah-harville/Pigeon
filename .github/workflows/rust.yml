@@ -48,6 +48,9 @@ jobs:
           package: pigeon-mesh
           docs: "true"
 
+      - name: Check crates.io package
+        run: cargo package -p pigeon-mesh --locked
+
   pigeon-ffi:
     name: pigeon-ffi
     runs-on: ubuntu-latest
