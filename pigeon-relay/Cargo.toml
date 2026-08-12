@@ -1,9 +1,12 @@
 [package]
 name = "pigeon-relay"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Pigeon's zero-knowledge, federated ciphertext relay (blind mailbox)."
 license = "AGPL-3.0-only"
+repository = "https://github.com/isaiah-harville/Pigeon"
+readme = "README.md"
+publish = false
 
 [dependencies]
 axum = { version = "0.7", features = ["ws"] }

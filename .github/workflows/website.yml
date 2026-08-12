@@ -28,6 +28,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: bash .github/scripts/check-versions.sh "${GITHUB_REF_NAME}"
+
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 

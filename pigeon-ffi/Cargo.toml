@@ -5,6 +5,7 @@ edition = "2021"
 # Matches the sibling pigeon-core crate's declared license.
 license = "AGPL-3.0-only"
 description = "UniFFI bindings exposing pigeon-core and pigeon-mesh to Swift."
+publish = false
 
 [lib]
 # staticlib/cdylib for the iOS XCFramework; lib so the uniffi-bindgen bin and

@@ -1,9 +1,14 @@
 [package]
 name = "pigeon-core"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Pigeon's pairwise end-to-end-encrypted messaging core (Olm via vodozemac), with an Ed25519 identity binding over Olm's Curve25519 identity key."
 license = "AGPL-3.0-only"
+repository = "https://github.com/isaiah-harville/Pigeon"
+readme = "README.md"
+# The build currently consumes the canonical schema from the workspace-level
+# proto directory, which crates.io packages cannot include.
+publish = false
 
 [dependencies]
 # Olm Account/Session: audited Double Ratchet + async-first prekey establishment.
