@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths: ["site/**", ".github/workflows/website.yml"]
-    tags: ["v*"]
+    tags: ["website-v*"]
   pull_request:
     branches: [main]
     paths: ["site/**", ".github/workflows/website.yml"]
@@ -20,7 +20,7 @@ env:
 jobs:
   image:
     name: Build & push image
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/website-v'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -45,7 +45,7 @@ jobs:
           images: ${{ env.IMAGE }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=ref,event=tag
+            type=match,pattern=website-(v.*),group=1
 
       - name: Build and push
         uses: docker/build-push-action@v6
