@@ -45,6 +45,7 @@ nav:
   - Overview: index.md
   - Security Model: SECURITY_MODEL.md
   - Host a Relay: host-a-relay.md
+  - Releases: RELEASING.md
   - API Reference: api-reference.md
   - Pigeon iOS: "!include Pigeon/mkdocs.yml"
   - pigeon-core: "!include pigeon-core/mkdocs.yml"

@@ -126,9 +126,8 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-CI (`.github/workflows/relay.yml`) runs fmt/clippy/test and builds & pushes the
-multi-arch image to GHCR on pushes to `main` (paths under `pigeon-relay/`) and on
-`relay-v*` tags.
+CI (`.github/workflows/relay.yml`) runs fmt/clippy/test and builds and pushes the multi-arch image to GHCR. Merges to `main` publish `latest`; a tag such as
+`relay-v0.1.1` publishes the image tag `v0.1.1`.
 
 ## Roadmap (this component)
 

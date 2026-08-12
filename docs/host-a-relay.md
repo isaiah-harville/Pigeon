@@ -179,7 +179,7 @@ do — you do not need to serve the world for it to work.
   small per-connection overhead. A small VPS handles a community.
 - **Backups.** None. State is intentionally ephemeral.
 - **Updates.** `docker pull` the `latest` tag and recreate the container.
-  Versioned tags (e.g. `1.2.3`) are published for pinning.
+  Versioned tags (for example `v1.2.3`) are published for pinning.
 - **Logs.** The relay does not log addresses or content. Keep it that way — do
   not add access logging at the proxy that records mailbox keys.
 - **Push notifications** are not available to self-hosted relays. An APNs push
