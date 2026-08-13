@@ -158,11 +158,11 @@ final class SessionManager {
 
   /// Attaches the encrypted store after unlock: load persisted state and begin
   /// establishing sessions for known contacts.
-  func attachStore(_ store: EncryptedStore) {
+  func attachStore(_ store: EncryptedStore) throws {
     // Decode persisted state and (re)build the bound Olm account off the identity
     // seed. The codec/account logic lives in `SessionPersistence`; here we just
     // apply the result to the live state and run the post-unlock orchestration.
-    let loaded = persistence.attach(store, identitySeed: identity.identitySeed)
+    let loaded = try persistence.attach(store, identitySeed: identity.identitySeed)
     account = loaded.account
     contacts = loaded.contacts
     conversationStore.load(loaded.conversations)  // in-memory view starts from disk

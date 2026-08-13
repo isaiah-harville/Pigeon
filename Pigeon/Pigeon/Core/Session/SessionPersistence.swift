@@ -24,6 +24,11 @@
 import Foundation
 import PigeonFFI
 
+enum SessionPersistenceError: Error {
+  case unreadableStore
+  case invalidCryptoState
+}
+
 /// Reads and writes the coordinator's durable state through `EncryptedStore`,
 /// including building the bound Olm account. Not `@Observable`: persistence is a
 /// side effect, not observable UI state.
@@ -81,15 +86,18 @@ final class SessionPersistence {
   /// published fallback prekey stays stable. Stores written before the crypto/bulk
   /// split are migrated transparently (their crypto fields move to the sibling on
   /// the next save).
-  func attach(_ store: EncryptedStore, identitySeed: Data) -> Loaded {
-    self.store = store
+  func attach(_ store: EncryptedStore, identitySeed: Data) throws -> Loaded {
     let cryptoStore = store.companion(suffix: Self.cryptoSuffix)
-    self.cryptoStore = cryptoStore
-
-    let bulk = store.load(PersistedState.self) ?? PersistedState()
-    let crypto = cryptoStore.load(PersistedCrypto.self) ?? PersistedCrypto(migratingFrom: bulk)
-    let sessionState = Self.decodeSessionState(crypto.sessions)
-    return Loaded(
+    let bulk: PersistedState
+    let crypto: PersistedCrypto
+    do {
+      bulk = try store.load(PersistedState.self) ?? PersistedState()
+      crypto = try cryptoStore.load(PersistedCrypto.self) ?? PersistedCrypto(migratingFrom: bulk)
+    } catch {
+      throw SessionPersistenceError.unreadableStore
+    }
+    let sessionState = try Self.decodeSessionState(crypto.sessions)
+    let loaded = try Loaded(
       account: Self.buildAccount(seed: identitySeed, crypto: crypto),
       contacts: Self.decodeContacts(bulk.contacts),
       conversations: Self.decodeConversations(bulk.conversations),
@@ -101,6 +109,9 @@ final class SessionPersistence {
       pendingInitiation: sessionState.pending,
       lastInitiationIn: sessionState.lastIn,
       fallbackRotatedAt: crypto.fallbackRotatedAt.map { Date(timeIntervalSince1970: $0) })
+    self.store = store
+    self.cryptoStore = cryptoStore
+    return loaded
   }
 
   /// Writes the full state: the bulk blob (contacts + conversations + flags) and
@@ -158,14 +169,17 @@ final class SessionPersistence {
 
   // MARK: - Account
 
-  private static func buildAccount(seed: Data, crypto: PersistedCrypto) -> PigeonAccount? {
+  private static func buildAccount(seed: Data, crypto: PersistedCrypto) throws -> PigeonAccount? {
     if let pickle = crypto.olmAccountPickle, let fallback = crypto.olmFallbackKey,
       let restored = try? PigeonAccount.`import`(
         seed: seed, olmPickle: pickle, fallbackKey: fallback)
     {
       return restored
     }
-    return try? PigeonAccount.fromIdentitySeed(seed: seed)
+    guard crypto.olmAccountPickle == nil, crypto.olmFallbackKey == nil,
+      let account = try? PigeonAccount.fromIdentitySeed(seed: seed)
+    else { throw SessionPersistenceError.invalidCryptoState }
+    return account
   }
 
   // MARK: - Codec
@@ -179,18 +193,24 @@ final class SessionPersistence {
       verifiedInPerson: contact.verifiedInPerson)
   }
 
-  private static func decodeContacts(_ persisted: [PersistedContact]) -> [Contact] {
-    persisted.compactMap { persisted in
+  private static func decodeContacts(_ persisted: [PersistedContact]) throws -> [Contact] {
+    try persisted.map { persisted in
       // Decoding a PigeonIdentityBundle verifies its binding signature; an
       // invalid one yields nil and the contact is dropped.
       guard let bundle = try? PigeonIdentityBundle(decoding: persisted.bundle) else {
-        return nil
+        throw SessionPersistenceError.unreadableStore
       }
       // Honour a stored prekey bundle only if it verifies and is bound to this
       // identity (the same guard the QR scanner applies).
-      let prekeyBundle = persisted.prekeyBundle
-        .flatMap { try? PigeonPrekeyBundle(decoding: $0) }
-        .flatMap { $0.identityKey == bundle.identityKey ? $0 : nil }
+      let prekeyBundle: PigeonPrekeyBundle?
+      if let encoded = persisted.prekeyBundle {
+        guard let decoded = try? PigeonPrekeyBundle(decoding: encoded),
+          decoded.identityKey == bundle.identityKey
+        else { throw SessionPersistenceError.unreadableStore }
+        prekeyBundle = decoded
+      } else {
+        prekeyBundle = nil
+      }
       return Contact(
         bundle: bundle, displayName: persisted.name,
         relayURLs: persisted.relayURLs.compactMap { URL(string: $0) },
@@ -204,19 +224,22 @@ final class SessionPersistence {
   /// Olm sessions plus the two initiation blobs that drive async establishment,
   /// keyed by contact id. A session whose pickle no longer decodes is simply
   /// skipped (it re-establishes on next contact), never crashing the unlock.
-  private static func decodeSessionState(_ persisted: [String: PersistedSession]) -> (
+  private static func decodeSessionState(_ persisted: [String: PersistedSession]) throws -> (
     sessions: [Data: PigeonSession], pending: [Data: Data], lastIn: [Data: Data]
   ) {
     var sessions: [Data: PigeonSession] = [:]
     var pending: [Data: Data] = [:]
     var lastIn: [Data: Data] = [:]
     for (key, entry) in persisted {
-      guard let id = Data(base64Encoded: key) else { continue }
+      guard let id = Data(base64Encoded: key) else {
+        throw SessionPersistenceError.invalidCryptoState
+      }
       // The contact id is the verified Ed25519 identity key the session was
       // stored under; restoring re-attaches it to the ratchet.
-      if let pickle = entry.pickle,
-        let session = try? PigeonSession.import(pickle: pickle, remoteIdentityKey: id)
-      {
+      if let pickle = entry.pickle {
+        guard let session = try? PigeonSession.import(pickle: pickle, remoteIdentityKey: id) else {
+          throw SessionPersistenceError.invalidCryptoState
+        }
         sessions[id] = session
       }
       if let initiation = entry.pendingInitiation { pending[id] = initiation }
@@ -225,17 +248,27 @@ final class SessionPersistence {
     return (sessions, pending, lastIn)
   }
 
-  private static func decodeConversations(_ stored: [String: [ChatMessage]]) -> [Data:
+  private static func decodeConversations(_ stored: [String: [ChatMessage]]) throws -> [Data:
     [ChatMessage]]
   {
     var loaded: [Data: [ChatMessage]] = [:]
     for (key, messages) in stored {
-      if let id = Data(base64Encoded: key) { loaded[id] = messages }
+      guard let id = Data(base64Encoded: key) else {
+        throw SessionPersistenceError.unreadableStore
+      }
+      loaded[id] = messages
     }
     return loaded
   }
 
-  private static func decodeIDs(_ stored: [String]) -> Set<Data> {
-    Set(stored.compactMap { Data(base64Encoded: $0) })
+  private static func decodeIDs(_ stored: [String]) throws -> Set<Data> {
+    var ids: Set<Data> = []
+    for encoded in stored {
+      guard let id = Data(base64Encoded: encoded) else {
+        throw SessionPersistenceError.unreadableStore
+      }
+      ids.insert(id)
+    }
+    return ids
   }
 }

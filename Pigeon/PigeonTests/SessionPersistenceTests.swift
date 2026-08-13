@@ -17,6 +17,32 @@ import XCTest
 @MainActor
 final class SessionPersistenceTests: XCTestCase {
 
+  func testCorruptBulkStoreFailsInsteadOfStartingEmpty() throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("pigeon-corrupt-\(UUID().uuidString).store")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try Data("not an encrypted store".utf8).write(to: url)
+
+    let persistence = SessionPersistence()
+    let store = EncryptedStore(key: SymmetricKey(size: .bits256), url: url)
+
+    XCTAssertThrowsError(try persistence.attach(store, identitySeed: Data(repeating: 7, count: 32)))
+  }
+
+  func testWrongKeyFailsInsteadOfReplacingStoredIdentityState() throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("pigeon-wrong-key-\(UUID().uuidString).store")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let original = EncryptedStore(key: SymmetricKey(size: .bits256), url: url)
+    XCTAssertTrue(original.save(PersistedState(myName: "Existing account")))
+
+    let persistence = SessionPersistence()
+    let wrongKeyStore = EncryptedStore(key: SymmetricKey(size: .bits256), url: url)
+
+    XCTAssertThrowsError(
+      try persistence.attach(wrongKeyStore, identitySeed: Data(repeating: 9, count: 32)))
+  }
+
   /// Saving a snapshot that carries a live session, then re-attaching, restores
   /// a working session: the conversation continues across the round-trip with no
   /// fresh handshake. This is the persistence-layer counterpart of the FFI's
@@ -50,7 +76,7 @@ final class SessionPersistenceTests: XCTestCase {
     let contactID = bobContact.id
 
     // Attach to bind the store, then seal a snapshot carrying Alice's live session.
-    _ = persistence.attach(store, identitySeed: alice.exportSeed())
+    _ = try persistence.attach(store, identitySeed: alice.exportSeed())
     persistence.save(
       SessionPersistence.Snapshot(
         contacts: [bobContact],
@@ -65,7 +91,7 @@ final class SessionPersistenceTests: XCTestCase {
         fallbackRotatedAt: nil))
 
     // Re-attach as if the app had been relaunched: the session must come back.
-    let reloaded = persistence.attach(store, identitySeed: alice.exportSeed())
+    let reloaded = try persistence.attach(store, identitySeed: alice.exportSeed())
     let restored = try XCTUnwrap(reloaded.sessions[contactID])
     XCTAssertEqual(restored.remoteIdentityKey(), bob.identityPublicKey())
 
@@ -90,7 +116,7 @@ final class SessionPersistenceTests: XCTestCase {
     let outBlob = Data("pending-out".utf8)
     let inBlob = Data("last-in".utf8)
 
-    _ = persistence.attach(store, identitySeed: alice.exportSeed())
+    _ = try persistence.attach(store, identitySeed: alice.exportSeed())
     persistence.save(
       SessionPersistence.Snapshot(
         contacts: [bobContact],
@@ -104,7 +130,7 @@ final class SessionPersistenceTests: XCTestCase {
         lastInitiationIn: [contactID: inBlob],
         fallbackRotatedAt: nil))
 
-    let reloaded = persistence.attach(store, identitySeed: alice.exportSeed())
+    let reloaded = try persistence.attach(store, identitySeed: alice.exportSeed())
     XCTAssertNil(reloaded.sessions[contactID])  // no session was established
     XCTAssertEqual(reloaded.pendingInitiation[contactID], outBlob)
     XCTAssertEqual(reloaded.lastInitiationIn[contactID], inBlob)
@@ -126,7 +152,7 @@ final class SessionPersistenceTests: XCTestCase {
     let contactID = bob.identityPublicKey()
     let stamp = Date(timeIntervalSince1970: 1_700_000_000)
 
-    _ = persistence.attach(store, identitySeed: alice.exportSeed())
+    _ = try persistence.attach(store, identitySeed: alice.exportSeed())
     persistence.saveCrypto(
       SessionPersistence.Snapshot(
         contacts: [],
@@ -140,7 +166,7 @@ final class SessionPersistenceTests: XCTestCase {
         lastInitiationIn: [:],
         fallbackRotatedAt: stamp))
 
-    let reloaded = persistence.attach(store, identitySeed: alice.exportSeed())
+    let reloaded = try persistence.attach(store, identitySeed: alice.exportSeed())
     XCTAssertNotNil(reloaded.sessions[contactID])
     XCTAssertEqual(
       reloaded.fallbackRotatedAt?.timeIntervalSince1970, stamp.timeIntervalSince1970)

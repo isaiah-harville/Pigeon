@@ -65,7 +65,10 @@ struct UnlockView: View {
       do {
         try await vault.unlock()
         guard let key = vault.key else { throw VaultError.authenticationFailed }
-        session.attachStore(EncryptedStore(key: key))
+        try session.attachStore(EncryptedStore(key: key))
+      } catch is SessionPersistenceError {
+        self.error =
+          "Stored data couldn't be opened. Pigeon did not reset it; restart and try again."
       } catch {
         self.error = "Couldn't unlock. Please try again."
       }
