@@ -108,11 +108,11 @@ final class RelayRoutingTests: XCTestCase {
     XCTAssertEqual(RelayTransport.classifyInbound([:]), .ignored)
   }
 
-  // MARK: - Ack gating default
+  // MARK: - Mailbox acknowledgement gating
 
-  func testCanConsumeDefaultsToTrue() {
-    let relay = RelayTransport(mailboxHex: "00", sign: { _ in nil })
-    XCTAssertTrue(relay.canConsume())
+  func testRelayAcknowledgesOnlyDurablyConsumedMessages() {
+    XCTAssertTrue(RelayTransport.shouldAcknowledge(.consumed))
+    XCTAssertFalse(RelayTransport.shouldAcknowledge(.retryAfterRestart))
   }
 
   // MARK: - Send-side store-and-forward queue

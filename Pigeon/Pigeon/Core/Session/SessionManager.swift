@@ -98,6 +98,9 @@ final class SessionManager {
 
   /// Locked until the vault is unlocked with Face ID / Touch ID.
   private(set) var isUnlocked = false
+  /// False after any persistence failure. Processing stays frozen for the rest
+  /// of the run so the live ratchet can never advance farther than sealed state.
+  var isPersistenceHealthy = true
   /// Whether we've already reported that writes to the encrypted store are
   /// failing, so a run of failures logs once rather than per save.
   var didWarnAboutSaveFailure = false
@@ -142,14 +145,11 @@ final class SessionManager {
       relay.preferredRelayForRecipient = { [weak self] key in
         self?.contacts.first { $0.id == key }?.preferredRelayURL
       }
-      // Only ack relay envelopes once unlocked; while locked we buffer and let
-      // the relay retain its copy (see `handleInbound`).
-      relay.canConsume = { [weak self] in self?.isUnlocked ?? false }
       relay.reconfigure(RelaySettings.urls())
     }
     // Contacts/history load after the vault is unlocked; BLE runs regardless.
     self.mesh.onMessage = { [weak self] data, channel in
-      self?.handleInbound(data, channel: channel)
+      self?.handleInbound(data, channel: channel) ?? .retryAfterRestart
     }
     // Event-driven delivery: a link coming up re-drives establishment and
     // flushes pending sends, replacing the old 3s polling timer.
@@ -179,6 +179,7 @@ final class SessionManager {
     lastInitiationIn = loaded.lastInitiationIn
     fallbackRotatedAt = loaded.fallbackRotatedAt
     isUnlocked = true
+    isPersistenceHealthy = true
     lockedInbox.reset()
     refreshRelay()  // pick up loaded contacts' relays
     // Drain anything buffered while locked *before* re-driving establishment, so
@@ -331,12 +332,13 @@ final class SessionManager {
     if message.transport != channel {
       setTransport(channel, messageID: message.id, contactID: contact.id)
     }
-    sendEnvelope(.message, payload: ciphertext, to: contact)
+    guard sendEnvelope(.message, payload: ciphertext, to: contact) else { return }
     // Encrypted and handed to the mesh — it's on its way (store-and-forward keeps
     // it moving). Move it to `.sent` unless the peer's ack already made it
     // `.delivered`, so a late resend can't clobber a confirmed delivery.
     if conversationStore.delivery(messageID: message.id, contactID: contact.id) != .delivered {
       setDelivery(.sent, messageID: message.id, contactID: contact.id)
+      persist()
     }
   }
 

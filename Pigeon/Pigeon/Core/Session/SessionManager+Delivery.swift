@@ -60,7 +60,7 @@ extension SessionManager {
   @discardableResult
   func drainLockedInbox() -> Bool {
     let buffered = lockedInbox.drain()
-    for entry in buffered { handleInbound(entry.data, channel: entry.channel) }
+    for entry in buffered { _ = handleInbound(entry.data, channel: entry.channel) }
     return !buffered.isEmpty
   }
 
@@ -162,21 +162,23 @@ extension SessionManager {
 
   /// Appends a message to the in-memory view, and to the on-disk mirror unless
   /// the chat is ephemeral, then persists.
-  func record(_ message: ChatMessage, for contactID: Data) {
+  @discardableResult
+  func record(_ message: ChatMessage, for contactID: Data) -> Bool {
     // Any recorded message (sent, received, or system) opens the conversation, so
     // it appears on the home list — a deleted chat reappears when a message lands.
     activeConversationIDs.insert(contactID)
     conversationStore.record(
       message, for: contactID, ephemeral: ephemeralContactIDs.contains(contactID))
-    persist()
+    return persist()
   }
 
   /// Seals the full live state (bulk + crypto) at rest via `SessionPersistence`.
   /// No-op before unlock; the store handle inside `persistence` is the second
   /// guard once attached.
-  func persist() {
-    guard isUnlocked else { return }
-    recordSaveOutcome(persistence.save(snapshot()))
+  @discardableResult
+  func persist() -> Bool {
+    guard isUnlocked, isPersistenceHealthy else { return false }
+    return recordSaveOutcome(persistence.save(snapshot()))
   }
 
   /// Re-seals only the crypto blob (account + per-contact session pickles). The
@@ -184,23 +186,27 @@ extension SessionManager {
   /// avoids re-encoding the whole bulk store on every encrypted envelope. The
   /// session pickle must be durable promptly (a stale one reuses Olm message
   /// indices), so this is called on every session-encrypted send.
-  func persistCrypto() {
-    guard isUnlocked else { return }
-    recordSaveOutcome(persistence.saveCrypto(snapshot()))
+  @discardableResult
+  func persistCrypto() -> Bool {
+    guard isUnlocked, isPersistenceHealthy else { return false }
+    return recordSaveOutcome(persistence.saveCrypto(snapshot()))
   }
 
   /// Surfaces a failed write once per run of failures. A save that doesn't land
   /// means the sealed state is behind the live one — for the crypto blob that is
   /// a stale ratchet pickle, so it must not pass silently. Coalesced so a burst
   /// of failed writes doesn't flood the activity log.
-  private func recordSaveOutcome(_ saved: Bool) {
+  private func recordSaveOutcome(_ saved: Bool) -> Bool {
     if saved {
       didWarnAboutSaveFailure = false
-      return
+      return true
     }
-    guard !didWarnAboutSaveFailure else { return }
-    didWarnAboutSaveFailure = true
-    note(.persistenceFailed)
+    isPersistenceHealthy = false
+    if !didWarnAboutSaveFailure {
+      didWarnAboutSaveFailure = true
+      note(.persistenceFailed)
+    }
+    return false
   }
 
   /// Snapshots the live state (contacts, conversation mirror, ephemeral/Bluetooth

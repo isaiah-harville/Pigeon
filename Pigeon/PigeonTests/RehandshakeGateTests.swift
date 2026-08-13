@@ -91,7 +91,7 @@ final class RehandshakeGateTests: XCTestCase {
       payload: Data()
     ).encoded()
     let before = reestablishCount(initiator, peer: responder.myID)
-    for _ in 0..<50 { initiator.handleInbound(spoof, channel: .bluetooth) }
+    for _ in 0..<50 { _ = initiator.handleInbound(spoof, channel: .bluetooth) }
     let honored = reestablishCount(initiator, peer: responder.myID) - before
 
     XCTAssertLessThanOrEqual(

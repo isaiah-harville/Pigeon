@@ -21,7 +21,7 @@ final class CompositeTransportTests: XCTestCase {
     var status: TransportStatus = .idle
     var connectedPeerCount = 0
     var log: [String] = []
-    var onMessage: ((Data, String) -> Void)?
+    var onMessage: ((Data, String) -> TransportMessageDisposition)?
     var onConnectivity: (() -> Void)?
     private(set) var sent: [Data] = []
     private(set) var refreshCount = 0

@@ -20,7 +20,7 @@ final class CompositeTransport: Transport {
     self.transports = transports
   }
 
-  var onMessage: ((_ message: Data, _ peerID: String) -> Void)? {
+  var onMessage: ((_ message: Data, _ peerID: String) -> TransportMessageDisposition)? {
     didSet {
       for transport in transports {
         transport.onMessage = onMessage
