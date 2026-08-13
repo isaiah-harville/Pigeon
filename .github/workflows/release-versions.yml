@@ -1,13 +1,6 @@
 name: Release versions
 
 on:
-  push:
-    tags:
-      - "ios-v*"
-      - "website-v*"
-      - "relay-v*"
-      - "pigeon-core-v*"
-      - "pigeon-mesh-v*"
   pull_request:
     branches: [main]
     paths:
@@ -21,7 +14,14 @@ on:
       - "pigeon-mesh/**"
       - "pigeon-ffi/**"
       - "pigeon-relay/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/scripts/check-version*.sh"
+      - ".github/scripts/relay-image-version.sh"
+      - ".github/scripts/website-image-version.sh"
+      - ".github/workflows/relay.yml"
+      - ".github/workflows/swift.yml"
+      - ".github/workflows/website.yml"
       - ".github/workflows/release-versions.yml"
 
 permissions:
@@ -42,7 +42,3 @@ jobs:
       - name: Require version bumps for component changes
         if: github.event_name == 'pull_request'
         run: bash .github/scripts/check-version-bumps.sh "${{ github.event.pull_request.base.sha }}"
-
-      - name: Validate release tag
-        if: startsWith(github.ref, 'refs/tags/')
-        run: bash .github/scripts/check-versions.sh "${GITHUB_REF_NAME}"

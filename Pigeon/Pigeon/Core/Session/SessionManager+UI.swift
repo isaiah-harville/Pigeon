@@ -25,7 +25,7 @@ extension SessionManager {
   /// reconnect itself fires a connectivity event, but we also flush directly so
   /// the refresh acts even when no link state actually changed.
   func refreshChats() async {
-    note("Refreshing chats")
+    note(.refreshingChats)
     mesh.refreshConnections()
     flushOnConnectivity()
     try? await Task.sleep(for: .milliseconds(350))
@@ -113,7 +113,7 @@ extension SessionManager {
       BackgroundDelivery.isEnabled = enabled
       return true
     } catch {
-      note("Couldn't update background-delivery setting")
+      note(.backgroundSettingFailed)
       return false
     }
   }
@@ -205,7 +205,7 @@ extension SessionManager {
     } else {
       ensureEstablishing(contactID: contact.id)
     }
-    note("Manual retry for \"\(contact.displayName)\"")
+    note(.manualRetry)
     persist()
   }
 

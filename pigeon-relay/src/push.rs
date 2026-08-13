@@ -272,14 +272,14 @@ impl ApnsGateway {
             std::env::var("PIGEON_APNS_HOST").unwrap_or_else(|_| "api.push.apple.com".into());
 
         let pem = std::fs::read(&key_path)
-            .map_err(|e| eprintln!("pigeon-relay: cannot read APNS key: {e}"))
+            .map_err(|_| eprintln!("pigeon-relay: cannot read APNS key"))
             .ok()?;
         let encoding_key = EncodingKey::from_ec_pem(&pem)
             .map_err(|_| eprintln!("pigeon-relay: APNS key is not a valid EC .p8"))
             .ok()?;
         let client = reqwest::Client::builder()
             .build()
-            .map_err(|e| eprintln!("pigeon-relay: cannot build HTTP client: {e}"))
+            .map_err(|_| eprintln!("pigeon-relay: cannot build HTTP client"))
             .ok()?;
 
         Some(Self {
@@ -291,11 +291,6 @@ impl ApnsGateway {
             encoding_key,
             jwt: Mutex::new(None),
         })
-    }
-
-    /// A bundle-id topic and host, for a non-secret startup log line.
-    pub fn describe(&self) -> String {
-        format!("topic={}, host={}", self.topic, self.host)
     }
 
     /// Returns a valid provider JWT, minting (and caching) a fresh one when the

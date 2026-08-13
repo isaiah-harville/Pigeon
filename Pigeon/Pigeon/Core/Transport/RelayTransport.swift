@@ -183,7 +183,7 @@ final class RelayTransport: Transport {
       connection.socket?.cancel(with: .goingAway, reason: nil)
     }
     connections.removeAll()
-    note("Relay refresh requested")
+    note(.transportRefresh)
     reconfigure(configuredRelays)
   }
 
@@ -204,7 +204,7 @@ final class RelayTransport: Transport {
         // that never became ready in the first place.
         let wasReady = connections[url]?.ready == true
         connections[url]?.ready = false
-        note("Relay \(host(url)) offline; retrying")
+        note(.relayOffline)
         refreshLinkState()
         if wasReady { backoff = 1.0 }
       }
@@ -243,7 +243,7 @@ final class RelayTransport: Transport {
     }
 
     connection.ready = true
-    note("Relay \(host(url)) \(connection.authenticate ? "online" : "ready")")
+    note(.relayReady)
     refreshLinkState()
     flushPendingDeposits()  // re-drive deposits queued while no relay was ready
     onConnectivity?()  // can publish to this relay now — flush pending work
@@ -266,8 +266,8 @@ final class RelayTransport: Transport {
         if canConsume() {
           send(socket, ["type": "ack", "id": envelope.id])
         }
-      case .error(let detail):
-        note("Relay \(host(url)): \(detail)")
+      case .error:
+        note(.relayError)
       case .ignored:
         break
       }
@@ -320,9 +320,8 @@ final class RelayTransport: Transport {
 
   private func host(_ url: URL) -> String { url.host ?? url.absoluteString }
 
-  private func note(_ message: String) {
-    log.append(message)
-    if log.count > 100 { log.removeFirst(log.count - 100) }
+  private func note(_ event: DiagnosticEvent) {
+    DiagnosticLog.record(event, in: &log, limit: 100)
   }
 
   private static func hex(_ data: Data) -> String {
@@ -398,7 +397,7 @@ extension RelayTransport {
       connections[url] = fresh
       fresh.task = Task { [weak self] in await self?.supervise(url) }
     }
-    note("Network restored; reconnecting \(stalled.count) relay(s)")
+    note(.networkRestored)
   }
 }
 

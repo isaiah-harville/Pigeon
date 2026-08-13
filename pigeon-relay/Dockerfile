@@ -12,12 +12,13 @@ ENV CARGO_PROFILE_RELEASE_STRIP=true \
     CARGO_PROFILE_RELEASE_OPT_LEVEL=z \
     CARGO_PROFILE_RELEASE_PANIC=abort
 
-COPY Cargo.toml ./
-RUN mkdir src && echo 'fn main() {}' > src/main.rs \
-    && cargo build --release \
-    && rm -rf src
-COPY src ./src
-RUN touch src/main.rs && cargo build --release
+COPY Cargo.toml Cargo.lock ./
+
+RUN --mount=type=bind,source=pigeon-core,target=/src/pigeon-core,readonly \
+    --mount=type=bind,source=pigeon-ffi,target=/src/pigeon-ffi,readonly \
+    --mount=type=bind,source=pigeon-mesh,target=/src/pigeon-mesh,readonly \
+    --mount=type=bind,source=pigeon-relay,target=/src/pigeon-relay,readonly \
+    cargo build --locked --release -p pigeon-relay
 
 FROM gcr.io/distroless/cc-debian12:nonroot
 COPY --from=build /src/target/release/pigeon-relay /usr/local/bin/pigeon-relay
