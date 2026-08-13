@@ -26,8 +26,6 @@ grep -q 'context: \.' .github/workflows/relay.yml || fail "relay workflow must u
 grep -q 'file: pigeon-relay/Dockerfile' .github/workflows/relay.yml ||
   fail "relay workflow must select the relay Dockerfile"
 
-release=.github/workflows/core-release.yml
-[[ -f "$release" ]] || fail "core release workflow is missing"
 grep -q 'bash pigeon-ffi/build-xcframework.sh' "$release" ||
   fail "core release must build the XCFramework"
 grep -q 'shasum -a 256' "$release" || fail "release artifacts must include checksums"
