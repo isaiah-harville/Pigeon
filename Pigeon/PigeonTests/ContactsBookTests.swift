@@ -27,7 +27,7 @@ final class ContactsBookTests: XCTestCase {
     let transport = FakeTransport(identity: identity.publicKey.rawRepresentation, bus: bus)
     let manager = SessionManager(identity: identity, mesh: MeshService(transport: transport))
     let store = EncryptedStore(key: key, fileName: storeFile)
-    manager.attachStore(store)
+    try manager.attachStore(store)
     bus.connect(identity.publicKey.rawRepresentation, transport)
     return manager
   }
