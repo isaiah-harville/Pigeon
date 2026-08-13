@@ -11,7 +11,9 @@ ENV CARGO_PROFILE_RELEASE_STRIP=true \
     CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
     CARGO_PROFILE_RELEASE_OPT_LEVEL=z \
     CARGO_PROFILE_RELEASE_PANIC=abort
+
 COPY Cargo.toml Cargo.lock ./
+
 RUN --mount=type=bind,source=pigeon-core,target=/src/pigeon-core,readonly \
     --mount=type=bind,source=pigeon-ffi,target=/src/pigeon-ffi,readonly \
     --mount=type=bind,source=pigeon-mesh,target=/src/pigeon-mesh,readonly \
