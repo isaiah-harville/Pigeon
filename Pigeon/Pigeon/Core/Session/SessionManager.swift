@@ -221,7 +221,7 @@ final class SessionManager {
     guard now.timeIntervalSince(lastRotated) >= Self.fallbackRotationInterval else { return }
     account.rotateFallbackKey()
     fallbackRotatedAt = now
-    note("Rotated signed prekey")
+    note(.signedPrekeyRotated)
     persist()
   }
 
@@ -250,7 +250,7 @@ final class SessionManager {
     // The bundle's binding was already verified when it was decoded; here we only
     // refuse our own identity.
     guard bundle.identityKey != myID else {
-      note("That QR is your own identity")
+      note(.ownIdentityScanned)
       return false
     }
     // A prekey bundle is honoured only if bound to this same identity.
@@ -278,7 +278,7 @@ final class SessionManager {
     activeConversationIDs.insert(bundle.identityKey)
     persist()
     refreshRelay()  // open a publish connection to the new contact's relays
-    note("Added contact \"\(displayName)\"")
+    note(.contactAdded)
     // Re-scanning forces a fresh handshake (manual recovery if one stalled). This
     // is an explicit user action, so it supersedes the re-handshake throttle —
     // clear the cooldown so the recovery isn't suppressed.
@@ -314,7 +314,7 @@ final class SessionManager {
     if establishedContactIDs.contains(contact.id) {
       transmit(message, to: contact)
     } else {
-      note("Queued message for \"\(contact.displayName)\" (will send when connected)")
+      note(.messageQueued)
       ensureEstablishing(contactID: contact.id)
     }
   }

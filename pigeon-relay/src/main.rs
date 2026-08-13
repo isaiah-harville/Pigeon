@@ -71,7 +71,7 @@ async fn main() {
     // everywhere else this is `None` and the relay simply doesn't push.
     let gateway = push::ApnsGateway::from_env();
     match &gateway {
-        Some(gw) => eprintln!("pigeon-relay: push gateway enabled ({})", gw.describe()),
+        Some(_) => eprintln!("pigeon-relay: push gateway enabled"),
         None => eprintln!("pigeon-relay: push gateway disabled (no APNS config)"),
     }
     let push_min_interval = Duration::from_secs(env_u64("PIGEON_APNS_MIN_INTERVAL_SECS", 30));
@@ -99,7 +99,7 @@ async fn main() {
         .await
         .unwrap_or_else(|e| panic!("failed to bind {addr}: {e}"));
     // Intentionally the only startup log; we never log addresses or content.
-    eprintln!("pigeon-relay listening on {addr}");
+    eprintln!("pigeon-relay listening");
     axum::serve(listener, app).await.expect("server error");
 }
 

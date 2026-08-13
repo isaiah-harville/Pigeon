@@ -156,9 +156,8 @@ extension SessionManager {
 
   // MARK: - Logging & persistence
 
-  func note(_ message: String) {
-    log.append(message)
-    if log.count > 200 { log.removeFirst(log.count - 200) }
+  func note(_ event: DiagnosticEvent) {
+    DiagnosticLog.record(event, in: &log, limit: 200)
   }
 
   /// Appends a message to the in-memory view, and to the on-disk mirror unless
@@ -201,7 +200,7 @@ extension SessionManager {
     }
     guard !didWarnAboutSaveFailure else { return }
     didWarnAboutSaveFailure = true
-    note("Couldn't save to the encrypted store")
+    note(.persistenceFailed)
   }
 
   /// Snapshots the live state (contacts, conversation mirror, ephemeral/Bluetooth

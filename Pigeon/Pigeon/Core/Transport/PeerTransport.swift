@@ -123,7 +123,7 @@ final class PeerTransport: NSObject, Transport {
       fragments = try fragmenter.fragment(
         message, maxPayloadPerFragment: fragmentPayloadBudget())
     } catch {
-      note("Failed to fragment message: \(error)")
+      note(.fragmentationFailed)
       return
     }
 
@@ -149,10 +149,7 @@ final class PeerTransport: NSObject, Transport {
       }
     }
     let paths = writeTargets > 0 || notified
-    let notifyText = notified ? " + notify" : ""
-    let pathText = paths ? "" : " — NO PATH"
-    let summary = "Sent \(message.count)B/\(fragments.count)f via \(writeTargets) write(s)"
-    note("\(summary)\(notifyText)\(pathText)")
+    note(paths ? .transportBroadcast : .transportNoPath)
   }
 
   func refreshConnections() {
@@ -163,7 +160,7 @@ final class PeerTransport: NSObject, Transport {
     for peripheral in peripherals.values where peripheral.state == .connected {
       peripheral.discoverServices([BluetoothConstants.service])
     }
-    note("Bluetooth refresh requested")
+    note(.transportRefresh)
   }
 
   // MARK: - Fragment sizing
@@ -202,9 +199,8 @@ final class PeerTransport: NSObject, Transport {
 
   // MARK: - Helpers
 
-  private func note(_ message: String) {
-    log.append(message)
-    if log.count > 200 { log.removeFirst(log.count - 200) }
+  private func note(_ event: DiagnosticEvent) {
+    DiagnosticLog.record(event, in: &log, limit: 200)
   }
 
   private func updateConnectedCount() {
@@ -234,11 +230,11 @@ final class PeerTransport: NSObject, Transport {
     do {
       let fragment = try Fragment(decoding: data)
       if let message = try reassembly.reassembler(for: source).ingest(fragment) {
-        note("Received \(message.count)B from \(source.uuidString.prefix(8))")
+        note(.transportReceived)
         onMessage?(message, source.uuidString)
       }
     } catch {
-      note("Bad fragment from \(source.uuidString.prefix(8)): \(error)")
+      note(.malformedFragment)
     }
   }
 
@@ -248,7 +244,7 @@ final class PeerTransport: NSObject, Transport {
       withServices: [BluetoothConstants.service],
       options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
     status = .scanning
-    note("Scanning…")
+    note(.transportScanning)
   }
 }
 
@@ -279,7 +275,7 @@ extension PeerTransport: CBCentralManagerDelegate {
       }
     }
     updateConnectedCount()
-    note("Restored \(restored.count) peer(s)")
+    note(.transportRestored)
   }
 
   func centralManager(
@@ -292,7 +288,7 @@ extension PeerTransport: CBCentralManagerDelegate {
       return
     }
     peripherals[peripheral.identifier] = peripheral  // retain before connecting
-    note("Discovered peer \(peripheral.identifier.uuidString.prefix(8))")
+    note(.peerDiscovered)
     manager.connect(peripheral, options: nil)
   }
 
@@ -300,7 +296,7 @@ extension PeerTransport: CBCentralManagerDelegate {
     peripheral.delegate = self
     peripheral.discoverServices([BluetoothConstants.service])
     updateConnectedCount()
-    note("Connected to \(peripheral.identifier.uuidString.prefix(8))")
+    note(.peerConnected)
   }
 
   func centralManager(
@@ -310,7 +306,7 @@ extension PeerTransport: CBCentralManagerDelegate {
     inboundCharacteristics[peripheral.identifier] = nil
     reassembly.drop(peripheral.identifier)
     updateConnectedCount()
-    note("Disconnected \(peripheral.identifier.uuidString.prefix(8)); will reconnect")
+    note(.peerDisconnected)
     // Keep the peripheral retained and issue a pending connect: CoreBluetooth
     // reconnects automatically when the peer returns (e.g. after an app restart).
     manager.connect(peripheral, options: nil)
@@ -321,7 +317,7 @@ extension PeerTransport: CBCentralManagerDelegate {
     _ manager: CBCentralManager, didFailToConnect peripheral: CBPeripheral,
     error _: Error?
   ) {
-    note("Failed to connect \(peripheral.identifier.uuidString.prefix(8)); retrying")
+    note(.peerConnectionFailed)
     manager.connect(peripheral, options: nil)  // stay pending until available
   }
 }
@@ -345,11 +341,11 @@ extension PeerTransport: CBPeripheralDelegate {
       switch characteristic.uuid {
       case BluetoothConstants.inbound:
         inboundCharacteristics[peripheral.identifier] = characteristic
-        note("Found write channel for \(peripheral.identifier.uuidString.prefix(8))")
+        note(.writeChannelReady)
         onConnectivity?()  // can write to this peer now — flush pending work
       case BluetoothConstants.outbound:
         peripheral.setNotifyValue(true, for: characteristic)  // receive peer → us
-        note("Subscribed to \(peripheral.identifier.uuidString.prefix(8))")
+        note(.peerSubscribed)
       default:
         break
       }
@@ -361,7 +357,7 @@ extension PeerTransport: CBPeripheralDelegate {
     error _: Error?
   ) {
     guard let data = characteristic.value else { return }
-    note("notify-recv \(data.count)B")
+    note(.transportReceived)
     receive(data, from: peripheral.identifier)
   }
 }
@@ -404,7 +400,7 @@ extension PeerTransport: CBPeripheralManagerDelegate {
         }
         didAddService = true  // already added by the restored session
       }
-      note("Restored peripheral state")
+      note(.transportRestored)
     }
   }
 
@@ -414,13 +410,13 @@ extension PeerTransport: CBPeripheralManagerDelegate {
       CBAdvertisementDataServiceUUIDsKey: [BluetoothConstants.service],
       CBAdvertisementDataLocalNameKey: "Pigeon",
     ])
-    note("Advertising")
+    note(.transportAdvertising)
   }
 
   func peripheralManager(_ manager: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
     for request in requests {
       if let value = request.value {
-        note("write-recv \(value.count)B")
+        note(.transportReceived)
         receive(value, from: request.central.identifier)
       }
     }
@@ -440,7 +436,7 @@ extension PeerTransport: CBPeripheralManagerDelegate {
     if !subscribedCentrals.contains(where: { $0.identifier == central.identifier }) {
       subscribedCentrals.append(central)
     }
-    note("Central \(central.identifier.uuidString.prefix(8)) subscribed")
+    note(.peerSubscribed)
     onConnectivity?()  // can notify this central now — flush pending work
   }
 
