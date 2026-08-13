@@ -1,0 +1,10 @@
+.git
+.github
+.build
+**/.build
+target
+**/target
+Pigeon
+site
+docs
+**/.DS_Store
