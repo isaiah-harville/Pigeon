@@ -26,12 +26,13 @@ import XCTest
 final class TestBus {
   private var online: [Data: FakeTransport] = [:]
   private var queue: [Data: [Data]] = [:]
+  private(set) var dispositions: [TransportMessageDisposition] = []
 
   func connect(_ identity: Data, _ transport: FakeTransport) {
     online[identity] = transport
     let pending = queue[identity] ?? []
     queue[identity] = []
-    for bytes in pending { transport.deliver(bytes) }
+    for bytes in pending { _ = transport.deliver(bytes) }
     transport.onConnectivity?()
   }
 
@@ -40,12 +41,12 @@ final class TestBus {
   func send(from sender: Data, _ bytes: Data, to recipient: Data?) {
     if let recipient {
       if let transport = online[recipient] {
-        transport.deliver(bytes)
+        dispositions.append(transport.deliver(bytes))
       } else if recipient != sender {
         queue[recipient, default: []].append(bytes)  // store for a terminated peer
       }
     } else {
-      for (identity, transport) in online where identity != sender { transport.deliver(bytes) }
+      for (identity, transport) in online where identity != sender { _ = transport.deliver(bytes) }
     }
   }
 }
@@ -55,7 +56,7 @@ final class TestBus {
 final class FakeTransport: Transport {
   let identity: Data
   let bus: TestBus
-  var onMessage: ((Data, String) -> Void)?
+  var onMessage: ((Data, String) -> TransportMessageDisposition)?
   var onConnectivity: (() -> Void)?
   var status: TransportStatus { .idle }
   var connectedPeerCount: Int { 1 }
@@ -70,7 +71,9 @@ final class FakeTransport: Transport {
     bus.send(from: identity, message, to: recipient)
   }
 
-  func deliver(_ bytes: Data) { onMessage?(bytes, "test") }
+  func deliver(_ bytes: Data) -> TransportMessageDisposition {
+    onMessage?(bytes, "test") ?? .retryAfterRestart
+  }
 }
 
 /// In-memory identity key store so tests get a stable, controllable identity
@@ -176,6 +179,47 @@ final class SessionRelaunchDeliveryTests: XCTestCase {
       pendingExists(responder, with: initiatorID), "the delivered message should be acked")
     relaunched.send("got it, welcome back", to: responderContact(relaunched, responderID))
     XCTAssertTrue(texts(responder, with: initiatorID).contains("got it, welcome back"))
+  }
+
+  /// A live ratchet must never tell the sender or relay that an inbound message
+  /// landed when its updated session + conversation could not reach disk. The
+  /// receiver freezes until restart, while the sender keeps the message pending.
+  func testPersistenceFailureDoesNotAcknowledgeInboundMessage() throws {
+    let bus = TestBus()
+    let seedA = newSeed()
+    let seedB = newSeed()
+    let keyA = SymmetricKey(size: .bits256)
+    let keyB = SymmetricKey(size: .bits256)
+    let a = try launch(seed: seedA, key: keyA, storeFile: "failureA.store", bus: bus)
+    let b = try launch(seed: seedB, key: keyB, storeFile: "failureB.store", bus: bus)
+
+    let aIsInitiator = a.isInitiator(toward: b.myID)
+    let sender = aIsInitiator ? a : b
+    let receiver = aIsInitiator ? b : a
+    let (senderBundle, senderPrekey) = try card(sender)
+    let (receiverBundle, receiverPrekey) = try card(receiver)
+    receiver.addContact(
+      senderBundle, name: "Sender", relayURLs: [], prekeyBundle: senderPrekey,
+      verifiedInPerson: true)
+    sender.addContact(
+      receiverBundle, name: "Receiver", relayURLs: [], prekeyBundle: receiverPrekey,
+      verifiedInPerson: true)
+
+    XCTAssertTrue(sender.establishedContactIDs.contains(receiver.myID))
+    XCTAssertTrue(receiver.establishedContactIDs.contains(sender.myID))
+
+    // Rebind only the persistence sink to a path whose parent does not exist.
+    // Live contacts/session state stays intact, but every subsequent save fails.
+    let failing = EncryptedStore(
+      key: aIsInitiator ? keyB : keyA,
+      fileName: "missing-parent/failing.store")
+    _ = receiver.persistence.attach(failing, identitySeed: receiver.identity.identitySeed)
+
+    sender.send("must remain pending", to: responderContact(sender, receiver.myID))
+
+    XCTAssertTrue(pendingExists(sender, with: receiver.myID))
+    XCTAssertFalse(receiver.isPersistenceHealthy)
+    XCTAssertEqual(bus.dispositions.last, .retryAfterRestart)
   }
 
   // MARK: - Small accessors over the manager's observable state

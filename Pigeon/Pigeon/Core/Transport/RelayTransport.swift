@@ -60,7 +60,7 @@ final class RelayTransport: Transport {
   // Relays are not "peers"; the headline status/peer-count stay BLE's.
   var status: TransportStatus { .idle }
   var connectedPeerCount: Int { 0 }
-  var onMessage: ((_ message: Data, _ peerID: String) -> Void)?
+  var onMessage: ((_ message: Data, _ peerID: String) -> TransportMessageDisposition)?
   /// Fired when a relay connection comes up (we can publish to it now), so the
   /// session layer flushes pending work on the event rather than on a timer.
   var onConnectivity: (() -> Void)?
@@ -80,12 +80,6 @@ final class RelayTransport: Transport {
   /// for automatic. When set and reachable we deposit there; otherwise we fall
   /// back to the contact's other relays.
   var preferredRelayForRecipient: (Data) -> URL? = { _ in nil }
-
-  /// Whether we can durably take responsibility for a delivered envelope right
-  /// now. When false (app locked — we can't decrypt or persist), we still
-  /// surface the envelope for notification but do NOT ack it, so the relay
-  /// retains its copy until we can process it after unlock. Set by the owner.
-  var canConsume: () -> Bool = { true }
 
   /// Our APNs device token (lowercase hex) when the user has opted into push
   /// wake-ups, else nil. Bound to our mailbox on each of our *own* relays so the
@@ -259,19 +253,28 @@ final class RelayTransport: Transport {
       let message = try await receive(socket)
       switch Self.classifyInbound(message) {
       case .envelope(let envelope):
-        onMessage?(envelope.ciphertext, "relay:\(host(url))")
-        // Ack (and so delete from the mailbox) only once we can durably handle
-        // it. While locked we skip the ack, leaving the relay to retain and
-        // re-deliver the envelope after the user unlocks.
-        if canConsume() {
-          send(socket, ["type": "ack", "id": envelope.id])
-        }
+        consume(envelope, from: url, over: socket)
       case .error(let detail):
         note("Relay \(host(url)): \(detail)")
       case .ignored:
         break
       }
     }
+  }
+
+  private func consume(
+    _ envelope: InboundFrame.Envelope, from url: URL, over socket: URLSessionWebSocketTask
+  ) {
+    let disposition =
+      onMessage?(envelope.ciphertext, "relay:\(host(url))") ?? .retryAfterRestart
+    // Delete only after the session layer confirms both message and ratchet are durable.
+    if Self.shouldAcknowledge(disposition) {
+      send(socket, ["type": "ack", "id": envelope.id])
+    }
+  }
+
+  static func shouldAcknowledge(_ disposition: TransportMessageDisposition) -> Bool {
+    disposition == .consumed
   }
 
   // MARK: - Framing

@@ -10,9 +10,9 @@ extension SessionManager {
 
   // MARK: - Inbound
 
-  func handleInbound(_ data: Data, channel: TransportChannel) {
-    guard let envelope = try? SessionEnvelope(decoding: data) else { return }
-    guard envelope.recipient == myID else { return }  // not addressed to us
+  func handleInbound(_ data: Data, channel: TransportChannel) -> TransportMessageDisposition {
+    guard let envelope = try? SessionEnvelope(decoding: data) else { return .consumed }
+    guard envelope.recipient == myID else { return .consumed }  // not addressed to us
 
     // Locked (e.g. relaunched in the background — no Face ID prompt possible):
     // we can't decrypt or persist yet. Hold the envelope in memory and prompt
@@ -20,30 +20,38 @@ extension SessionManager {
     // locked), so nothing is lost if we're killed before unlock.
     guard isUnlocked else {
       bufferWhileLocked(data, channel: channel)
-      return
+      return .retryAfterRestart
     }
 
-    guard let contact = contacts.first(where: { $0.id == envelope.sender }) else { return }
+    guard isPersistenceHealthy else { return .retryAfterRestart }
+
+    guard let contact = contacts.first(where: { $0.id == envelope.sender }) else {
+      return .consumed
+    }
+    let consumed: Bool
     switch envelope.type {
-    case .x3dhInit: handleInitiation(envelope.payload, from: contact)
-    case .message: handleMessage(envelope.payload, from: contact, channel: channel)
-    case .rehandshakeRequest: handleRehandshakeRequest(from: contact)
-    case .ack: handleAck(envelope.payload, from: contact)
-    case .control: handleControl(envelope.payload, from: contact)
+    case .x3dhInit: consumed = handleInitiation(envelope.payload, from: contact)
+    case .message: consumed = handleMessage(envelope.payload, from: contact, channel: channel)
+    case .rehandshakeRequest:
+      handleRehandshakeRequest(from: contact)
+      consumed = isPersistenceHealthy
+    case .ack: consumed = handleAck(envelope.payload, from: contact)
+    case .control: consumed = handleControl(envelope.payload, from: contact)
     // Olm is async-first: there is no interactive Noise handshake anymore, so a
     // `.handshake` envelope (only ever sent by the old protocol) is ignored.
-    case .handshake: break
+    case .handshake: consumed = true
     }
+    return consumed ? .consumed : .retryAfterRestart
   }
 
   /// Responder side of async first contact: a peer opened an Olm session against
   /// our published prekey (we may have been offline when they sent it).
   /// Reconstruct the session from the initiation, then process the `message`
   /// envelopes that follow normally.
-  func handleInitiation(_ payload: Data, from contact: Contact) {
+  func handleInitiation(_ payload: Data, from contact: Contact) -> Bool {
     // Only the lexicographic responder accepts initiations; if we're the
     // initiator we drive our own session and ignore a crossed initiation.
-    guard !isInitiator(toward: contact.id) else { return }
+    guard !isInitiator(toward: contact.id) else { return true }
 
     // A retransmit of the initiation we already processed: don't rebuild (that
     // would make a second session), but re-send the establishment ack — the peer
@@ -57,10 +65,10 @@ extension SessionManager {
       {
         sendEnvelope(.ack, payload: ack, to: contact)
       }
-      return
+      return true
     }
 
-    guard let account else { return }
+    guard let account else { return false }
 
     // Establish, then confirm the initiation's verified identity matches this
     // contact (constant-time inside ed25519 verification) — the binding check.
@@ -68,13 +76,13 @@ extension SessionManager {
       inbound.session.remoteIdentityKey() == contact.bundle.identityKey
     else {
       note(sessionRejectedMessage(for: contact))
-      return
+      return true
     }
 
     lastInitiationIn[contact.id] = payload
     sessions[contact.id] = inbound.session
     establishedContactIDs.insert(contact.id)
-    persist()  // establishInbound may have consumed a one-time key
+    guard persist() else { return false }  // establishInbound may have consumed a one-time key
     note("Secure session established with \"\(contact.displayName)\" (async first contact)")
 
     // The initiation's first plaintext is just the establishment sentinel; real
@@ -86,32 +94,38 @@ extension SessionManager {
     // Session-established event: flush anything we queued while waiting for
     // the initiation, now that we can encrypt to this contact.
     sendPending(to: contact)
+    return true
   }
 
-  func handleMessage(_ payload: Data, from contact: Contact, channel: TransportChannel) {
+  func handleMessage(_ payload: Data, from contact: Contact, channel: TransportChannel) -> Bool {
     guard let session = sessions[contact.id], establishedContactIDs.contains(contact.id) else {
       // We have no session for a contact that's messaging us — our state is
       // stale (we likely restarted). Trigger reconnection.
       requestRehandshake(with: contact)
-      return
+      return true
     }
     guard let plaintext = try? session.decrypt(message: payload),
       var received = Self.decodeMessage(plaintext)
     else {
       note("Decrypt failed from \"\(contact.displayName)\" — re-establishing")
       requestRehandshake(with: contact)
-      return
+      return true
     }
-    // Acknowledge every delivery (even duplicates) so the sender stops retrying.
-    sendAck(messageID: received.id, to: contact)
     // Deduplicate by the sender's message id (a retried message arrives twice).
-    if conversationStore.contains(messageID: received.id, for: contact.id) { return }
-    received.transport = channel
-    record(received, for: contact.id)
+    if conversationStore.contains(messageID: received.id, for: contact.id) {
+      guard persistCrypto() else { return false }
+    } else {
+      received.transport = channel
+      guard record(received, for: contact.id) else { return false }
 
-    // Surface a banner/notification unless the user is actively viewing this chat.
-    presenter.notifyIncoming(
-      contactID: contact.id, title: contact.displayName, body: received.text)
+      // Surface a banner/notification only after the message and ratchet are durable.
+      presenter.notifyIncoming(
+        contactID: contact.id, title: contact.displayName, body: received.text)
+    }
+    // The incoming message is durable, so its relay copy can be removed even if
+    // persisting the newly encrypted end-to-end acknowledgement later fails.
+    sendAck(messageID: received.id, to: contact)
+    return true
   }
 
   func sendAck(messageID: UUID, to contact: Contact) {
@@ -121,10 +135,10 @@ extension SessionManager {
     sendEnvelope(.ack, payload: ciphertext, to: contact)
   }
 
-  func handleAck(_ payload: Data, from contact: Contact) {
+  func handleAck(_ payload: Data, from contact: Contact) -> Bool {
     guard let session = sessions[contact.id],
       let plaintext = try? session.decrypt(message: payload)
-    else { return }
+    else { return true }
     // Any decryptable ack proves the peer holds the session, so the initiation
     // has landed — stop resending it.
     pendingInitiation[contact.id] = nil
@@ -136,7 +150,7 @@ extension SessionManager {
     {
       setDelivery(.delivered, messageID: id, contactID: contact.id)
     }
-    persist()
+    return persist()
   }
 
   // MARK: - Transport mode (relay default; Bluetooth opt-in)
@@ -190,14 +204,14 @@ extension SessionManager {
     sendEnvelope(.control, payload: ciphertext, to: contact)
   }
 
-  func handleControl(_ payload: Data, from contact: Contact) {
+  func handleControl(_ payload: Data, from contact: Contact) -> Bool {
     guard let session = sessions[contact.id],
       let plaintext = try? session.decrypt(message: payload),
       let command = plaintext.first
-    else { return }
+    else { return true }
     switch command {
     case 0x01, 0x02:
-      guard plaintext.count == 2 else { return }
+      guard plaintext.count == 2 else { return persistCrypto() }
       let value = plaintext[plaintext.index(after: plaintext.startIndex)] == 1
       if command == 0x01 {
         applyEphemeral(value, for: contact.id, announce: true)
@@ -205,10 +219,11 @@ extension SessionManager {
         applyTransport(useBluetooth: value, for: contact.id, announce: true)
       }
     case 0x03:
-      guard let reaction = Self.decodeReaction(plaintext) else { return }
+      guard let reaction = Self.decodeReaction(plaintext) else { return persistCrypto() }
       applyReaction(reaction.emoji, messageID: reaction.messageID, from: contact)
     default: break
     }
+    return isPersistenceHealthy && persistCrypto()
   }
 
   /// Recovers a lost/stale session. The initiator re-establishes; the responder
@@ -306,7 +321,8 @@ extension SessionManager {
     if bluetoothChatIDs.contains(contact.id) { sendTransportState(to: contact) }
   }
 
-  func sendEnvelope(_ type: EnvelopeType, payload: Data, to contact: Contact) {
+  @discardableResult
+  func sendEnvelope(_ type: EnvelopeType, payload: Data, to contact: Contact) -> Bool {
     let envelope = SessionEnvelope(
       type: type, sender: myID, recipient: contact.id, payload: payload)
     // App messages travel over the chat's chosen link (relay by default). Every
@@ -316,7 +332,6 @@ extension SessionManager {
     // the relay address this contact's mailbox directly; BLE ignores it.
     let channels: Set<TransportKind> =
       type == .message ? chatChannels(for: contact) : TransportKind.all
-    mesh.send(envelope.encoded(), to: contact.id, over: channels)
     // Every session-encrypted envelope (message/ack/control) and every initiation
     // advances or creates ratchet state the caller just produced. Persist the
     // crypto blob so the sealed session pickle never lags the live ratchet across
@@ -324,7 +339,9 @@ extension SessionManager {
     // fast path — conversation history is untouched here, so we don't re-encode
     // the bulk store. Idempotent for the rare non-encrypting envelopes (e.g.
     // rehandshake requests).
-    persistCrypto()
+    guard persistCrypto() else { return false }
+    mesh.send(envelope.encoded(), to: contact.id, over: channels)
+    return true
   }
 
   func sessionRejectedMessage(for contact: Contact) -> String {

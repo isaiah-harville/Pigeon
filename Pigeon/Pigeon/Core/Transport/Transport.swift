@@ -90,7 +90,7 @@ protocol Transport: AnyObject {
   /// transport-scoped identifier for its immediate sender. The mesh layer does
   /// not trust this id for routing or security; it only deduplicates and relays
   /// authenticated envelopes.
-  var onMessage: ((_ message: Data, _ peerID: String) -> Void)? { get set }
+  var onMessage: ((_ message: Data, _ peerID: String) -> TransportMessageDisposition)? { get set }
 
   /// Fired when this transport's reachability *improves* — a peer connects and
   /// its channel is ready, or a relay authenticates — so the session layer can
@@ -116,6 +116,14 @@ protocol Transport: AnyObject {
   /// User-initiated recovery nudge. Transports should restart discovery or
   /// reconnect their sockets without changing app/session state.
   func refreshConnections()
+}
+
+/// Tells a durable transport whether it may delete an inbound message. A retry
+/// disposition deliberately leaves the relay copy intact so a clean process can
+/// resume from the last sealed ratchet state.
+enum TransportMessageDisposition: Equatable {
+  case consumed
+  case retryAfterRestart
 }
 
 extension Transport {

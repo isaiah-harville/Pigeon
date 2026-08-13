@@ -39,7 +39,7 @@ final class PeerTransport: NSObject, Transport {
   private(set) var log: [String] = []
 
   /// Invoked with each fully reassembled inbound message and its source id.
-  var onMessage: ((_ message: Data, _ peerID: String) -> Void)?
+  var onMessage: ((_ message: Data, _ peerID: String) -> TransportMessageDisposition)?
   /// Fired when a peer link becomes usable for sending (a write channel is
   /// discovered, or a central subscribes), so the session layer flushes pending
   /// work on the event rather than on a timer.
@@ -235,7 +235,7 @@ final class PeerTransport: NSObject, Transport {
       let fragment = try Fragment(decoding: data)
       if let message = try reassembly.reassembler(for: source).ingest(fragment) {
         note("Received \(message.count)B from \(source.uuidString.prefix(8))")
-        onMessage?(message, source.uuidString)
+        _ = onMessage?(message, source.uuidString)
       }
     } catch {
       note("Bad fragment from \(source.uuidString.prefix(8)): \(error)")

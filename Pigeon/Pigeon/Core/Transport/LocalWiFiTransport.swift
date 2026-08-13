@@ -37,7 +37,7 @@ final class LocalWiFiTransport: NSObject, Transport {
   private(set) var connectedPeerCount = 0
   private(set) var log: [String] = []
 
-  var onMessage: ((_ message: Data, _ peerID: String) -> Void)?
+  var onMessage: ((_ message: Data, _ peerID: String) -> TransportMessageDisposition)?
   var onConnectivity: (() -> Void)?
 
   /// Our advertised name: random per launch, so the local network learns no
@@ -113,7 +113,7 @@ final class LocalWiFiTransport: NSObject, Transport {
   /// id with a `wifi:` prefix so `TransportChannel` classifies the link.
   private func deliver(_ data: Data, from name: String) {
     note("Wi-Fi received \(data.count)B from \(name)")
-    onMessage?(data, "wifi:\(name)")
+    _ = onMessage?(data, "wifi:\(name)")
   }
 
   private func handleStateChange(connectedCount: Int, peer: String, connected: Bool) {

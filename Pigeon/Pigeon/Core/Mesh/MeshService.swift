@@ -23,7 +23,7 @@ final class MeshService {
 
   /// Delivered once per unique message that reaches this device, along with the
   /// transport it arrived on (so the UI can show how a message travelled).
-  var onMessage: ((Data, TransportChannel) -> Void)?
+  var onMessage: ((Data, TransportChannel) -> TransportMessageDisposition)?
 
   /// Fired when an underlying link becomes usable (a peer connects, a relay
   /// authenticates), so the session layer can (re)drive establishment and flush
@@ -45,6 +45,7 @@ final class MeshService {
     self.transport = transport
     transport.onMessage = { [weak self] data, peerID in
       self?.handleInbound(data, channel: TransportChannel(peerID: peerID))
+        ?? .retryAfterRestart
     }
     transport.onConnectivity = { [weak self] in self?.onConnectivity?() }
   }
@@ -65,11 +66,16 @@ final class MeshService {
     transport.refreshConnections()
   }
 
-  private func handleInbound(_ data: Data, channel: TransportChannel) {
-    guard let packet = try? MeshPacket(decoding: data) else { return }
+  private func handleInbound(_ data: Data, channel: TransportChannel)
+    -> TransportMessageDisposition
+  {
+    guard let packet = try? MeshPacket(decoding: data) else { return .consumed }
     let reception = router.ingest(packet)
+    let disposition: TransportMessageDisposition
     if let payload = reception.deliver {
-      onMessage?(payload, channel)
+      disposition = onMessage?(payload, channel) ?? .retryAfterRestart
+    } else {
+      disposition = .consumed
     }
     // Forward toward peers we can reach that the sender may not (flood relay,
     // bounded by the seen-cache and TTL). This is address-less flooding — the
@@ -78,5 +84,6 @@ final class MeshService {
     if let relay = reception.relay {
       transport.broadcast(relay.encoded(), to: nil)
     }
+    return disposition
   }
 }
