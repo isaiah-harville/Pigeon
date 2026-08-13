@@ -15,7 +15,9 @@ use crate::mailbox::{
     ack, expire_mailboxes, flush_queue, publish, register_push, register_subscriber,
     remove_subscriber, switch_subscription, verify_ownership,
 };
-use crate::protocol::ServerMsg;
+use crate::protocol::{
+    select_protocol, ClientMsg, ServerMsg, PROTOCOL_MAX_VERSION, PROTOCOL_MIN_VERSION,
+};
 use crate::push::PushRegistry;
 use crate::state::{
     is_valid_address, AppState, Config, Store, MAX_CIPHERTEXT_LEN, PUBKEY_LEN,
@@ -49,6 +51,40 @@ fn bounded_state(
 
 fn channel() -> (mpsc::Sender<ServerMsg>, mpsc::Receiver<ServerMsg>) {
     mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY)
+}
+
+#[test]
+fn protocol_negotiation_selects_the_highest_overlap() {
+    assert_eq!(
+        select_protocol(1, PROTOCOL_MAX_VERSION),
+        Some(PROTOCOL_MAX_VERSION)
+    );
+    assert_eq!(
+        select_protocol(PROTOCOL_MIN_VERSION, PROTOCOL_MIN_VERSION),
+        Some(1)
+    );
+}
+
+#[test]
+fn protocol_negotiation_rejects_disjoint_and_invalid_ranges() {
+    assert_eq!(select_protocol(2, 3), None);
+    assert_eq!(select_protocol(1, 0), None);
+}
+
+#[test]
+fn hello_and_compatible_frames_use_the_documented_json_shape() {
+    let hello: ClientMsg = serde_json::from_str(
+        r#"{"type":"hello","min_protocol_version":1,"max_protocol_version":1}"#,
+    )
+    .unwrap();
+    assert!(matches!(hello, ClientMsg::Hello { .. }));
+    assert_eq!(
+        serde_json::to_string(&ServerMsg::Compatible {
+            protocol_version: 1
+        })
+        .unwrap(),
+        r#"{"type":"compatible","protocol_version":1}"#
+    );
 }
 
 /// A syntactically valid 32-byte mailbox address (64 hex chars).

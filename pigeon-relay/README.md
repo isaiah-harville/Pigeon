@@ -82,6 +82,17 @@ blobs are base64 ciphertext the relay never decodes.
 
 Health: `GET /healthz` → `ok`.
 
+Every WebSocket must negotiate the relay protocol before any mailbox operation:
+
+```json
+{ "type": "hello", "min_protocol_version": 1, "max_protocol_version": 1 }
+← { "type": "compatible", "protocol_version": 1 }
+```
+
+The relay selects the highest overlapping version. A disjoint range receives an
+`incompatible` response containing the relay's minimum and maximum, and the
+connection cannot publish, subscribe, authenticate, or acknowledge messages.
+
 **Deposit (sender, no auth — sender is anonymous to the relay):**
 
 ```json

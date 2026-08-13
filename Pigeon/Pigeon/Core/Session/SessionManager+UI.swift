@@ -19,6 +19,7 @@ extension SessionManager {
 
   /// Hosts of our own relays we can currently receive on, for the chat header.
   var relayHosts: [String] { relay?.onlineRelayHosts ?? [] }
+  var incompatibleRelayURLs: Set<URL> { relay?.incompatibleRelayURLs ?? [] }
 
   /// Pull-to-refresh recovery for the chats screen: restart link discovery /
   /// relay sockets, then immediately drive handshakes and pending sends. The
@@ -128,7 +129,7 @@ extension SessionManager {
       let bundle = try? PigeonIdentityBundle(decoding: account.identityBundle()),
       let prekeyBundle = try? PigeonPrekeyBundle(decoding: account.signedPrekeyBundle())
     else { return nil }
-    let relayURLs = RelaySettings.urls()
+    let relayURLs = self.relayURLs
     let payload = ContactCard.relayPayload(relayURLs)
     let signature = (try? identity.sign(payload)) ?? Data()
     return ContactCard(
