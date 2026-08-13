@@ -1,0 +1,8 @@
+.git
+.github
+.build
+target
+Pigeon
+site
+docs
+**/.DS_Store
