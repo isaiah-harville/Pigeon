@@ -7,10 +7,30 @@
 
 use serde::{Deserialize, Serialize};
 
+pub const PROTOCOL_MIN_VERSION: u32 = 1;
+pub const PROTOCOL_MAX_VERSION: u32 = 1;
+
+/// Selects the newest protocol both peers support. Invalid or disjoint ranges
+/// fail closed before the connection can touch a mailbox.
+pub fn select_protocol(client_min: u32, client_max: u32) -> Option<u32> {
+    if client_min > client_max {
+        return None;
+    }
+    let minimum = client_min.max(PROTOCOL_MIN_VERSION);
+    let maximum = client_max.min(PROTOCOL_MAX_VERSION);
+    (minimum <= maximum).then_some(maximum)
+}
+
 /// Messages a client sends to the relay.
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMsg {
+    /// Mandatory first frame. App releases advertise the relay protocol range
+    /// they understand independently from their marketing version.
+    Hello {
+        min_protocol_version: u32,
+        max_protocol_version: u32,
+    },
     /// Deposit ciphertext for `recipient` (hex Ed25519 public key). The sender
     /// is anonymous to the relay; no authentication is required to publish.
     Publish {
@@ -38,6 +58,13 @@ pub enum ClientMsg {
 #[derive(Serialize, Clone, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMsg {
+    /// Confirms the protocol chosen from the advertised overlap.
+    Compatible { protocol_version: u32 },
+    /// Refuses a disjoint range while revealing only the relay's public range.
+    Incompatible {
+        min_protocol_version: u32,
+        max_protocol_version: u32,
+    },
     /// A random nonce the client must sign to authenticate (base64).
     Challenge { nonce: String },
     /// A stored ciphertext envelope delivered to an authenticated subscriber.

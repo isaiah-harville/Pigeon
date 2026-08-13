@@ -142,6 +142,10 @@ final class SessionManager {
       relay.preferredRelayForRecipient = { [weak self] key in
         self?.contacts.first { $0.id == key }?.preferredRelayURL
       }
+      relay.onCompatibilityChange = { [weak self] incompatible in
+        self?.relayURLs = RelayTransport.advertisedRelays(
+          configured: RelaySettings.urls(), excluding: incompatible)
+      }
       // Only ack relay envelopes once unlocked; while locked we buffer and let
       // the relay retain its copy (see `handleInbound`).
       relay.canConsume = { [weak self] in self?.isUnlocked ?? false }
@@ -230,8 +234,10 @@ final class SessionManager {
   /// dependent UI (the QR card) refreshes live.
   func setRelayEntries(_ entries: [RelayEntry]) {
     RelaySettings.setEntries(entries)
-    relayURLs = RelaySettings.urls()
-    relay?.reconfigure(relayURLs)
+    let configured = RelaySettings.urls()
+    relayURLs = RelayTransport.advertisedRelays(
+      configured: configured, excluding: relay?.incompatibleRelayURLs ?? [])
+    relay?.reconfigure(configured)
   }
 
   // MARK: - Contacts

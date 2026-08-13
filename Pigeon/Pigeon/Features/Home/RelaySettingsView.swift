@@ -171,17 +171,23 @@ struct RelaySettingsView: View {
 
   @ViewBuilder
   private func pingLabel(_ url: URL) -> some View {
-    switch pinger.pings[url] {
-    case .ms(let ms):
-      Text("\(ms) ms")
-        .font(.caption.monospacedDigit())
-        .foregroundStyle(pingColor(ms))
-    case .unreachable:
-      Text("offline")
+    if session.incompatibleRelayURLs.contains(url) {
+      Text("incompatible")
         .font(.caption)
         .foregroundStyle(.red)
-    case .measuring, .none:
-      ProgressView().controlSize(.mini)
+    } else {
+      switch pinger.pings[url] {
+      case .ms(let ms):
+        Text("\(ms) ms")
+          .font(.caption.monospacedDigit())
+          .foregroundStyle(pingColor(ms))
+      case .unreachable:
+        Text("offline")
+          .font(.caption)
+          .foregroundStyle(.red)
+      case .measuring, .none:
+        ProgressView().controlSize(.mini)
+      }
     }
   }
 
@@ -252,6 +258,7 @@ extension RelaySettingsView {
     case .online: return .green
     case .connecting: return .orange
     case .failed: return .red
+    case .incompatible: return .red
     case .disabled: return .secondary
     }
   }
@@ -261,6 +268,7 @@ extension RelaySettingsView {
     case .online: return "Connected"
     case .connecting: return "Connecting…"
     case .failed: return "Unreachable"
+    case .incompatible: return "Incompatible with this app version"
     case .disabled: return "No relays enabled"
     }
   }

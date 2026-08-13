@@ -34,6 +34,7 @@ final class RelayTransport: Transport {
     case connecting  // configured, not yet authenticated anywhere
     case online  // authenticated to at least one relay
     case failed  // configured but currently unreachable
+    case incompatible  // every configured receiving relay has a disjoint protocol range
   }
 
   let kind: TransportKind? = .relay
@@ -56,6 +57,10 @@ final class RelayTransport: Transport {
   /// header's live "can a message actually go out over the relay" indicator,
   /// which depends on reaching the *recipient's* relay — not just our own.
   private(set) var readyRelayURLs: Set<URL> = []
+  /// Endpoints that explicitly rejected this app's relay protocol range. They
+  /// never become ready and are excluded from our advertised contact card.
+  private(set) var incompatibleRelayURLs: Set<URL> = []
+  var onCompatibilityChange: ((Set<URL>) -> Void)?
 
   // Relays are not "peers"; the headline status/peer-count stay BLE's.
   var status: TransportStatus { .idle }
@@ -150,6 +155,8 @@ final class RelayTransport: Transport {
     self.myRelays = myRelays
     let contactRelays = recipients().flatMap { relaysForRecipient($0) }
     let wanted = Self.wantedConnections(myRelays: myRelays, contactRelays: contactRelays)
+    let previousIncompatible = incompatibleRelayURLs
+    incompatibleRelayURLs.formIntersection(wanted)
 
     for (url, connection) in connections where !wanted.contains(url) {
       connection.task?.cancel()
@@ -158,8 +165,9 @@ final class RelayTransport: Transport {
     }
     for url in wanted {
       let shouldAuth = myRelays.contains(url)
+      let retryCompatibility = incompatibleRelayURLs.remove(url) != nil
       if let existing = connections[url] {
-        if existing.authenticate == shouldAuth { continue }  // role unchanged
+        if existing.authenticate == shouldAuth && !retryCompatibility { continue }
         existing.task?.cancel()
         existing.socket?.cancel(with: .goingAway, reason: nil)
         connections[url] = nil
@@ -167,6 +175,9 @@ final class RelayTransport: Transport {
       let connection = Connection(authenticate: shouldAuth)
       connections[url] = connection
       connection.task = Task { [weak self] in await self?.supervise(url) }
+    }
+    if previousIncompatible != incompatibleRelayURLs {
+      onCompatibilityChange?(incompatibleRelayURLs)
     }
     refreshLinkState()
   }
@@ -187,7 +198,11 @@ final class RelayTransport: Transport {
     reconfigure(configuredRelays)
   }
 
-  // MARK: - Connection lifecycle
+}
+
+// MARK: - Connection lifecycle
+
+extension RelayTransport {
 
   /// Keeps one relay connected, reconnecting with capped backoff until the
   /// endpoint is removed (the task is cancelled).
@@ -197,6 +212,13 @@ final class RelayTransport: Transport {
       do {
         try await serve(url)
         backoff = 1.0
+      } catch RelayError.incompatible {
+        guard !Task.isCancelled else { break }
+        connections[url]?.ready = false
+        markIncompatible(url)
+        note("Relay \(host(url)) is incompatible with this app version")
+        refreshLinkState()
+        break
       } catch {
         guard !Task.isCancelled else { break }
         // A connection that had come up and then dropped (e.g. an airplane-mode
@@ -222,25 +244,10 @@ final class RelayTransport: Transport {
     connection.socket = socket
     socket.resume()
 
-    if connection.authenticate {
-      // Our own relay: prove we own our mailbox (subscribe → sign challenge →
-      // auth) so we can read it. A publish-only connection skips this.
-      send(socket, ["type": "subscribe", "mailbox": mailboxHex])
-      let challenge = try await receive(socket)
-      guard challenge["type"] as? String == "challenge",
-        let nonceB64 = challenge["nonce"] as? String,
-        let nonce = Data(base64Encoded: nonceB64),
-        let signature = sign(nonce)
-      else { throw RelayError.handshake }
-      send(socket, ["type": "auth", "signature": signature.base64EncodedString()])
-      let result = try await receive(socket)
-      guard result["type"] as? String == "ok" else { throw RelayError.handshake }
-      // We can read our mailbox now; if push wake-up is opted in, bind our APNs
-      // device token so this relay can wake us while suspended/terminated.
-      if let token = pushToken {
-        send(socket, ["type": "register_push", "token": token])
-      }
-    }
+    try await negotiateProtocol(with: socket)
+    markCompatible(url)
+
+    if connection.authenticate { try await authenticate(socket) }
 
     connection.ready = true
     note("Relay \(host(url)) \(connection.authenticate ? "online" : "ready")")
@@ -274,12 +281,46 @@ final class RelayTransport: Transport {
     }
   }
 
+  private func authenticate(_ socket: URLSessionWebSocketTask) async throws {
+    send(socket, ["type": "subscribe", "mailbox": mailboxHex])
+    let challenge = try await receive(socket)
+    guard challenge["type"] as? String == "challenge",
+      let nonceB64 = challenge["nonce"] as? String,
+      let nonce = Data(base64Encoded: nonceB64),
+      let signature = sign(nonce)
+    else { throw RelayError.handshake }
+    send(socket, ["type": "auth", "signature": signature.base64EncodedString()])
+    let result = try await receive(socket)
+    guard result["type"] as? String == "ok" else { throw RelayError.handshake }
+    if let token = pushToken {
+      send(socket, ["type": "register_push", "token": token])
+    }
+  }
+
   // MARK: - Framing
 
-  private func send(_ socket: URLSessionWebSocketTask, _ object: [String: String]) {
+  private func send(_ socket: URLSessionWebSocketTask, _ object: [String: Any]) {
     guard let data = try? JSONSerialization.data(withJSONObject: object) else { return }
     guard let text = String(bytes: data, encoding: .utf8) else { return }
     Task { try? await socket.send(.string(text)) }
+  }
+
+  private func negotiateProtocol(with socket: URLSessionWebSocketTask) async throws {
+    send(
+      socket,
+      [
+        "type": "hello",
+        "min_protocol_version": Self.minimumProtocolVersion,
+        "max_protocol_version": Self.maximumProtocolVersion,
+      ])
+    let result = try await receive(socket)
+    guard result["type"] as? String == "compatible",
+      let selected = result["protocol_version"] as? Int,
+      (Self.minimumProtocolVersion...Self.maximumProtocolVersion).contains(selected)
+    else {
+      if result["type"] as? String == "incompatible" { throw RelayError.incompatible }
+      throw RelayError.handshake
+    }
   }
 
   private func receive(_ socket: URLSessionWebSocketTask) async throws -> [String: Any] {
@@ -313,12 +354,24 @@ final class RelayTransport: Transport {
       linkState = .disabled
     } else if !onlineRelayHosts.isEmpty {
       linkState = .online
+    } else if myRelays.allSatisfy({ incompatibleRelayURLs.contains($0) }) {
+      linkState = .incompatible
     } else {
       linkState = .connecting
     }
   }
 
   private func host(_ url: URL) -> String { url.host ?? url.absoluteString }
+
+  private func markIncompatible(_ url: URL) {
+    guard incompatibleRelayURLs.insert(url).inserted else { return }
+    onCompatibilityChange?(incompatibleRelayURLs)
+  }
+
+  private func markCompatible(_ url: URL) {
+    guard incompatibleRelayURLs.remove(url) != nil else { return }
+    onCompatibilityChange?(incompatibleRelayURLs)
+  }
 
   private func note(_ message: String) {
     log.append(message)
@@ -522,70 +575,4 @@ extension RelayTransport {
   func flushPendingDeposits() {
     pendingDeposits.flush { attemptDeposit($0.message, to: $0.recipient) }
   }
-}
-
-// MARK: - Pure routing decisions (unit-tested)
-
-extension RelayTransport {
-
-  /// Where to deposit ciphertext for a recipient: the relays *they* advertise
-  /// (federation). Only a relay the recipient actually subscribes to can deliver
-  /// to them, so a contact that advertises none yields no targets — we do **not**
-  /// fall back to our own relays. Depositing there is undeliverable (the
-  /// recipient never reads our mailbox relays) and would worse-than-uselessly
-  /// mask the failure by making the send look "sent". Address-less sends pass
-  /// `advertised == []` and likewise target nothing.
-  static func deliveryTargets(advertised: [URL]) -> [URL] {
-    deliveryTargets(preferred: nil, advertised: advertised)
-  }
-
-  /// As above, but ordered to honor a user-chosen relay for this conversation:
-  /// the preferred relay first (when it's one the recipient advertises), then
-  /// their remaining relays, so a dead preferred falls through to the rest.
-  static func deliveryTargets(preferred: URL?, advertised: [URL]) -> [URL] {
-    guard let preferred, advertised.contains(preferred) else { return advertised }
-    return [preferred] + advertised.filter { $0 != preferred }
-  }
-
-  /// The relays we keep connected: our own (to receive) plus every contact's
-  /// advertised relays (to deposit), de-duplicated and order-preserving.
-  static func wantedConnections(myRelays: [URL], contactRelays: [URL]) -> [URL] {
-    var wanted: [URL] = []
-    for url in myRelays + contactRelays where !wanted.contains(url) { wanted.append(url) }
-    return wanted
-  }
-
-  /// A classified inbound server frame. Malformed envelopes (missing/!base64
-  /// fields) and unknown types become `.ignored` rather than crashing.
-  enum InboundFrame: Equatable {
-    case envelope(Envelope)
-    case error(String)
-    case ignored
-
-    /// A delivered ciphertext blob and the id used to ack it.
-    struct Envelope: Equatable {
-      let id: String
-      let ciphertext: Data
-    }
-  }
-
-  static func classifyInbound(_ message: [String: Any]) -> InboundFrame {
-    switch message["type"] as? String {
-    case "envelope":
-      guard let id = message["id"] as? String,
-        let ciphertextB64 = message["ciphertext"] as? String,
-        let data = Data(base64Encoded: ciphertextB64)
-      else { return .ignored }
-      return .envelope(InboundFrame.Envelope(id: id, ciphertext: data))
-    case "error":
-      return .error(message["message"] as? String ?? "error")
-    default:
-      return .ignored
-    }
-  }
-}
-
-private enum RelayError: Error {
-  case handshake
-  case protocolError
 }

@@ -21,7 +21,9 @@ use crate::mailbox::{
     ack, flush_queue, publish, register_push, remove_subscriber, switch_subscription,
     verify_ownership,
 };
-use crate::protocol::{ClientMsg, ServerMsg};
+use crate::protocol::{
+    select_protocol, ClientMsg, ServerMsg, PROTOCOL_MAX_VERSION, PROTOCOL_MIN_VERSION,
+};
 use crate::state::{is_valid_address, AppState, SUBSCRIBER_CHANNEL_CAPACITY};
 
 pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
@@ -51,6 +53,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     // Per-connection auth state.
     let mut pending_challenge: Option<(String, Vec<u8>)> = None; // (mailbox, nonce)
     let mut authed_mailbox: Option<String> = None;
+    let mut negotiated = false;
 
     while let Some(Ok(msg)) = ws_rx.next().await {
         let text = match msg {
@@ -65,6 +68,34 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             });
             continue;
         };
+
+        let cmsg = match cmsg {
+            ClientMsg::Hello {
+                min_protocol_version,
+                max_protocol_version,
+            } => {
+                if let Some(protocol_version) =
+                    select_protocol(min_protocol_version, max_protocol_version)
+                {
+                    negotiated = true;
+                    let _ = tx.try_send(ServerMsg::Compatible { protocol_version });
+                } else {
+                    negotiated = false;
+                    let _ = tx.try_send(ServerMsg::Incompatible {
+                        min_protocol_version: PROTOCOL_MIN_VERSION,
+                        max_protocol_version: PROTOCOL_MAX_VERSION,
+                    });
+                }
+                continue;
+            }
+            other => other,
+        };
+        if !negotiated {
+            let _ = tx.try_send(ServerMsg::Error {
+                message: "protocol negotiation required".into(),
+            });
+            continue;
+        }
 
         match cmsg {
             ClientMsg::Publish {
@@ -142,6 +173,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     });
                 }
             }
+            ClientMsg::Hello { .. } => unreachable!("hello handled before protocol gate"),
         }
     }
 

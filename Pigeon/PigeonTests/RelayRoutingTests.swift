@@ -16,6 +16,24 @@ final class RelayRoutingTests: XCTestCase {
 
   private func url(_ s: String) -> URL { URL(string: s)! }
 
+  func testCompatibilitySelectsHighestOverlappingVersion() {
+    XCTAssertEqual(RelayTransport.selectProtocol(serverMinimum: 1, serverMaximum: 3), 1)
+  }
+
+  func testCompatibilityRejectsDisjointOrInvalidRanges() {
+    XCTAssertNil(RelayTransport.selectProtocol(serverMinimum: 2, serverMaximum: 3))
+    XCTAssertNil(RelayTransport.selectProtocol(serverMinimum: 1, serverMaximum: 0))
+  }
+
+  func testIncompatibleRelaysAreNotAdvertised() {
+    let compatible = url("wss://compatible.example/ws")
+    let incompatible = url("wss://old.example/ws")
+    XCTAssertEqual(
+      RelayTransport.advertisedRelays(
+        configured: [compatible, incompatible], excluding: [incompatible]),
+      [compatible])
+  }
+
   // MARK: - Addressed delivery + federation selection
 
   func testDeliveryPrefersRecipientAdvertisedRelays() {
