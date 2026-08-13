@@ -66,7 +66,7 @@ final class LocalWiFiTransport: NSObject, Transport {
     advertiser.startAdvertisingPeer()
     browser.startBrowsingForPeers()
     status = .scanning
-    note("Wi-Fi advertising/browsing as \(localName)")
+    note(.wifiReady)
   }
 
   deinit {
@@ -83,9 +83,9 @@ final class LocalWiFiTransport: NSObject, Transport {
     guard !peers.isEmpty else { return }
     do {
       try session.send(message, toPeers: peers, with: .reliable)
-      note("Wi-Fi sent \(message.count)B to \(peers.count) peer(s)")
+      note(.transportBroadcast)
     } catch {
-      note("Wi-Fi send failed: \(error.localizedDescription)")
+      note(.wifiSendFailed)
     }
   }
 
@@ -94,7 +94,7 @@ final class LocalWiFiTransport: NSObject, Transport {
     browser.startBrowsingForPeers()
     advertiser.startAdvertisingPeer()
     status = .scanning
-    note("Wi-Fi refresh requested")
+    note(.transportRefresh)
   }
 
   /// Deterministic tie-break so exactly one side of a pair sends the invitation
@@ -104,25 +104,24 @@ final class LocalWiFiTransport: NSObject, Transport {
     myName < peerName
   }
 
-  private func note(_ message: String) {
-    log.append(message)
-    if log.count > 200 { log.removeFirst(log.count - 200) }
+  private func note(_ event: DiagnosticEvent) {
+    DiagnosticLog.record(event, in: &log, limit: 200)
   }
 
   /// Delivers a reassembled inbound message on the main actor, tagging the sender
   /// id with a `wifi:` prefix so `TransportChannel` classifies the link.
   private func deliver(_ data: Data, from name: String) {
-    note("Wi-Fi received \(data.count)B from \(name)")
+    note(.transportReceived)
     _ = onMessage?(data, "wifi:\(name)")
   }
 
-  private func handleStateChange(connectedCount: Int, peer: String, connected: Bool) {
+  private func handleStateChange(connectedCount: Int, peer _: String, connected: Bool) {
     connectedPeerCount = connectedCount
     if connected {
-      note("Wi-Fi connected: \(peer)")
+      note(.peerConnected)
       onConnectivity?()  // a usable local link came up — flush pending work
     } else {
-      note("Wi-Fi link to \(peer) ended")
+      note(.peerDisconnected)
     }
   }
 }

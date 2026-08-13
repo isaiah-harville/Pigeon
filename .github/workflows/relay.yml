@@ -3,11 +3,10 @@ name: pigeon-relay
 on:
   push:
     branches: [main]
-    paths: ["pigeon-relay/**", ".github/workflows/relay.yml"]
-    tags: ["relay-v*"]
+    paths: ["pigeon-relay/**", "Cargo.toml", "Cargo.lock", ".github/workflows/relay.yml"]
   pull_request:
     branches: [main]
-    paths: ["pigeon-relay/**", ".github/workflows/relay.yml"]
+    paths: ["pigeon-relay/**", "Cargo.toml", "Cargo.lock", ".github/workflows/relay.yml"]
   workflow_dispatch:
 
 concurrency:
@@ -29,7 +28,7 @@ jobs:
 
   image:
     name: Build & push image
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/relay-v'))
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: check
     runs-on: ubuntu-latest
     permissions:
@@ -37,10 +36,12 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Validate release tag
-        if: startsWith(github.ref, 'refs/tags/')
-        run: bash .github/scripts/check-versions.sh "${GITHUB_REF_NAME}"
+      - name: Resolve image version
+        id: version
+        run: bash .github/scripts/relay-image-version.sh "${{ github.event.before }}" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -60,16 +61,17 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE }}
-          # `latest` on every push to the default branch; the exact repository
-          # tag (for example `v1.1.0`) on a release. No sha or branch tags.
+          # Main always refreshes `latest`. A changed relay package version also
+          # publishes its immutable image tag without requiring a Git tag.
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=match,pattern=relay-(v.*),group=1
+            type=raw,value=v${{ steps.version.outputs.version }},enable=${{ steps.version.outputs.publish_version == 'true' }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: pigeon-relay
+          context: .
+          file: pigeon-relay/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -92,3 +94,21 @@ jobs:
           packages: pigeon/relay
           token: ${{ secrets.GITHUB_TOKEN }}
           delete-untagged: true
+
+  image-check:
+    name: Validate image
+    if: github.event_name == 'pull_request'
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: pigeon-relay/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

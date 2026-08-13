@@ -34,9 +34,9 @@ jobs:
 
       - name: Check formatting
         run: |
-          swift-format lint --recursive --parallel Pigeon
+          git ls-files -z '*.swift' | xargs -0 swift-format lint --parallel
           if [ $? -ne 0 ]; then
-            echo "Run 'swift-format format --recursive --in-place Pigeon' locally to fix."
+            echo "Run swift-format on the reported tracked Swift files locally to fix."
             exit 1
           fi
 

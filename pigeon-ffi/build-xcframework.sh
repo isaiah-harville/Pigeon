@@ -51,7 +51,7 @@ rustup target add "$DEVICE_TARGET" "$SIM_TARGET" "$MAC_TARGET"
 
 echo "==> Building release static libs (symbols stripped via the release profile)"
 for target in "$DEVICE_TARGET" "$SIM_TARGET" "$MAC_TARGET"; do
-  cargo build --release --target "$target" --lib
+  cargo build --locked --release --target "$target" --lib
 done
 
 DEVICE_LIB="$BUILD_DIR/$DEVICE_TARGET/release/$LIB_NAME"
@@ -61,7 +61,7 @@ MAC_LIB="$BUILD_DIR/$MAC_TARGET/release/$LIB_NAME"
 echo "==> Generating Swift bindings + C headers (matched generator)"
 # --library mode reads the namespace/metadata straight from the built dylib so
 # the generator and the linked uniffi version can never drift apart.
-cargo run --bin uniffi-bindgen -- generate \
+cargo run --locked --bin uniffi-bindgen -- generate \
   --library "$DEVICE_LIB" \
   --language swift \
   --out-dir "$GEN_DIR"

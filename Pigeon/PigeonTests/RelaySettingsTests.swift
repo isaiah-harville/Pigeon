@@ -18,10 +18,10 @@ final class RelaySettingsTests: XCTestCase {
 
   override func setUp() {
     super.setUp()
-    keys.forEach { UserDefaults.standard.removeObject(forKey: $0) }
+    for key in keys { UserDefaults.standard.removeObject(forKey: key) }
   }
   override func tearDown() {
-    keys.forEach { UserDefaults.standard.removeObject(forKey: $0) }
+    for key in keys { UserDefaults.standard.removeObject(forKey: key) }
     super.tearDown()
   }
 

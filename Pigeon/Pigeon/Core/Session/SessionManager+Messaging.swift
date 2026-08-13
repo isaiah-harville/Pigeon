@@ -75,7 +75,7 @@ extension SessionManager {
     guard let inbound = try? account.establishInbound(initiation: payload),
       inbound.session.remoteIdentityKey() == contact.bundle.identityKey
     else {
-      note(sessionRejectedMessage(for: contact))
+      note(.sessionRejected)
       return true
     }
 
@@ -83,7 +83,7 @@ extension SessionManager {
     sessions[contact.id] = inbound.session
     establishedContactIDs.insert(contact.id)
     guard persist() else { return false }  // establishInbound may have consumed a one-time key
-    note("Secure session established with \"\(contact.displayName)\" (async first contact)")
+    note(.sessionEstablished)
 
     // The initiation's first plaintext is just the establishment sentinel; real
     // messages arrive as `.message` envelopes. Confirm establishment so the
@@ -107,7 +107,7 @@ extension SessionManager {
     guard let plaintext = try? session.decrypt(message: payload),
       var received = Self.decodeMessage(plaintext)
     else {
-      note("Decrypt failed from \"\(contact.displayName)\" — re-establishing")
+      note(.decryptionFailed)
       requestRehandshake(with: contact)
       return true
     }
@@ -257,7 +257,7 @@ extension SessionManager {
     // A genuinely lost peer simply re-requests after the window.
     guard establishedContactIDs.contains(contact.id) || sessions[contact.id] == nil else { return }
     guard rehandshakeGate.allow(contact.id, now: Date()) else { return }
-    note("\"\(contact.displayName)\" requested re-establishment")
+    note(.reestablishmentRequested)
     resetSession(for: contact.id)
     establishIfNeeded(contactID: contact.id)
   }
@@ -280,7 +280,7 @@ extension SessionManager {
       // Olm is async-first with no interactive fallback, so without a published
       // prekey there is no way to open a session. (Every current QR card carries
       // one; this only bites a card produced without prekeys.)
-      note("Can't reach \"\(contact.displayName)\": no prekey in their code")
+      note(.missingPrekey)
       return
     }
     if sessions[contactID] == nil {
@@ -299,7 +299,7 @@ extension SessionManager {
     // Defense-in-depth binding check (the card scanner already verified it): the
     // prekey bundle's identity must equal the verified contact.
     guard peerBundle.identityKey == contact.bundle.identityKey else {
-      note(sessionRejectedMessage(for: contact))
+      note(.sessionRejected)
       return
     }
     // The first plaintext is an establishment sentinel; the responder discards it
@@ -308,14 +308,14 @@ extension SessionManager {
       let outbound = try? account.establishOutbound(
         peerBundle: peerBundle.encoded, firstPlaintext: Self.establishmentHello)
     else {
-      note("First contact failed with \"\(contact.displayName)\"")
+      note(.firstContactFailed)
       return
     }
     sessions[contact.id] = outbound.session
     pendingInitiation[contact.id] = outbound.initiation
     establishedContactIDs.insert(contact.id)
     sendEnvelope(.x3dhInit, payload: outbound.initiation, to: contact)
-    note("→ first contact to \"\(contact.displayName)\"")
+    note(.firstContactStarted)
     sendPending(to: contact)  // deliver anything queued (initiation precedes it)
     if ephemeralContactIDs.contains(contact.id) { sendEphemeralState(to: contact) }
     if bluetoothChatIDs.contains(contact.id) { sendTransportState(to: contact) }
@@ -342,13 +342,6 @@ extension SessionManager {
     guard persistCrypto() else { return false }
     mesh.send(envelope.encoded(), to: contact.id, over: channels)
     return true
-  }
-
-  func sessionRejectedMessage(for contact: Contact) -> String {
-    """
-    Session REJECTED with "\(contact.displayName)": identity does not match \
-    verified contact
-    """
   }
 
   // MARK: - Initiation wire form

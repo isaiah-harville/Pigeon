@@ -1,29 +1,27 @@
 # Releases and versions
 
-Pigeon versions each deployable component independently. Release tags are
-component-prefixed and must match the version declared in the tagged commit:
+Pigeon versions each deployable component independently. Versions come from
+component manifests and are changed in normal reviewed pull requests:
 
-| Component | Version source | Release tag |
-| --- | --- | --- |
-| iOS app | `Pigeon/VERSION` and app `MARKETING_VERSION` | `ios-v1.1.0` |
-| Website | `site/VERSION` | `website-v1.1.0` |
-| Relay | `pigeon-relay/Cargo.toml` | `relay-v0.1.1` |
-| Messaging core | `pigeon-core/Cargo.toml` | `pigeon-core-v0.1.1` |
-| Mesh library | `pigeon-mesh/Cargo.toml` | `pigeon-mesh-v0.1.1` |
+| Component | Version source |
+| --- | --- |
+| iOS app | `Pigeon/VERSION` and app `MARKETING_VERSION` |
+| Website | `site/VERSION` |
+| Relay | `pigeon-relay/Cargo.toml` |
+| Messaging core | `pigeon-core/Cargo.toml` |
+| Mesh library | `pigeon-mesh/Cargo.toml` |
 
-All versions use semantic versioning. Bump the component's version in a normal
-reviewed pull request before creating its tag. The release-version workflow
+All versions use semantic versioning. The release-version workflow
 requires a version bump whenever component code, protocol, packaging, or
-deployment files change. It also rejects a tag whose version does not exactly
-match its declared source. Documentation-only changes do not require a bump.
+deployment files change. Documentation-only changes do not require a bump.
 
-Push release tags individually. GitHub does not create push events when more
-than three tags are pushed at once, so a larger batch silently skips the release
-workflows.
+Merges to `main` publish the `latest` website and relay container images. When
+the website or relay's declared version changes, that merge also publishes the
+immutable `vX.Y.Z` image tag. Git tags do not trigger releases.
 
-Merges to `main` publish the `latest` website and relay container images.
-`website-vX.Y.Z` and `relay-vX.Y.Z` publish the corresponding `vX.Y.Z` image tag
-without moving `latest`.
+Release workflows do not upload custom source archives. GitHub may display its
+automatic source-code zip and tar links for a Git tag, but Pigeon does not build,
+store, or attach duplicate source distributions.
 
 ## Rust crates
 
