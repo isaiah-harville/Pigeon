@@ -9,5 +9,5 @@ resolver = "2"
 
 [profile.release]
 # Keep release artifacts small when building from the repository workspace. The
-# The relay image also builds this workspace with the root Cargo.lock.
+# relay image also builds this workspace with the root Cargo.lock.
 strip = true

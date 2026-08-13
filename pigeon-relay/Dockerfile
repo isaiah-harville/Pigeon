@@ -11,14 +11,12 @@ ENV CARGO_PROFILE_RELEASE_STRIP=true \
     CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
     CARGO_PROFILE_RELEASE_OPT_LEVEL=z \
     CARGO_PROFILE_RELEASE_PANIC=abort
-
 COPY Cargo.toml Cargo.lock ./
-COPY pigeon-core ./pigeon-core
-COPY pigeon-ffi ./pigeon-ffi
-COPY pigeon-mesh ./pigeon-mesh
-COPY pigeon-relay ./pigeon-relay
-COPY proto ./proto
-RUN cargo build --locked --release -p pigeon-relay
+RUN --mount=type=bind,source=pigeon-core,target=/src/pigeon-core,readonly \
+    --mount=type=bind,source=pigeon-ffi,target=/src/pigeon-ffi,readonly \
+    --mount=type=bind,source=pigeon-mesh,target=/src/pigeon-mesh,readonly \
+    --mount=type=bind,source=pigeon-relay,target=/src/pigeon-relay,readonly \
+    cargo build --locked --release -p pigeon-relay
 
 FROM gcr.io/distroless/cc-debian12:nonroot
 COPY --from=build /src/target/release/pigeon-relay /usr/local/bin/pigeon-relay
