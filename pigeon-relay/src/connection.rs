@@ -21,7 +21,7 @@ use crate::mailbox::{
     ack, flush_queue, publish, register_push, remove_subscriber, switch_subscription,
     verify_ownership,
 };
-use crate::protocol::{ClientMsg, ServerMsg};
+use crate::protocol::{gate_protocol_message, ClientMsg, ProtocolGate, ServerMsg};
 use crate::state::{is_valid_address, AppState, SUBSCRIBER_CHANNEL_CAPACITY};
 
 pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
@@ -51,6 +51,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     // Per-connection auth state.
     let mut pending_challenge: Option<(String, Vec<u8>)> = None; // (mailbox, nonce)
     let mut authed_mailbox: Option<String> = None;
+    let mut negotiated = false;
 
     while let Some(Ok(msg)) = ws_rx.next().await {
         let text = match msg {
@@ -64,6 +65,14 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 message: "malformed message".into(),
             });
             continue;
+        };
+
+        let cmsg = match gate_protocol_message(cmsg, &mut negotiated) {
+            ProtocolGate::Reply(response) => {
+                let _ = tx.try_send(response);
+                continue;
+            }
+            ProtocolGate::Proceed(message) => message,
         };
 
         match cmsg {
@@ -142,6 +151,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     });
                 }
             }
+            ClientMsg::Hello { .. } => unreachable!("hello handled by protocol gate"),
         }
     }
 

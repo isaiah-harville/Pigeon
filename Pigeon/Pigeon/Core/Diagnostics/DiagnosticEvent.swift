@@ -41,6 +41,7 @@ enum DiagnosticEvent: CaseIterable {
   case transportAdvertising
   case relayOffline
   case relayReady
+  case relayIncompatible
   case relayError
   case networkRestored
   case wifiReady
@@ -80,6 +81,7 @@ enum DiagnosticEvent: CaseIterable {
     case .transportAdvertising: "Transport advertising"
     case .relayOffline: "Relay offline; retrying"
     case .relayReady: "Relay connection ready"
+    case .relayIncompatible: "Relay protocol is incompatible"
     case .relayError: "Relay returned an error"
     case .networkRestored: "Network restored; reconnecting relays"
     case .wifiReady: "Local Wi-Fi discovery ready"
@@ -91,7 +93,7 @@ enum DiagnosticEvent: CaseIterable {
     switch self {
     case .sessionRejected, .decryptionFailed, .missingPrekey, .firstContactFailed,
       .backgroundSettingFailed, .persistenceFailed, .fragmentationFailed,
-      .malformedFragment, .relayError, .wifiSendFailed:
+      .malformedFragment, .relayIncompatible, .relayError, .wifiSendFailed:
       true
     default:
       false
