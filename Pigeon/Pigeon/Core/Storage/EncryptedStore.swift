@@ -17,6 +17,13 @@
 import CryptoKit
 import Foundation
 
+enum EncryptedStoreError: Error {
+  case locationUnavailable
+  case unreadable
+  case authenticationFailed
+  case invalidPayload
+}
+
 /// A contact in persisted form (the identity bundle stored as its protobuf encoding).
 struct PersistedContact: Codable {
   var name: String
@@ -100,7 +107,7 @@ struct PersistedCrypto: Codable {
 /// Reads and writes a single sealed `Codable` blob in Application Support.
 struct EncryptedStore {
   private let key: SymmetricKey
-  private let url: URL
+  private let url: URL?
 
   /// The default bulk store.
   init(key: SymmetricKey) {
@@ -109,13 +116,23 @@ struct EncryptedStore {
 
   init(key: SymmetricKey, fileName: String) {
     self.key = key
-    let base =
-      (try? FileManager.default.url(
-        for: .applicationSupportDirectory,
-        in: .userDomainMask,
-        appropriateFor: nil,
-        create: true)) ?? FileManager.default.temporaryDirectory
-    self.url = base.appendingPathComponent(fileName)
+    let base = try? FileManager.default.url(
+      for: .applicationSupportDirectory,
+      in: .userDomainMask,
+      appropriateFor: nil,
+      create: true)
+    self.url = base?.appendingPathComponent(fileName)
+  }
+
+  /// Explicit location injection for deterministic recovery tests.
+  init(key: SymmetricKey, url: URL) {
+    self.key = key
+    self.url = url
+  }
+
+  private init(key: SymmetricKey, optionalURL: URL?) {
+    self.key = key
+    self.url = optionalURL
   }
 
   /// A companion store under the same key and directory whose file name is this
@@ -123,19 +140,38 @@ struct EncryptedStore {
   /// state kept apart from the bulk). Deriving from this store's own name keeps
   /// companions distinct when several stores coexist (e.g. multiple identities).
   func companion(suffix: String) -> EncryptedStore {
-    EncryptedStore(key: key, fileName: url.lastPathComponent + suffix)
+    let companionURL = url.map { storeURL in
+      storeURL.deletingLastPathComponent()
+        .appendingPathComponent(storeURL.lastPathComponent + suffix)
+    }
+    return EncryptedStore(
+      key: key,
+      optionalURL: companionURL)
   }
 
-  /// Decrypts and decodes the stored blob, or `nil` if there is nothing stored
-  /// yet (or it can't be read/decoded with this key).
-  func load<T: Decodable>(_: T.Type) -> T? {
-    guard let blob = try? Data(contentsOf: url),
-      let plaintext = try? SecretBox.open(blob, key: key),
-      let value = try? JSONDecoder().decode(T.self, from: plaintext)
-    else {
-      return nil
+  /// Returns `nil` only when no store exists. An inaccessible, unauthentic, or
+  /// malformed blob is an explicit error so callers never mistake data loss or
+  /// a wrong key for first launch.
+  func load<T: Decodable>(_: T.Type) throws -> T? {
+    guard let url else { throw EncryptedStoreError.locationUnavailable }
+    guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+    let blob: Data
+    do {
+      blob = try Data(contentsOf: url)
+    } catch {
+      throw EncryptedStoreError.unreadable
     }
-    return value
+    let plaintext: Data
+    do {
+      plaintext = try SecretBox.open(blob, key: key)
+    } catch {
+      throw EncryptedStoreError.authenticationFailed
+    }
+    do {
+      return try JSONDecoder().decode(T.self, from: plaintext)
+    } catch {
+      throw EncryptedStoreError.invalidPayload
+    }
   }
 
   /// Encodes, encrypts, and writes the blob atomically. Returns whether the write
@@ -153,7 +189,8 @@ struct EncryptedStore {
   /// file-system class is defence in depth, not the boundary.
   @discardableResult
   func save<T: Encodable>(_ value: T) -> Bool {
-    guard let plaintext = try? JSONEncoder().encode(value),
+    guard let url,
+      let plaintext = try? JSONEncoder().encode(value),
       let blob = try? SecretBox.seal(plaintext, key: key)
     else { return false }
     do {
@@ -167,6 +204,7 @@ struct EncryptedStore {
 
   /// Removes this on-disk blob (used when switching to ephemeral mode / wipe).
   func wipe() {
+    guard let url else { return }
     try? FileManager.default.removeItem(at: url)
   }
 }

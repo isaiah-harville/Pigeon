@@ -106,7 +106,7 @@ final class RehandshakeGateTests: XCTestCase {
     let identity = try IdentityManager(store: InMemoryKeyStore(seed: seed))
     let transport = FakeTransport(identity: identity.publicKey.rawRepresentation, bus: bus)
     let manager = SessionManager(identity: identity, mesh: MeshService(transport: transport))
-    manager.attachStore(EncryptedStore(key: key, fileName: storeFile))
+    try manager.attachStore(EncryptedStore(key: key, fileName: storeFile))
     bus.connect(identity.publicKey.rawRepresentation, transport)
     return manager
   }
