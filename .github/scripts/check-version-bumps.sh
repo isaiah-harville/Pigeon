@@ -28,13 +28,6 @@ version_changed() {
   fi
 }
 
-ios_version_is_unreleased() {
-  local version
-  version="$(tr -d '[:space:]' < Pigeon/VERSION)"
-  ! git show-ref --verify --quiet "refs/tags/v${version}" &&
-    ! git show-ref --verify --quiet "refs/tags/ios-v${version}"
-}
-
 require_bump() {
   local component="$1"
   local version_file="$2"
@@ -51,10 +44,6 @@ require_bump() {
   done <<< "$changed_files"
 
   if [[ "$changed" == true ]] && ! version_changed "$version_file"; then
-    if [[ "$component" == "iOS app" ]] && ios_version_is_unreleased; then
-      echo "iOS app remains on unreleased version $(tr -d '[:space:]' < Pigeon/VERSION)."
-      return
-    fi
     echo "error: $component changed without a version bump in $version_file" >&2
     failures=$((failures + 1))
   fi

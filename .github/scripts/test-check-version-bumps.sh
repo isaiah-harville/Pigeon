@@ -26,13 +26,9 @@ git -C "$fixture" config user.email release-test@pigeon.invalid
 git -C "$fixture" config user.name "Pigeon release test"
 git -C "$fixture" add .
 git -C "$fixture" commit -qm baseline
-git -C "$fixture" tag v1.2.0
 
 printf 'changed\n' > "$fixture/Pigeon/Pigeon/Core/Session/Example.swift"
 if bash "$fixture/.github/scripts/check-version-bumps.sh" HEAD >/dev/null 2>&1; then
   echo "error: nested iOS source change passed without a version bump" >&2
   exit 1
 fi
-
-git -C "$fixture" tag -d v1.2.0 >/dev/null
-bash "$fixture/.github/scripts/check-version-bumps.sh" HEAD >/dev/null
