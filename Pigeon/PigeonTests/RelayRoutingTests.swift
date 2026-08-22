@@ -25,6 +25,93 @@ final class RelayRoutingTests: XCTestCase {
     XCTAssertNil(RelayTransport.selectProtocol(serverMinimum: 1, serverMaximum: 0))
   }
 
+  func testRelayInfoParsesCompatibleVersionMetadata() {
+    let info = RelayTransport.relayInfo(from: [
+      "type": "compatible",
+      "protocol_version": 1,
+      "relay_version": "0.2.0",
+      "min_protocol_version": 1,
+      "max_protocol_version": 2,
+    ])
+
+    XCTAssertEqual(
+      info,
+      .init(
+        relayVersion: "0.2.0", minimumProtocolVersion: 1, maximumProtocolVersion: 2,
+        selectedProtocolVersion: 1, compatibility: .compatible))
+  }
+
+  func testRelayInfoDirectsUpdateTowardOlderSide() {
+    XCTAssertEqual(
+      RelayTransport.relayInfo(from: [
+        "type": "incompatible", "relay_version": "0.1.0",
+        "min_protocol_version": 0, "max_protocol_version": 0,
+      ])?.compatibility,
+      .updateRelay)
+    XCTAssertEqual(
+      RelayTransport.relayInfo(from: [
+        "type": "incompatible", "relay_version": "0.3.0",
+        "min_protocol_version": 2, "max_protocol_version": 3,
+      ])?.compatibility,
+      .updateApp)
+  }
+
+  func testRelayInfoRejectsBooleanAndFractionalProtocolVersions() {
+    XCTAssertNil(
+      RelayTransport.relayInfo(from: [
+        "type": "compatible", "protocol_version": true,
+      ]))
+    XCTAssertNil(
+      RelayTransport.relayInfo(from: [
+        "type": "incompatible", "min_protocol_version": 1.5,
+        "max_protocol_version": 2,
+      ]))
+    XCTAssertNil(
+      RelayTransport.relayInfo(from: [
+        "type": "incompatible", "min_protocol_version": 1,
+        "max_protocol_version": false,
+      ]))
+  }
+
+  func testRelayProbeTimeoutCancelsAStalledOperation() async {
+    let clock = ContinuousClock()
+    let started = clock.now
+    do {
+      let _: String = try await RelayPinger.withTimeout(.milliseconds(20)) {
+        try await Task.sleep(for: .seconds(10))
+        return "late"
+      }
+      XCTFail("A silent relay must time out")
+    } catch RelayError.timeout {
+      XCTAssertLessThan(started.duration(to: clock.now), .seconds(1))
+    } catch {
+      XCTFail("Unexpected error: \(error)")
+    }
+  }
+
+  func testOlderCompatibleRelayWithoutReleaseMetadataRemainsUsable() {
+    XCTAssertEqual(
+      RelayTransport.relayInfo(from: ["type": "compatible", "protocol_version": 1]),
+      .init(
+        relayVersion: nil, minimumProtocolVersion: nil, maximumProtocolVersion: nil,
+        selectedProtocolVersion: 1, compatibility: .compatible))
+  }
+
+  func testAnonymousProbeUsesTextHelloFrameAcceptedByRelay() throws {
+    switch try RelayTransport.helloMessage() {
+    case .string(let text):
+      let object = try XCTUnwrap(
+        JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+      XCTAssertEqual(object["type"] as? String, "hello")
+      XCTAssertEqual(object["min_protocol_version"] as? Int, 1)
+      XCTAssertEqual(object["max_protocol_version"] as? Int, 1)
+    case .data:
+      XCTFail("The relay ignores binary WebSocket frames")
+    @unknown default:
+      XCTFail("Unsupported WebSocket message type")
+    }
+  }
+
   func testIncompatibleRelaysAreNotAdvertised() {
     let compatible = url("wss://compatible.example/ws")
     let incompatible = url("wss://old.example/ws")

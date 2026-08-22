@@ -81,10 +81,26 @@ fn hello_and_compatible_frames_use_the_documented_json_shape() {
     assert!(matches!(hello, ClientMsg::Hello { .. }));
     assert_eq!(
         serde_json::to_string(&ServerMsg::Compatible {
-            protocol_version: 1
+            protocol_version: 1,
+            relay_version: "0.2.0".into(),
+            min_protocol_version: 1,
+            max_protocol_version: 1,
         })
         .unwrap(),
-        r#"{"type":"compatible","protocol_version":1}"#
+        r#"{"type":"compatible","protocol_version":1,"relay_version":"0.2.0","min_protocol_version":1,"max_protocol_version":1}"#
+    );
+}
+
+#[test]
+fn incompatible_frame_identifies_the_relay_release_and_protocol_range() {
+    assert_eq!(
+        serde_json::to_string(&ServerMsg::Incompatible {
+            relay_version: "0.2.0".into(),
+            min_protocol_version: 2,
+            max_protocol_version: 3,
+        })
+        .unwrap(),
+        r#"{"type":"incompatible","relay_version":"0.2.0","min_protocol_version":2,"max_protocol_version":3}"#
     );
 }
 
@@ -122,7 +138,8 @@ fn compatible_hello_unlocks_mailbox_operations() {
     assert!(matches!(
         gate_protocol_message(hello, &mut negotiated),
         ProtocolGate::Reply(ServerMsg::Compatible {
-            protocol_version: 1
+            protocol_version: 1,
+            ..
         })
     ));
     assert!(negotiated);

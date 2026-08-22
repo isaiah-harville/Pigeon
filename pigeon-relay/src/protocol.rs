@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 pub const PROTOCOL_MIN_VERSION: u32 = 1;
 pub const PROTOCOL_MAX_VERSION: u32 = 1;
+pub const RELAY_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Selects the newest protocol both peers support. Invalid or disjoint ranges
 /// fail closed before the connection can touch a mailbox.
@@ -42,9 +43,15 @@ pub fn gate_protocol_message(message: ClientMsg, negotiated: &mut bool) -> Proto
                 select_protocol(min_protocol_version, max_protocol_version)
             {
                 *negotiated = true;
-                ProtocolGate::Reply(ServerMsg::Compatible { protocol_version })
+                ProtocolGate::Reply(ServerMsg::Compatible {
+                    protocol_version,
+                    relay_version: RELAY_VERSION.into(),
+                    min_protocol_version: PROTOCOL_MIN_VERSION,
+                    max_protocol_version: PROTOCOL_MAX_VERSION,
+                })
             } else {
                 ProtocolGate::Reply(ServerMsg::Incompatible {
+                    relay_version: RELAY_VERSION.into(),
                     min_protocol_version: PROTOCOL_MIN_VERSION,
                     max_protocol_version: PROTOCOL_MAX_VERSION,
                 })
@@ -98,9 +105,15 @@ pub enum ClientMsg {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMsg {
     /// Confirms the protocol chosen from the advertised overlap.
-    Compatible { protocol_version: u32 },
+    Compatible {
+        protocol_version: u32,
+        relay_version: String,
+        min_protocol_version: u32,
+        max_protocol_version: u32,
+    },
     /// Refuses a disjoint range while revealing only the relay's public range.
     Incompatible {
+        relay_version: String,
         min_protocol_version: u32,
         max_protocol_version: u32,
     },

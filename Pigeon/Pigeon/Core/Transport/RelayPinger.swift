@@ -18,7 +18,7 @@ final class RelayPinger {
   /// Latest measurement for each relay endpoint.
   enum Ping: Equatable {
     case measuring
-    case ms(Int)
+    case available(milliseconds: Int, info: RelayTransport.RelayInfo)
     case unreachable
   }
 
@@ -47,6 +47,22 @@ final class RelayPinger {
     task = nil
   }
 
+  nonisolated static func withTimeout<Value: Sendable>(
+    _ duration: Duration,
+    operation: @escaping @Sendable () async throws -> Value
+  ) async throws -> Value {
+    try await withThrowingTaskGroup(of: Value.self) { group in
+      group.addTask { try await operation() }
+      group.addTask {
+        try await Task.sleep(for: duration)
+        throw RelayError.timeout
+      }
+      defer { group.cancelAll() }
+      guard let value = try await group.next() else { throw RelayError.timeout }
+      return value
+    }
+  }
+
   private func pingAll(_ urls: [URL]) async {
     await withTaskGroup(of: (URL, Ping).self) { group in
       for url in urls {
@@ -58,29 +74,44 @@ final class RelayPinger {
     }
   }
 
-  /// Opens a WebSocket and times a single ping/pong. The elapsed time includes
-  /// the TCP+TLS+WS handshake on a fresh connection, which is the latency a user
-  /// actually cares about when choosing a relay.
+  /// Opens an anonymous WebSocket, negotiates the public protocol metadata, and
+  /// measures the complete fresh-connection round trip. No mailbox is supplied.
   nonisolated private static func ping(_ url: URL) async -> Ping {
     let config = URLSessionConfiguration.ephemeral
     config.timeoutIntervalForRequest = 6
     config.waitsForConnectivity = false
     let session = URLSession(configuration: config)
     let socket = session.webSocketTask(with: url)
+    defer {
+      socket.cancel(with: .goingAway, reason: nil)
+      session.invalidateAndCancel()
+    }
     let start = DispatchTime.now()
     socket.resume()
-    let result: Ping = await withCheckedContinuation { continuation in
-      socket.sendPing { error in
-        if error != nil {
-          continuation.resume(returning: .unreachable)
-        } else {
-          let ns = DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds
-          continuation.resume(returning: .ms(Int(ns / 1_000_000)))
+    let result: Ping
+    do {
+      try await socket.send(RelayTransport.helloMessage())
+      let response = try await Self.withTimeout(.seconds(6)) {
+        try await withTaskCancellationHandler {
+          try await socket.receive()
+        } onCancel: {
+          socket.cancel(with: .goingAway, reason: nil)
         }
       }
+      let responseData: Data
+      switch response {
+      case .data(let data): responseData = data
+      case .string(let text): responseData = Data(text.utf8)
+      @unknown default: throw RelayError.protocolError
+      }
+      guard let object = try JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+        let info = RelayTransport.relayInfo(from: object)
+      else { throw RelayError.protocolError }
+      let ns = DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds
+      result = .available(milliseconds: Int(ns / 1_000_000), info: info)
+    } catch {
+      result = .unreachable
     }
-    socket.cancel(with: .goingAway, reason: nil)
-    session.invalidateAndCancel()
     return result
   }
 }
