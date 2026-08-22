@@ -145,6 +145,10 @@ final class SessionManager {
       relay.preferredRelayForRecipient = { [weak self] key in
         self?.contacts.first { $0.id == key }?.preferredRelayURL
       }
+      relay.onCompatibilityChange = { [weak self] incompatible in
+        self?.relayURLs = RelayTransport.advertisedRelays(
+          configured: RelaySettings.urls(), excluding: incompatible)
+      }
       relay.reconfigure(RelaySettings.urls())
     }
     // Contacts/history load after the vault is unlocked; BLE runs regardless.
@@ -231,8 +235,10 @@ final class SessionManager {
   /// dependent UI (the QR card) refreshes live.
   func setRelayEntries(_ entries: [RelayEntry]) {
     RelaySettings.setEntries(entries)
-    relayURLs = RelaySettings.urls()
-    relay?.reconfigure(relayURLs)
+    let configured = RelaySettings.urls()
+    relayURLs = RelayTransport.advertisedRelays(
+      configured: configured, excluding: relay?.incompatibleRelayURLs ?? [])
+    relay?.reconfigure(configured)
   }
 
   // MARK: - Contacts

@@ -40,9 +40,9 @@ jobs:
             exit 1
           fi
 
-  # Main builds the gitignored PigeonFFI XCFramework + generated bindings. Pull
-  # requests restore that output from main and never run the expensive Apple
-  # Rust/UniFFI build themselves.
+  # Restore the gitignored PigeonFFI XCFramework + generated bindings when a
+  # cache entry exists. Any cache miss rebuilds the artifacts so pull requests
+  # do not lose their app test coverage when GitHub evicts the main cache.
   xcframework:
     name: Build PigeonFFI XCFramework
     runs-on: macos-26
@@ -64,16 +64,16 @@ jobs:
             pigeon-ffi-xcframework-v1-${{ runner.os }}-
 
       - uses: dtolnay/rust-toolchain@stable
-        if: github.ref == 'refs/heads/main' && steps.xcframework-cache.outputs.cache-hit != 'true'
+        if: steps.xcframework-cache.outputs.cache-hit != 'true'
       - name: Cache cargo build (target + registry)
-        if: github.ref == 'refs/heads/main' && steps.xcframework-cache.outputs.cache-hit != 'true'
+        if: steps.xcframework-cache.outputs.cache-hit != 'true'
         uses: Swatinem/rust-cache@v2
       - name: Install protobuf tooling
-        if: github.ref == 'refs/heads/main' && steps.xcframework-cache.outputs.cache-hit != 'true'
+        if: steps.xcframework-cache.outputs.cache-hit != 'true'
         run: brew install protobuf swift-protobuf
 
       - name: Build PigeonFFI XCFramework
-        if: github.ref == 'refs/heads/main' && steps.xcframework-cache.outputs.cache-hit != 'true'
+        if: steps.xcframework-cache.outputs.cache-hit != 'true'
         run: bash pigeon-ffi/build-xcframework.sh
 
       - name: Upload PigeonFFI build artifacts

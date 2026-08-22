@@ -50,22 +50,22 @@ require_bump() {
 }
 
 require_bump "iOS app" Pigeon/VERSION \
-  "Pigeon/Pigeon/Core/"* "Pigeon/Pigeon/Features/"* "Pigeon/Pigeon/PigeonApp.swift" \
-  "Pigeon/Pigeon/Info.plist" "Pigeon/Pigeon.xcodeproj/"*
+  "Pigeon/Pigeon/Core/*" "Pigeon/Pigeon/Features/*" "Pigeon/Pigeon/PigeonApp.swift" \
+  "Pigeon/Pigeon/Info.plist" "Pigeon/Pigeon.xcodeproj/*"
 
 require_bump "website" site/VERSION \
-  "site/index.html" "site/privacy-policy/"* "site/support/"* "site/styles.css" \
-  "site/assets/"* "site/deploy/"*
+  "site/index.html" "site/privacy-policy/*" "site/support/*" "site/styles.css" \
+  "site/assets/*" "site/deploy/*"
 
 require_bump "pigeon-core" pigeon-core/Cargo.toml \
-  "pigeon-core/src/"* "pigeon-core/tests/"* "pigeon-core/build.rs" \
-  "pigeon-core/Cargo.toml" "proto/"*
+  "pigeon-core/src/*" "pigeon-core/tests/*" "pigeon-core/build.rs" \
+  "pigeon-core/Cargo.toml" "proto/*"
 
 require_bump "pigeon-mesh" pigeon-mesh/Cargo.toml \
-  "pigeon-mesh/src/"* "pigeon-mesh/tests/"* "pigeon-mesh/Cargo.toml"
+  "pigeon-mesh/src/*" "pigeon-mesh/tests/*" "pigeon-mesh/Cargo.toml"
 
 require_bump "pigeon-relay" pigeon-relay/Cargo.toml \
-  "pigeon-relay/src/"* "pigeon-relay/tests/"* "pigeon-relay/build.rs" \
+  "pigeon-relay/src/*" "pigeon-relay/tests/*" "pigeon-relay/build.rs" \
   "pigeon-relay/Dockerfile" "pigeon-relay/Cargo.toml"
 
 if ((failures > 0)); then

@@ -230,6 +230,7 @@ extension MenuView {
     case .online: return .green
     case .connecting: return .orange
     case .failed: return .red
+    case .incompatible: return .red
     case .disabled: return .secondary
     }
   }
@@ -239,6 +240,7 @@ extension MenuView {
     case .online: return "Connected"
     case .connecting: return "Connecting…"
     case .failed: return "Unreachable"
+    case .incompatible: return "Incompatible"
     case .disabled: return "Off"
     }
   }

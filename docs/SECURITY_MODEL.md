@@ -324,6 +324,15 @@ Pigeon keeps the trust cost minimal:
   timing, message sizes, and that *some* sender is delivering to recipient key X.
   Mitigations (sealed-sender addressing, padding, and routing over **Tor** to hide
   IPs) are planned, not yet implemented.
+- **Relay compatibility is negotiated before mailbox access.** The app and relay
+  exchange inclusive minimum/maximum relay-protocol versions before publish,
+  subscribe, authentication, acknowledgement, or push registration. Both select
+  the highest overlapping version. Missing, malformed, or disjoint ranges fail
+  closed; an incompatible relay is excluded from delivery, reachability, and new
+  contact cards, while remaining visible in settings for diagnosis. This version
+  is independent of the app and relay SemVer. A malicious relay can lie about its
+  range, so negotiation prevents accidental incompatibility but does not add
+  trust or weaken end-to-end authentication.
 
 > A relay is **untrusted infrastructure**. Compromising or operating one yields
 > metadata and the ability to drop/delay/replay ciphertext (a denial-of-service
