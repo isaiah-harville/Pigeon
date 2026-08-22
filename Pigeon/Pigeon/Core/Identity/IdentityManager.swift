@@ -10,6 +10,28 @@
 import CryptoKit
 import Foundation
 
+enum IdentityManagerError: Error, Equatable {
+  case missingStoredIdentity
+}
+
+/// Non-secret installation evidence. It distinguishes a genuine first launch
+/// from loss of a previously persisted identity, which must never self-heal by
+/// silently generating a new trust root.
+protocol IdentityInitializationStore {
+  var wasInitialized: Bool { get }
+  func markInitialized()
+}
+
+private struct UserDefaultsIdentityInitializationStore: IdentityInitializationStore {
+  private let key = "pigeon.identity.initialized"
+
+  var wasInitialized: Bool { UserDefaults.standard.bool(forKey: key) }
+
+  func markInitialized() {
+    UserDefaults.standard.set(true, forKey: key)
+  }
+}
+
 /// Creates and holds the device's long-term **Ed25519 identity key**, stored in
 /// the Keychain (never leaving the device).
 ///
@@ -45,10 +67,18 @@ final class IdentityManager {
 
   /// Loads the existing identity key, generating and persisting one if missing.
   convenience init() throws {
-    try self.init(store: KeychainStore(account: IdentityManager.identityAccount))
+    try self.init(
+      store: KeychainStore(account: IdentityManager.identityAccount),
+      initializationStore: UserDefaultsIdentityInitializationStore())
   }
 
-  init(store: any KeyStore) throws {
+  convenience init(store: any KeyStore) throws {
+    try self.init(store: store, initializationStore: nil)
+  }
+
+  init(
+    store: any KeyStore, initializationStore: (any IdentityInitializationStore)?
+  ) throws {
     self.store = store
 
     // A new key adopts the accessibility implied by the background-delivery
@@ -57,10 +87,15 @@ final class IdentityManager {
 
     if let existing = try store.get() {
       self.privateKey = try Curve25519.Signing.PrivateKey(rawRepresentation: existing)
+      initializationStore?.markInitialized()
     } else {
+      guard initializationStore?.wasInitialized != true else {
+        throw IdentityManagerError.missingStoredIdentity
+      }
       let fresh = Curve25519.Signing.PrivateKey()
       try store.set(fresh.rawRepresentation, accessibility: accessibility)
       self.privateKey = fresh
+      initializationStore?.markInitialized()
     }
   }
 

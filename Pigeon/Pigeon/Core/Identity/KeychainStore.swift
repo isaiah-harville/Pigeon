@@ -50,6 +50,35 @@ protocol KeyStore {
   func delete() throws
 }
 
+/// Injectable boundary around Security.framework. Keeping status-code handling
+/// in `KeychainStore` lets tests prove replacements never delete the old item.
+protocol KeychainClient {
+  func copyMatching(_ query: [String: Any]) -> (OSStatus, Data?)
+  func add(_ attributes: [String: Any]) -> OSStatus
+  func update(_ query: [String: Any], attributes: [String: Any]) -> OSStatus
+  func delete(_ query: [String: Any]) -> OSStatus
+}
+
+private struct SystemKeychainClient: KeychainClient {
+  func copyMatching(_ query: [String: Any]) -> (OSStatus, Data?) {
+    var result: CFTypeRef?
+    let status = SecItemCopyMatching(query as CFDictionary, &result)
+    return (status, result as? Data)
+  }
+
+  func add(_ attributes: [String: Any]) -> OSStatus {
+    SecItemAdd(attributes as CFDictionary, nil)
+  }
+
+  func update(_ query: [String: Any], attributes: [String: Any]) -> OSStatus {
+    SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+  }
+
+  func delete(_ query: [String: Any]) -> OSStatus {
+    SecItemDelete(query as CFDictionary)
+  }
+}
+
 /// Stores small secrets (key material) in the Keychain as generic passwords.
 ///
 /// Items are always `…ThisDeviceOnly`: they never leave the device, are not
@@ -62,9 +91,16 @@ struct KeychainStore: KeyStore {
   static let service = "com.isaiah-harville.Pigeon.keys"
 
   let account: String
+  private let client: any KeychainClient
 
   init(account: String) {
     self.account = account
+    self.client = SystemKeychainClient()
+  }
+
+  init(account: String, client: any KeychainClient) {
+    self.account = account
+    self.client = client
   }
 
   private var baseQuery: [String: Any] {
@@ -78,14 +114,20 @@ struct KeychainStore: KeyStore {
   /// Stores `data` with the given accessibility, replacing any existing value
   /// for this account.
   func set(_ data: Data, accessibility: KeychainAccessibility) throws {
-    // Delete first so we don't have to branch on add-vs-update.
-    SecItemDelete(baseQuery as CFDictionary)
+    let replacement: [String: Any] = [
+      kSecValueData as String: data,
+      kSecAttrAccessible as String: accessibility.secValue,
+    ]
+    let updateStatus = client.update(baseQuery, attributes: replacement)
+    if updateStatus == errSecSuccess { return }
+    guard updateStatus == errSecItemNotFound else {
+      throw KeychainError.unexpectedStatus(updateStatus)
+    }
 
     var query = baseQuery
-    query[kSecValueData as String] = data
-    query[kSecAttrAccessible as String] = accessibility.secValue
+    for (key, value) in replacement { query[key] = value }
 
-    let status = SecItemAdd(query as CFDictionary, nil)
+    let status = client.add(query)
     guard status == errSecSuccess else {
       throw KeychainError.unexpectedStatus(status)
     }
@@ -94,8 +136,12 @@ struct KeychainStore: KeyStore {
   /// Rewrites the stored item under a new accessibility class. Requires the item
   /// to be readable now (i.e. the device unlocked); a no-op if nothing is stored.
   func setAccessibility(_ accessibility: KeychainAccessibility) throws {
-    guard let data = try get() else { return }
-    try set(data, accessibility: accessibility)
+    let status = client.update(
+      baseQuery,
+      attributes: [kSecAttrAccessible as String: accessibility.secValue])
+    guard status == errSecSuccess || status == errSecItemNotFound else {
+      throw KeychainError.unexpectedStatus(status)
+    }
   }
 
   /// Returns the stored bytes, or `nil` if no item exists.
@@ -104,15 +150,14 @@ struct KeychainStore: KeyStore {
     query[kSecReturnData as String] = true
     query[kSecMatchLimit as String] = kSecMatchLimitOne
 
-    var result: CFTypeRef?
-    let status = SecItemCopyMatching(query as CFDictionary, &result)
+    let (status, result) = client.copyMatching(query)
 
     switch status {
     case errSecSuccess:
-      guard let data = result as? Data else {
+      guard let result else {
         throw KeychainError.dataConversionFailed
       }
-      return data
+      return result
     case errSecItemNotFound:
       return nil
     default:
@@ -122,7 +167,7 @@ struct KeychainStore: KeyStore {
 
   /// Removes the stored item if present. Used for identity reset / wipe.
   func delete() throws {
-    let status = SecItemDelete(baseQuery as CFDictionary)
+    let status = client.delete(baseQuery)
     guard status == errSecSuccess || status == errSecItemNotFound else {
       throw KeychainError.unexpectedStatus(status)
     }
