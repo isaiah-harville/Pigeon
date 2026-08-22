@@ -92,12 +92,17 @@ final class SessionRelaunchDeliveryTests: XCTestCase {
 
   /// Builds a device's SessionManager over the bus, unlocked against `storeFile`
   /// with the given key + identity seed, and connects it to the bus.
-  private func launch(seed: Data, key: SymmetricKey, storeFile: String, bus: TestBus) throws
+  private func launch(
+    seed: Data, key: SymmetricKey, storeFile: String, bus: TestBus,
+    persistence: SessionPersistence? = nil
+  ) throws
     -> SessionManager
   {
     let identity = try IdentityManager(store: InMemoryKeyStore(seed: seed))
     let transport = FakeTransport(identity: identity.publicKey.rawRepresentation, bus: bus)
-    let manager = SessionManager(identity: identity, mesh: MeshService(transport: transport))
+    let manager = SessionManager(
+      identity: identity, mesh: MeshService(transport: transport),
+      persistence: persistence ?? SessionPersistence())
     let store = EncryptedStore(key: key, fileName: storeFile)
     try manager.attachStore(store)
     bus.connect(identity.publicKey.rawRepresentation, transport)
@@ -114,6 +119,55 @@ final class SessionRelaunchDeliveryTests: XCTestCase {
   }
 
   private func newSeed() -> Data { Curve25519.Signing.PrivateKey().rawRepresentation }
+
+  private enum ExportFailure: Error {
+    case injected
+  }
+
+  func testSessionExportFailureFreezesCoordinatorAndEmitsNoMessage() throws {
+    let bus = TestBus()
+    let keyA = SymmetricKey(size: .bits256)
+    let keyB = SymmetricKey(size: .bits256)
+    let fileA = "export-failure-a.store"
+    let fileB = "export-failure-b.store"
+    for (key, file) in [(keyA, fileA), (keyB, fileB)] {
+      EncryptedStore(key: key, fileName: file).wipe()
+      EncryptedStore(key: key, fileName: file).companion(suffix: ".crypto").wipe()
+    }
+
+    var failSessionExport = false
+    let exporter = SessionCryptoExporter(
+      exportAccount: { try $0.exportOlmPickle() },
+      exportSession: {
+        if failSessionExport { throw ExportFailure.injected }
+        return try $0.exportPickle()
+      })
+    let a = try launch(
+      seed: newSeed(), key: keyA, storeFile: fileA, bus: bus,
+      persistence: SessionPersistence(cryptoExporter: exporter))
+    let b = try launch(seed: newSeed(), key: keyB, storeFile: fileB, bus: bus)
+
+    let aIsInitiator = a.isInitiator(toward: b.myID)
+    let initiator = aIsInitiator ? a : b
+    let responder = aIsInitiator ? b : a
+    let (initiatorBundle, initiatorPrekey) = try card(initiator)
+    let (responderBundle, responderPrekey) = try card(responder)
+    responder.addContact(
+      initiatorBundle, name: "Initiator", relayURLs: [], prekeyBundle: initiatorPrekey,
+      verifiedInPerson: true)
+    initiator.addContact(
+      responderBundle, name: "Responder", relayURLs: [], prekeyBundle: responderPrekey,
+      verifiedInPerson: true)
+    XCTAssertTrue(a.establishedContactIDs.contains(b.myID))
+    XCTAssertTrue(b.establishedContactIDs.contains(a.myID))
+
+    failSessionExport = true
+    let recipient = try XCTUnwrap(a.contacts.first { $0.id == b.myID })
+    a.send("must not leave the sender", to: recipient)
+
+    XCTAssertFalse(a.isPersistenceHealthy)
+    XCTAssertFalse(texts(b, with: a.myID).contains("must not leave the sender"))
+  }
 
   /// Two devices establish; the *initiator* is then terminated; the *responder*
   /// sends a message to it; the initiator relaunches and must receive it (and

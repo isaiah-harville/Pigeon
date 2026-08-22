@@ -17,6 +17,10 @@ import XCTest
 @MainActor
 final class SessionPersistenceTests: XCTestCase {
 
+  private enum ExportFailure: Error {
+    case injected
+  }
+
   func testCorruptBulkStoreFailsInsteadOfStartingEmpty() throws {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("pigeon-corrupt-\(UUID().uuidString).store")
@@ -170,5 +174,38 @@ final class SessionPersistenceTests: XCTestCase {
     XCTAssertNotNil(reloaded.sessions[contactID])
     XCTAssertEqual(
       reloaded.fallbackRotatedAt?.timeIntervalSince1970, stamp.timeIntervalSince1970)
+  }
+
+  func testAccountExportFailureDoesNotReplaceLastGoodCryptoState() throws {
+    let store = freshStore()
+    let alice = try PigeonAccount.generate()
+    let snapshot = SessionPersistence.Snapshot(
+      contacts: [],
+      conversations: [:],
+      ephemeralContactIDs: [],
+      bluetoothChatIDs: [],
+      myName: "Alice",
+      account: alice,
+      sessions: [:],
+      pendingInitiation: [:],
+      lastInitiationIn: [:],
+      fallbackRotatedAt: nil)
+
+    let healthy = SessionPersistence()
+    _ = try healthy.attach(store, identitySeed: alice.exportSeed())
+    XCTAssertTrue(healthy.saveCrypto(snapshot))
+    let cryptoStore = store.companion(suffix: ".crypto")
+    let before = try XCTUnwrap(cryptoStore.load(PersistedCrypto.self))
+
+    let failing = SessionPersistence(
+      cryptoExporter: SessionCryptoExporter(
+        exportAccount: { _ in throw ExportFailure.injected },
+        exportSession: { try $0.exportPickle() }))
+    _ = try failing.attach(store, identitySeed: alice.exportSeed())
+
+    XCTAssertFalse(failing.saveCrypto(snapshot))
+    let after = try XCTUnwrap(cryptoStore.load(PersistedCrypto.self))
+    XCTAssertEqual(after.olmAccountPickle, before.olmAccountPickle)
+    XCTAssertEqual(after.olmFallbackKey, before.olmFallbackKey)
   }
 }

@@ -29,6 +29,11 @@ enum SessionPersistenceError: Error {
   case invalidCryptoState
 }
 
+struct SessionCryptoExporter {
+  let exportAccount: (PigeonAccount) throws -> Data
+  let exportSession: (PigeonSession) throws -> Data
+}
+
 /// Reads and writes the coordinator's durable state through `EncryptedStore`,
 /// including building the bound Olm account. Not `@Observable`: persistence is a
 /// side effect, not observable UI state.
@@ -41,9 +46,14 @@ final class SessionPersistence {
   /// The crypto store (account + per-contact session state), a sibling of `store`
   /// under the same key. Re-sealed on its own via `saveCrypto`.
   private var cryptoStore: EncryptedStore?
+  private let cryptoExporter: SessionCryptoExporter
 
   /// Suffix for the crypto companion blob (appended to the bulk store's name).
   private static let cryptoSuffix = ".crypto"
+
+  init(cryptoExporter: SessionCryptoExporter) {
+    self.cryptoExporter = cryptoExporter
+  }
 
   /// Everything restored from disk at unlock, ready for the coordinator to apply.
   struct Loaded {
@@ -145,25 +155,38 @@ final class SessionPersistence {
   @discardableResult
   func saveCrypto(_ snapshot: Snapshot) -> Bool {
     guard let cryptoStore else { return false }
-    // The session pickle is re-exported here so the sealed ratchet state never
-    // lags the live one (a stale pickle would reuse Olm message indices). Secret
-    // — only ever written sealed.
-    var sessions: [String: PersistedSession] = [:]
-    let ids = Set(snapshot.sessions.keys)
-      .union(snapshot.pendingInitiation.keys)
-      .union(snapshot.lastInitiationIn.keys)
-    for id in ids {
-      let entry = PersistedSession(
-        pickle: try? snapshot.sessions[id]?.exportPickle(),
-        pendingInitiation: snapshot.pendingInitiation[id],
-        lastInitiationIn: snapshot.lastInitiationIn[id])
-      if !entry.isEmpty { sessions[id.base64EncodedString()] = entry }
+    let crypto: PersistedCrypto
+    do {
+      // Export every live secret before writing anything. A single export
+      // failure leaves the last known-good crypto blob untouched.
+      var sessions: [String: PersistedSession] = [:]
+      let ids = Set(snapshot.sessions.keys)
+        .union(snapshot.pendingInitiation.keys)
+        .union(snapshot.lastInitiationIn.keys)
+      for id in ids {
+        let pickle: Data?
+        if let session = snapshot.sessions[id] {
+          pickle = try cryptoExporter.exportSession(session)
+        } else {
+          pickle = nil
+        }
+        let entry = PersistedSession(
+          pickle: pickle,
+          pendingInitiation: snapshot.pendingInitiation[id],
+          lastInitiationIn: snapshot.lastInitiationIn[id])
+        if !entry.isEmpty { sessions[id.base64EncodedString()] = entry }
+      }
+      var exported = PersistedCrypto()
+      if let account = snapshot.account {
+        exported.olmAccountPickle = try cryptoExporter.exportAccount(account)
+      }
+      exported.olmFallbackKey = snapshot.account?.exportFallbackKey()
+      exported.fallbackRotatedAt = snapshot.fallbackRotatedAt?.timeIntervalSince1970
+      exported.sessions = sessions
+      crypto = exported
+    } catch {
+      return false
     }
-    var crypto = PersistedCrypto()
-    crypto.olmAccountPickle = snapshot.account.flatMap { try? $0.exportOlmPickle() }
-    crypto.olmFallbackKey = snapshot.account?.exportFallbackKey()
-    crypto.fallbackRotatedAt = snapshot.fallbackRotatedAt?.timeIntervalSince1970
-    crypto.sessions = sessions
     return cryptoStore.save(crypto)
   }
 
@@ -271,4 +294,14 @@ final class SessionPersistence {
     }
     return ids
   }
+}
+
+extension SessionPersistence {
+  convenience init() {
+    self.init(
+      cryptoExporter: SessionCryptoExporter(
+        exportAccount: { try $0.exportOlmPickle() },
+        exportSession: { try $0.exportPickle() }))
+  }
+
 }

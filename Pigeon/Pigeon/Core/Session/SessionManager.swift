@@ -106,7 +106,7 @@ final class SessionManager {
   var didWarnAboutSaveFailure = false
   /// Owns the encrypted store and the codec between the live state and disk
   /// (including building the bound Olm account). See `SessionPersistence`.
-  let persistence = SessionPersistence()
+  let persistence: SessionPersistence
 
   /// Configured relay endpoints, mirrored here so the value is observable —
   /// changing it refreshes anything that depends on it (e.g. the QR card, which
@@ -117,8 +117,15 @@ final class SessionManager {
     self.init(identity: identity, mesh: nil)
   }
 
-  init(identity: IdentityManager, mesh: MeshService?) {
+  convenience init(identity: IdentityManager, mesh: MeshService?) {
+    self.init(identity: identity, mesh: mesh, persistence: SessionPersistence())
+  }
+
+  init(
+    identity: IdentityManager, mesh: MeshService?, persistence: SessionPersistence
+  ) {
     self.identity = identity
+    self.persistence = persistence
     if let mesh {
       self.mesh = mesh
       self.relay = nil
