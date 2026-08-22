@@ -213,7 +213,7 @@ final class SessionRelaunchDeliveryTests: XCTestCase {
     let failing = EncryptedStore(
       key: aIsInitiator ? keyB : keyA,
       fileName: "missing-parent/failing.store")
-    _ = receiver.persistence.attach(failing, identitySeed: receiver.identity.identitySeed)
+    _ = try receiver.persistence.attach(failing, identitySeed: receiver.identity.identitySeed)
 
     sender.send("must remain pending", to: responderContact(sender, receiver.myID))
 
