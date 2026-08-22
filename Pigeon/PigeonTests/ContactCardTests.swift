@@ -64,8 +64,11 @@ final class ContactCardTests: XCTestCase {
     let shareURL = try XCTUnwrap(card.shareURL)
     let decoded = ContactCard(scanned: shareURL.absoluteString)
 
-    XCTAssertEqual(shareURL.scheme, "pigeon")
-    XCTAssertEqual(shareURL.host, "contact")
+    XCTAssertEqual(shareURL.scheme, "https")
+    XCTAssertEqual(shareURL.host, "pigeonwire.app")
+    XCTAssertEqual(shareURL.path, "/contact")
+    XCTAssertNil(shareURL.query)
+    XCTAssertTrue(shareURL.fragment?.hasPrefix("card=") == true)
     XCTAssertEqual(decoded?.name, "Remote Alice")
     XCTAssertEqual(decoded?.bundle, bundle)
     XCTAssertEqual(decoded?.relayURLs, urls)
@@ -83,9 +86,9 @@ final class ContactCardTests: XCTestCase {
       relaySignature: signature, prekeyBundle: nil)
 
     let shareURL = try XCTUnwrap(card.shareURL)
-    let payload = try XCTUnwrap(
-      URLComponents(string: shareURL.absoluteString)?
-        .queryItems?.first { $0.name == "card" }?.value)
+    let fragment = try XCTUnwrap(URLComponents(string: shareURL.absoluteString)?.fragment)
+    XCTAssertTrue(fragment.hasPrefix("card="))
+    let payload = String(fragment.dropFirst("card=".count))
 
     let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
       .union(CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789-_"))
@@ -99,6 +102,7 @@ final class ContactCardTests: XCTestCase {
   func testMalformedSharedContactLinkIsRejected() {
     XCTAssertNil(ContactCard(scanned: "pigeon://contact?card=not-a-card"))
     XCTAssertNil(ContactCard(scanned: "https://example.com/?card=anything"))
+    XCTAssertNil(ContactCard(scanned: "https://pigeonwire.app/not-contact?card=anything"))
   }
 
   func testUnsignedRelayURLsAreDropped() throws {

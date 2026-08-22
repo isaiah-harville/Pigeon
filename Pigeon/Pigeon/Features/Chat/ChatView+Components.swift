@@ -8,17 +8,8 @@
 import SwiftUI
 
 enum ChatInteraction {
-  enum EphemeralSwipeAction: Equatable {
-    case enable
-    case confirmDisable
-  }
-
-  static func shouldToggleEphemeral(width: CGFloat, height: CGFloat) -> Bool {
-    height <= -60 && abs(width) < abs(height)
-  }
-
-  static func ephemeralSwipeAction(isEphemeral: Bool) -> EphemeralSwipeAction {
-    isEphemeral ? .confirmDisable : .enable
+  static func shouldSwitchTransport(width: CGFloat, height: CGFloat) -> Bool {
+    abs(width) >= 24 && abs(width) > abs(height)
   }
 }
 

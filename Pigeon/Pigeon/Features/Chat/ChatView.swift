@@ -17,14 +17,12 @@ struct ChatView: View {
   @State private var showRename = false
   @State private var newName = ""
   @State private var replyTarget: ChatMessage?
-  @State private var showDisableEphemeralConfirmation = false
   @FocusState private var composerFocused: Bool
 
   private var messages: [ChatMessage] { session.messages(with: contact) }
 
   var body: some View {
     chatLayout
-      .navigationTitle(contact.displayName)
       .navigationBarTitleDisplayMode(.inline)
       .onAppear { session.activeChatID = contact.id }
       .onDisappear { if session.activeChatID == contact.id { session.activeChatID = nil } }
@@ -40,23 +38,11 @@ struct ChatView: View {
         Button("Cancel", role: .cancel) {}
         Button("Save") { session.renameContact(contact, to: newName) }
       }
-      .confirmationDialog(
-        "Turn off Ephemeral Chat?",
-        isPresented: $showDisableEphemeralConfirmation,
-        titleVisibility: .visible
-      ) {
-        Button("Turn Off", role: .destructive) {
-          session.setEphemeral(false, for: contact)
-        }
-        Button("Cancel", role: .cancel) {}
-      } message: {
-        Text("Future messages will be saved on this device.")
-      }
   }
 
   private var chatLayout: some View {
     VStack(spacing: 0) {
-      ChatStatusBanner(contact: contact, showSafetyNumber: $showSafetyNumber)
+      ChatStatusBanner(contact: contact)
       messagesScroll
       composer
       if session.hasRelay {
@@ -100,19 +86,6 @@ struct ChatView: View {
     ) { text, reply in
       session.send(text, replySnippet: reply?.replySnippetText, to: contact)
     }
-    .simultaneousGesture(
-      DragGesture(minimumDistance: 20).onEnded { value in
-        guard
-          ChatInteraction.shouldToggleEphemeral(
-            width: value.translation.width, height: value.translation.height)
-        else { return }
-        switch ChatInteraction.ephemeralSwipeAction(isEphemeral: session.isEphemeral(contact)) {
-        case .enable:
-          session.setEphemeral(true, for: contact)
-        case .confirmDisable:
-          showDisableEphemeralConfirmation = true
-        }
-      })
   }
 
 }
@@ -121,6 +94,20 @@ extension ChatView {
 
   @ToolbarContentBuilder
   private var chatToolbar: some ToolbarContent {
+    ToolbarItem(placement: .principal) {
+      Button {
+        showSafetyNumber = true
+      } label: {
+        HStack(spacing: 5) {
+          Text(contact.displayName)
+            .font(.headline)
+            .lineLimit(1)
+          VerifiedBadge(verified: session.isVerifiedInPerson(contact), font: .caption)
+        }
+      }
+      .buttonStyle(.plain)
+      .accessibilityHint("Shows safety number")
+    }
     ToolbarItem(placement: .primaryAction) {
       Menu {
         chatMenuContent

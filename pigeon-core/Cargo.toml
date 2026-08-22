@@ -1,6 +1,6 @@
 [package]
 name = "pigeon-core"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "Pigeon's pairwise end-to-end-encrypted messaging core (Olm via vodozemac), with an Ed25519 identity binding over Olm's Curve25519 identity key."
 license = "AGPL-3.0-only"

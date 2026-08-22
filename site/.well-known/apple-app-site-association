@@ -1,0 +1,17 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": [
+          "PUMV3ZMP9G.com.isaiah-harville.Pigeon"
+        ],
+        "components": [
+          {
+            "/": "/contact",
+            "comment": "Pigeon contact links"
+          }
+        ]
+      }
+    ]
+  }
+}

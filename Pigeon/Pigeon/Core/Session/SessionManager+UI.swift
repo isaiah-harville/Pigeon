@@ -108,7 +108,7 @@ extension SessionManager {
   }
 
   /// Whether a relay is configured at all, so the UI can offer the relay option.
-  var hasRelay: Bool { relayLinkState != .disabled }
+  var hasRelay: Bool { !relayURLs.isEmpty }
 
   /// Whether `contact`'s chat sends over Bluetooth. Relay is the default for
   /// every chat (we encourage relays); Bluetooth is the opt-in second option.

@@ -118,7 +118,7 @@ sessions in `pigeon-core`). The mesh layer relays opaque ciphertext;
   incompatible with the X25519/Ed25519 stack the protocols require.
 - The public key's **SHA-256 fingerprint** is the device's address/handle.
 - Public identities are exchanged **in person via QR code** or remotely as a
-  `pigeon://contact` link containing the same public ContactCard. A remotely
+  `https://pigeonwire.app/contact` link containing the same public ContactCard. A remotely
   imported card is explicitly marked **not verified in person**. From a pair of
   public keys we derive a **60-digit safety number** (order-independent, 5200
   rounds of domain-separated iterated hashing under the versioned context

@@ -9,13 +9,11 @@
 
 import SwiftUI
 
-/// The chat header: encryption state, an unverified-contact nudge, and the live
-/// chosen-link status. Reads observable session state so it refreshes as the
-/// session establishes and links come and go.
+/// The chat header's encryption and live chosen-link state. Contact trust is
+/// shown beside the navigation title so it stays visually attached to the name.
 struct ChatStatusBanner: View {
   @Environment(SessionManager.self) private var session
   let contact: Contact
-  @Binding var showSafetyNumber: Bool
 
   private var isSecure: Bool { session.establishedContactIDs.contains(contact.id) }
 
@@ -31,7 +29,6 @@ struct ChatStatusBanner: View {
         }
       }
       .foregroundStyle(isSecure ? .green : .secondary)
-      trustRow
       ConnectionSummary(contact: contact)
     }
     .font(.footnote)
@@ -40,27 +37,6 @@ struct ChatStatusBanner: View {
     .background(.bar)
   }
 
-  /// Who's on the other end, separate from whether the chat is encrypted: both
-  /// states are shown (verified as reassurance, unverified as a nudge), and
-  /// either opens the safety number to compare.
-  private var trustRow: some View {
-    let verified = session.isVerifiedInPerson(contact)
-    return Button {
-      showSafetyNumber = true
-    } label: {
-      HStack(spacing: 6) {
-        VerifiedBadge(verified: verified, font: .footnote)
-        Text(
-          verified
-            ? "Verified in person"
-            : "Not verified in person — compare the safety number"
-        )
-        .foregroundStyle(verified ? Color.green : Color.orange)
-        Spacer()
-      }
-    }
-    .buttonStyle(.plain)
-  }
 }
 
 /// The chat's chosen link and whether it can carry a message *right now*, shown
@@ -121,6 +97,11 @@ struct TransportPill: View {
     .padding(.horizontal)
     .gesture(
       DragGesture(minimumDistance: 24).onEnded { value in
+        guard
+          ChatInteraction.shouldSwitchTransport(
+            width: value.translation.width, height: value.translation.height
+          )
+        else { return }
         session.setChatUsesBluetooth(value.translation.width > 0, for: contact)
       }
     )
