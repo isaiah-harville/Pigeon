@@ -167,7 +167,7 @@ struct MenuView: View {
   private var relayFooter: String {
     """
     Reach contacts who are out of Bluetooth range. \
-    Relay servers are federated and open-sourced — we encourage you to host your own.
+    Relay servers are federated and open-sourced — we encourage you to host your own!
     """
   }
 
