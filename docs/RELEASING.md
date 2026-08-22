@@ -13,7 +13,10 @@ component manifests and are changed in normal reviewed pull requests:
 
 All versions use semantic versioning. The release-version workflow
 requires a version bump whenever component code, protocol, packaging, or
-deployment files change. Documentation-only changes do not require a bump.
+deployment files change. The iOS app may accumulate reviewed changes under its
+declared version until that version receives a `vX.Y.Z` or `ios-vX.Y.Z` tag;
+after tagging, the next app change must bump the version. Documentation-only
+changes do not require a bump.
 
 Merges to `main` publish the `latest` website and relay container images. When
 the website or relay's declared version changes, that merge also publishes the

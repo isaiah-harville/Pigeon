@@ -39,6 +39,9 @@ jobs:
       - name: Validate declared versions
         run: bash .github/scripts/check-versions.sh
 
+      - name: Test version-bump detection
+        run: bash .github/scripts/test-check-version-bumps.sh
+
       - name: Require version bumps for component changes
         if: github.event_name == 'pull_request'
         run: bash .github/scripts/check-version-bumps.sh "${{ github.event.pull_request.base.sha }}"

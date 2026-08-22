@@ -61,13 +61,3 @@ extension Reassembler {
   /// Feeds one fragment in; returns the whole message once it completes.
   public func ingest(_ fragment: Fragment) throws -> Data? { try ingest(fragment: fragment) }
 }
-
-// MARK: - Sendability
-
-// The mesh value types are immutable bundles of bytes/scalars — safe to move
-// across isolation boundaries, as the old PigeonMesh package's types were.
-extension MeshPacket: @unchecked Sendable {}
-extension Fragment: @unchecked Sendable {}
-extension SessionEnvelope: @unchecked Sendable {}
-extension Reception: @unchecked Sendable {}
-extension EnvelopeType: @unchecked Sendable {}
