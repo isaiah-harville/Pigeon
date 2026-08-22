@@ -17,6 +17,13 @@ import XCTest
 @MainActor
 final class SessionPersistenceTests: XCTestCase {
 
+  func testLegacyPersistedSessionDecodesWithEmptyReplayLedger() throws {
+    let decoded = try JSONDecoder().decode(PersistedSession.self, from: Data("{}".utf8))
+
+    XCTAssertTrue(decoded.acceptedInitiationDigests.isEmpty)
+    XCTAssertTrue(decoded.isEmpty)
+  }
+
   private enum ExportFailure: Error {
     case injected
   }

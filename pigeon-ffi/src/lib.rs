@@ -157,6 +157,15 @@ pub fn parse_prekey_bundle(encoded: Vec<u8>) -> Result<PrekeyBundleView, PigeonE
     })
 }
 
+/// Decodes and re-encodes an initiation using Pigeon's canonical protobuf and
+/// Olm encoders. Replay ledgers must identify the semantic initiation rather
+/// than attacker-controlled protobuf bytes, which may contain unknown fields or
+/// alternate field ordering.
+#[uniffi::export]
+pub fn canonicalize_initiation(encoded: Vec<u8>) -> Result<Vec<u8>, PigeonError> {
+    Ok(Initiation::decode(&encoded)?.encode())
+}
+
 /// One device's account (Ed25519 identity + Olm account). Wraps
 /// [`pigeon_core::Account`] behind a `Mutex` so the UniFFI object can expose the
 /// account's mutating operations (key consumption, prekey rotation) through
@@ -421,6 +430,24 @@ mod tests {
             parse_identity_bundle(bad.encode()),
             Err(PigeonError::InvalidSignature)
         ));
+    }
+
+    #[test]
+    fn initiation_canonicalization_discards_unknown_protobuf_fields() {
+        let alice = FfiAccount::generate().unwrap();
+        let bob = FfiAccount::generate().unwrap();
+        let initiation = alice
+            .establish_outbound(bob.signed_prekey_bundle(), Vec::new())
+            .unwrap()
+            .initiation;
+        let mut alternate = initiation.clone();
+        alternate.extend_from_slice(&[0x18, 0x00]);
+
+        assert_ne!(alternate, initiation);
+        assert_eq!(
+            canonicalize_initiation(alternate).unwrap(),
+            canonicalize_initiation(initiation).unwrap()
+        );
     }
 
     #[test]

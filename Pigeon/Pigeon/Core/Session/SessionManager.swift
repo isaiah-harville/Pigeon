@@ -188,6 +188,7 @@ final class SessionManager {
     establishedContactIDs = Set(loaded.sessions.keys)
     pendingInitiation = loaded.pendingInitiation
     lastInitiationIn = loaded.lastInitiationIn
+    acceptedInitiationDigests = loaded.acceptedInitiationDigests
     fallbackRotatedAt = loaded.fallbackRotatedAt
     isUnlocked = true
     isPersistenceHealthy = true
@@ -378,6 +379,10 @@ extension SessionManager {
   var lastInitiationIn: [Data: Data] {
     get { sessionRegistry.lastInitiationIn }
     set { sessionRegistry.lastInitiationIn = newValue }
+  }
+  var acceptedInitiationDigests: [Data: Set<Data>] {
+    get { sessionRegistry.acceptedInitiationDigests }
+    set { sessionRegistry.acceptedInitiationDigests = newValue }
   }
 }
 

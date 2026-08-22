@@ -75,8 +75,36 @@ struct PersistedSession: Codable {
   /// The last initiation we processed (responder-side dedup), so a retransmit
   /// after relaunch doesn't rebuild a second session. `nil` until we accept one.
   var lastInitiationIn: Data?
+  /// SHA-256 digests of every initiation accepted for this contact.
+  var acceptedInitiationDigests: [Data]
 
-  var isEmpty: Bool { pickle == nil && pendingInitiation == nil && lastInitiationIn == nil }
+  var isEmpty: Bool {
+    pickle == nil && pendingInitiation == nil && lastInitiationIn == nil
+      && acceptedInitiationDigests.isEmpty
+  }
+
+  init(
+    pickle: Data?, pendingInitiation: Data?, lastInitiationIn: Data?,
+    acceptedInitiationDigests: [Data]
+  ) {
+    self.pickle = pickle
+    self.pendingInitiation = pendingInitiation
+    self.lastInitiationIn = lastInitiationIn
+    self.acceptedInitiationDigests = acceptedInitiationDigests
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case pickle, pendingInitiation, lastInitiationIn, acceptedInitiationDigests
+  }
+
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    pickle = try values.decodeIfPresent(Data.self, forKey: .pickle)
+    pendingInitiation = try values.decodeIfPresent(Data.self, forKey: .pendingInitiation)
+    lastInitiationIn = try values.decodeIfPresent(Data.self, forKey: .lastInitiationIn)
+    acceptedInitiationDigests =
+      try values.decodeIfPresent([Data].self, forKey: .acceptedInitiationDigests) ?? []
+  }
 }
 
 /// The small, frequently-rewritten crypto state, sealed apart from the bulk so a

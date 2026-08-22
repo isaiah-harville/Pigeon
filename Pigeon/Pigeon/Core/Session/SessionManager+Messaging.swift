@@ -68,6 +68,8 @@ extension SessionManager {
       return true
     }
 
+    guard let initiationDigest = freshInitiationDigest(payload, from: contact) else { return true }
+
     guard let account else { return false }
 
     // Establish, then confirm the initiation's verified identity matches this
@@ -80,6 +82,7 @@ extension SessionManager {
     }
 
     lastInitiationIn[contact.id] = payload
+    acceptedInitiationDigests[contact.id, default: []].insert(initiationDigest)
     sessions[contact.id] = inbound.session
     establishedContactIDs.insert(contact.id)
     guard persist() else { return false }  // establishInbound may have consumed a one-time key
@@ -95,6 +98,21 @@ extension SessionManager {
     // the initiation, now that we can encrypt to this contact.
     sendPending(to: contact)
     return true
+  }
+
+  private func freshInitiationDigest(_ payload: Data, from contact: Contact) -> Data? {
+    guard let canonicalInitiation = try? canonicalizeInitiation(encoded: payload) else {
+      note(.sessionRejected)
+      return nil
+    }
+    let digest = InitiationReplayLedger.digest(canonicalInitiation)
+    let acceptedDigests = acceptedInitiationDigests[contact.id, default: []]
+    guard !acceptedDigests.contains(digest) else { return nil }
+    guard acceptedDigests.count < InitiationReplayLedger.maximumEntriesPerContact else {
+      note(.sessionRejected)
+      return nil
+    }
+    return digest
   }
 
   func handleMessage(_ payload: Data, from contact: Contact, channel: TransportChannel) -> Bool {

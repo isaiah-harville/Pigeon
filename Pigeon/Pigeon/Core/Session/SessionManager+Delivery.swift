@@ -224,6 +224,7 @@ extension SessionManager {
       sessions: sessions,
       pendingInitiation: pendingInitiation,
       lastInitiationIn: lastInitiationIn,
+      acceptedInitiationDigests: acceptedInitiationDigests,
       fallbackRotatedAt: fallbackRotatedAt)
   }
 }

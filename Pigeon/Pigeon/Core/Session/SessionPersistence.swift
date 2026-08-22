@@ -73,6 +73,7 @@ final class SessionPersistence {
     var sessions: [Data: PigeonSession]
     var pendingInitiation: [Data: Data]
     var lastInitiationIn: [Data: Data]
+    var acceptedInitiationDigests: [Data: Set<Data>]
     /// When the signed-prekey (fallback) was last rotated; `nil` if never stamped.
     var fallbackRotatedAt: Date?
   }
@@ -91,6 +92,7 @@ final class SessionPersistence {
     var sessions: [Data: PigeonSession]
     var pendingInitiation: [Data: Data]
     var lastInitiationIn: [Data: Data]
+    var acceptedInitiationDigests: [Data: Set<Data>] = [:]
     var fallbackRotatedAt: Date?
   }
 
@@ -130,6 +132,7 @@ final class SessionPersistence {
       sessions: sessionState.sessions,
       pendingInitiation: sessionState.pending,
       lastInitiationIn: sessionState.lastIn,
+      acceptedInitiationDigests: sessionState.acceptedDigests,
       fallbackRotatedAt: crypto.fallbackRotatedAt.map { Date(timeIntervalSince1970: $0) })
     self.store = store
     self.cryptoStore = cryptoStore
@@ -195,11 +198,13 @@ final class SessionPersistence {
   /// keyed by contact id. A session whose pickle no longer decodes is simply
   /// skipped (it re-establishes on next contact), never crashing the unlock.
   private static func decodeSessionState(_ persisted: [String: PersistedSession]) throws -> (
-    sessions: [Data: PigeonSession], pending: [Data: Data], lastIn: [Data: Data]
+    sessions: [Data: PigeonSession], pending: [Data: Data], lastIn: [Data: Data],
+    acceptedDigests: [Data: Set<Data>]
   ) {
     var sessions: [Data: PigeonSession] = [:]
     var pending: [Data: Data] = [:]
     var lastIn: [Data: Data] = [:]
+    var acceptedDigests: [Data: Set<Data>] = [:]
     for (key, entry) in persisted {
       guard let id = Data(base64Encoded: key) else {
         throw SessionPersistenceError.invalidCryptoState
@@ -214,8 +219,13 @@ final class SessionPersistence {
       }
       if let initiation = entry.pendingInitiation { pending[id] = initiation }
       if let initiation = entry.lastInitiationIn { lastIn[id] = initiation }
+      var digests = Set(entry.acceptedInitiationDigests)
+      if let initiation = entry.lastInitiationIn {
+        digests.insert(InitiationReplayLedger.digest(initiation))
+      }
+      if !digests.isEmpty { acceptedDigests[id] = digests }
     }
-    return (sessions, pending, lastIn)
+    return (sessions, pending, lastIn, acceptedDigests)
   }
 
   private static func decodeConversations(_ stored: [String: [ChatMessage]]) throws -> [Data:
@@ -298,12 +308,18 @@ extension SessionPersistence {
       let ids = Set(snapshot.sessions.keys)
         .union(snapshot.pendingInitiation.keys)
         .union(snapshot.lastInitiationIn.keys)
+        .union(snapshot.acceptedInitiationDigests.keys)
       for id in ids {
         let pickle = try snapshot.sessions[id].map(cryptoExporter.exportSession)
+        let sortedDigests =
+          snapshot.acceptedInitiationDigests[id]?.sorted { first, second in
+            first.lexicographicallyPrecedes(second)
+          } ?? []
         let entry = PersistedSession(
           pickle: pickle,
           pendingInitiation: snapshot.pendingInitiation[id],
-          lastInitiationIn: snapshot.lastInitiationIn[id])
+          lastInitiationIn: snapshot.lastInitiationIn[id],
+          acceptedInitiationDigests: sortedDigests)
         if !entry.isEmpty { sessions[id.base64EncodedString()] = entry }
       }
       var exported = PersistedCrypto()

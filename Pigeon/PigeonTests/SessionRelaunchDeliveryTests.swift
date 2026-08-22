@@ -90,6 +90,10 @@ final class InMemoryKeyStore: KeyStore {
 @MainActor
 final class SessionRelaunchDeliveryTests: XCTestCase {
 
+  private enum TestError: Error {
+    case couldNotGenerateOrderedIdentity
+  }
+
   /// Builds a device's SessionManager over the bus, unlocked against `storeFile`
   /// with the given key + identity seed, and connects it to the bus.
   private func launch(
@@ -119,6 +123,19 @@ final class SessionRelaunchDeliveryTests: XCTestCase {
   }
 
   private func newSeed() -> Data { Curve25519.Signing.PrivateKey().rawRepresentation }
+
+  private func account(preceding identity: Data) throws -> (
+    account: PigeonAccount, bundle: PigeonIdentityBundle
+  ) {
+    for _ in 0..<512 {
+      let account = try PigeonAccount.fromIdentitySeed(seed: newSeed())
+      let bundle = try PigeonIdentityBundle(decoding: account.identityBundle())
+      if bundle.identityKey.lexicographicallyPrecedes(identity) {
+        return (account, bundle)
+      }
+    }
+    throw TestError.couldNotGenerateOrderedIdentity
+  }
 
   private enum ExportFailure: Error {
     case injected
@@ -167,6 +184,73 @@ final class SessionRelaunchDeliveryTests: XCTestCase {
 
     XCTAssertFalse(a.isPersistenceHealthy)
     XCTAssertFalse(texts(b, with: a.myID).contains("must not leave the sender"))
+  }
+
+  func testOlderFallbackInitiationCannotReplaceNewerSessionAfterRelaunch() throws {
+    let bus = TestBus()
+    let responderSeed = newSeed()
+    let responderKey = SymmetricKey(size: .bits256)
+    let storeFile = "fallback-initiation-replay.store"
+    let store = EncryptedStore(key: responderKey, fileName: storeFile)
+    store.wipe()
+    store.companion(suffix: ".crypto").wipe()
+    store.companion(suffix: ".transaction").wipe()
+
+    let responder = try launch(
+      seed: responderSeed, key: responderKey, storeFile: storeFile, bus: bus)
+    let initiator = try account(preceding: responder.myID)
+    let initiatorPrekey = try PigeonPrekeyBundle(
+      decoding: initiator.account.signedPrekeyBundle())
+    XCTAssertTrue(
+      responder.addContact(
+        initiator.bundle, name: "Initiator", relayURLs: [], prekeyBundle: initiatorPrekey,
+        verifiedInPerson: true))
+    let contact = try XCTUnwrap(responder.contacts.first { $0.id == initiator.bundle.identityKey })
+    let responderPrekey = try PigeonPrekeyBundle(
+      decoding: try XCTUnwrap(responder.account).signedPrekeyBundle())
+    XCTAssertFalse(responderPrekey.oneTime)
+
+    let initiationA = try initiator.account.establishOutbound(
+      peerBundle: responderPrekey.encoded, firstPlaintext: Data()
+    ).initiation
+    let initiationB = try initiator.account.establishOutbound(
+      peerBundle: responderPrekey.encoded, firstPlaintext: Data()
+    ).initiation
+    XCTAssertTrue(responder.handleInitiation(initiationA, from: contact))
+    XCTAssertTrue(responder.handleInitiation(initiationB, from: contact))
+    XCTAssertEqual(responder.lastInitiationIn[contact.id], initiationB)
+
+    bus.disconnect(responder.myID)
+    let relaunched = try launch(
+      seed: responderSeed, key: responderKey, storeFile: storeFile, bus: bus)
+    let sessionBeforeReplay = try XCTUnwrap(relaunched.sessions[contact.id]).exportPickle()
+    var alternateEncodingOfA = initiationA
+    alternateEncodingOfA.append(contentsOf: [0x18, 0x00])
+    XCTAssertNotEqual(alternateEncodingOfA, initiationA)
+
+    XCTAssertTrue(relaunched.handleInitiation(alternateEncodingOfA, from: contact))
+
+    XCTAssertEqual(relaunched.lastInitiationIn[contact.id], initiationB)
+    XCTAssertEqual(
+      try XCTUnwrap(relaunched.sessions[contact.id]).exportPickle(), sessionBeforeReplay)
+
+    let boundedLedger = Set(
+      (0..<InitiationReplayLedger.maximumEntriesPerContact).map {
+        Data(SHA256.hash(data: Data("ledger-\($0)".utf8)))
+      })
+    relaunched.acceptedInitiationDigests[contact.id] = boundedLedger
+    let initiationC = try initiator.account.establishOutbound(
+      peerBundle: responderPrekey.encoded, firstPlaintext: Data()
+    ).initiation
+    XCTAssertTrue(relaunched.handleInitiation(initiationC, from: contact))
+    XCTAssertEqual(
+      try XCTUnwrap(relaunched.sessions[contact.id]).exportPickle(), sessionBeforeReplay)
+
+    relaunched.removeContact(contact)
+    bus.disconnect(relaunched.myID)
+    let afterRemoval = try launch(
+      seed: responderSeed, key: responderKey, storeFile: storeFile, bus: bus)
+    XCTAssertEqual(afterRemoval.acceptedInitiationDigests[contact.id], boundedLedger)
   }
 
   /// Two devices establish; the *initiator* is then terminated; the *responder*

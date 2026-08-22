@@ -250,9 +250,11 @@ extension SessionManager {
   }
 
   /// Fully forgets a contact: clears its conversation, drops it from the book, and
-  /// resets its Olm session. Reaching this contact again requires re-scanning
-  /// their QR (the deliberate, documented reset path). The opposite of
-  /// `deleteConversation`, which keeps the contact.
+  /// resets its Olm session. The compact replay tombstone remains so removing
+  /// and re-adding the same identity cannot make a recorded initiation fresh.
+  /// Reaching this contact again requires re-scanning their QR (the deliberate,
+  /// documented reset path). The opposite of `deleteConversation`, which keeps
+  /// the contact.
   func removeContact(_ contact: Contact) {
     conversationStore.clear(contactID: contact.id)
     activeConversationIDs.remove(contact.id)

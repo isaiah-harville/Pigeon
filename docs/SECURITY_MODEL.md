@@ -251,9 +251,16 @@ named one-time key is the replay defense.
 - **Replay.** A one-time prekey makes first contact single-use: once consumed the
   recipient cannot re-derive the same inbound session, so a replayed initiation
   fails. When the OPK pool is exhausted Olm falls back to the **fallback key**,
-  and first-contact replay resistance degrades to the fallback-key rotation
-  window — so application-level dedup/freshness is still required. Pigeon
-  replenishes OPKs and rotates the fallback key when next online.
+  which Olm deliberately permits reusing. Pigeon therefore persists a SHA-256
+  digest of every accepted initiation per contact and refuses any previously
+  accepted payload before it can replace the current session. A recording made
+  before this ledger first existed is outside the ledger; fallback-key rotation
+  bounds that migration window. Pigeon replenishes OPKs and rotates the fallback
+  key when next online. Digests survive contact removal and are capped at 256 per
+  identity; after the cap, further fresh initiations fail closed instead of
+  allowing unbounded encrypted-store growth. A future full identity rotation
+  clears the ledger because recordings addressed to the old identity are no
+  longer valid.
 - **Exhaustion / availability.** Olm uses the fallback key rather than refusing
   first contact when OPKs run out — availability chosen over denying delivery.
 - **Weaker forward secrecy at rest until the first reply.** Until the recipient
@@ -434,10 +441,11 @@ authoritative to-do list for reaching audit readiness.
    audited `vodozemac` crate, so the audit target is Pigeon's *use* of it: the
    `pigeon-core` ↔ `vodozemac` boundary, the protobuf wire encode/decode in
    `wire.rs`, and the UniFFI bridge — not a re-audit of Olm itself.
-3. **Prekey replay / freshness.** Define and test behavior for replayed prekey
-   initiations across the mesh's store-and-forward, confirming Olm's
-   one-time-key delete-on-use closes the window and that the signed-prekey-only
-   (one-time-key-exhausted) fallback replay window is acceptable and documented.
+3. ~~**Prekey replay / freshness.**~~ ✅ **Implemented.** Core tests record that
+   one-time-key replay fails while fallback-key replay succeeds at the Olm layer.
+   The app's encrypted, persistent initiation-digest ledger prevents an older
+   accepted fallback initiation from replacing a newer live session, including
+   across relaunch; fresh recovery initiations remain accepted.
 
 ### Should-address
 4. **Skipped-key DoS bound.** Review Olm's bound on stored skipped message keys
