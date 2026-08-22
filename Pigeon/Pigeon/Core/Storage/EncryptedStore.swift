@@ -104,10 +104,32 @@ struct PersistedCrypto: Codable {
   init() {}
 }
 
+/// One recoverable full-state generation. This record is sealed before either
+/// split destination is replaced, so startup can finish an interrupted commit
+/// without combining conversation state and ratchets from different saves.
+struct PersistedStateTransaction: Codable {
+  let bulk: PersistedState
+  let crypto: PersistedCrypto
+}
+
+/// Narrow file-system seam used to inject deterministic atomic-write failures.
+/// Production still uses `Data.write(.atomic)` and `FileManager.removeItem`.
+struct EncryptedStoreIO {
+  let write: (Data, URL, Data.WritingOptions) throws -> Void
+  let remove: (URL) throws -> Void
+
+  static func live() -> EncryptedStoreIO {
+    EncryptedStoreIO(
+      write: { try $0.write(to: $1, options: $2) },
+      remove: { try FileManager.default.removeItem(at: $0) })
+  }
+}
+
 /// Reads and writes a single sealed `Codable` blob in Application Support.
 struct EncryptedStore {
   private let key: SymmetricKey
   private let url: URL?
+  private let io: EncryptedStoreIO
 
   /// The default bulk store.
   init(key: SymmetricKey) {
@@ -122,17 +144,22 @@ struct EncryptedStore {
       appropriateFor: nil,
       create: true)
     self.url = base?.appendingPathComponent(fileName)
+    self.io = .live()
   }
 
   /// Explicit location injection for deterministic recovery tests.
   init(key: SymmetricKey, url: URL) {
-    self.key = key
-    self.url = url
+    self.init(key: key, optionalURL: url, io: .live())
   }
 
-  private init(key: SymmetricKey, optionalURL: URL?) {
+  init(key: SymmetricKey, url: URL, io: EncryptedStoreIO) {
+    self.init(key: key, optionalURL: url, io: io)
+  }
+
+  private init(key: SymmetricKey, optionalURL: URL?, io: EncryptedStoreIO) {
     self.key = key
     self.url = optionalURL
+    self.io = io
   }
 
   /// A companion store under the same key and directory whose file name is this
@@ -146,7 +173,8 @@ struct EncryptedStore {
     }
     return EncryptedStore(
       key: key,
-      optionalURL: companionURL)
+      optionalURL: companionURL,
+      io: io)
   }
 
   /// Returns `nil` only when no store exists. An inaccessible, unauthentic, or
@@ -194,8 +222,8 @@ struct EncryptedStore {
       let blob = try? SecretBox.seal(plaintext, key: key)
     else { return false }
     do {
-      try blob.write(
-        to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+      try io.write(
+        blob, url, [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
       return true
     } catch {
       return false
@@ -203,8 +231,15 @@ struct EncryptedStore {
   }
 
   /// Removes this on-disk blob (used when switching to ephemeral mode / wipe).
-  func wipe() {
-    guard let url else { return }
-    try? FileManager.default.removeItem(at: url)
+  @discardableResult
+  func wipe() -> Bool {
+    guard let url else { return false }
+    guard FileManager.default.fileExists(atPath: url.path) else { return true }
+    do {
+      try io.remove(url)
+      return true
+    } catch {
+      return false
+    }
   }
 }

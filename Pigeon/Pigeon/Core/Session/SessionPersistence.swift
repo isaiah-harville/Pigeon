@@ -46,10 +46,14 @@ final class SessionPersistence {
   /// The crypto store (account + per-contact session state), a sibling of `store`
   /// under the same key. Re-sealed on its own via `saveCrypto`.
   private var cryptoStore: EncryptedStore?
+  /// Durable intent for a full two-file generation. It exists only while a
+  /// recoverable full-state commit still needs to be applied or cleaned up.
+  private var transactionStore: EncryptedStore?
   private let cryptoExporter: SessionCryptoExporter
 
   /// Suffix for the crypto companion blob (appended to the bulk store's name).
   private static let cryptoSuffix = ".crypto"
+  private static let transactionSuffix = ".transaction"
 
   init(cryptoExporter: SessionCryptoExporter) {
     self.cryptoExporter = cryptoExporter
@@ -98,9 +102,17 @@ final class SessionPersistence {
   /// the next save).
   func attach(_ store: EncryptedStore, identitySeed: Data) throws -> Loaded {
     let cryptoStore = store.companion(suffix: Self.cryptoSuffix)
+    let transactionStore = store.companion(suffix: Self.transactionSuffix)
     let bulk: PersistedState
     let crypto: PersistedCrypto
     do {
+      if let pending = try transactionStore.load(PersistedStateTransaction.self) {
+        let bulkRecovered = store.save(pending.bulk)
+        let cryptoRecovered = cryptoStore.save(pending.crypto)
+        guard bulkRecovered, cryptoRecovered, transactionStore.wipe() else {
+          throw SessionPersistenceError.unreadableStore
+        }
+      }
       bulk = try store.load(PersistedState.self) ?? PersistedState()
       crypto = try cryptoStore.load(PersistedCrypto.self) ?? PersistedCrypto(migratingFrom: bulk)
     } catch {
@@ -121,73 +133,8 @@ final class SessionPersistence {
       fallbackRotatedAt: crypto.fallbackRotatedAt.map { Date(timeIntervalSince1970: $0) })
     self.store = store
     self.cryptoStore = cryptoStore
+    self.transactionStore = transactionStore
     return loaded
-  }
-
-  /// Writes the full state: the bulk blob (contacts + conversations + flags) and
-  /// the crypto blob (account + per-contact session state). No-op before `attach`.
-  /// Returns whether both blobs reached disk.
-  @discardableResult
-  func save(_ snapshot: Snapshot) -> Bool {
-    guard let store else { return false }
-    var conversationsByKey: [String: [ChatMessage]] = [:]
-    for (id, messages) in snapshot.conversations {
-      conversationsByKey[id.base64EncodedString()] = messages
-    }
-    let bulkSaved = store.save(
-      PersistedState(
-        contacts: snapshot.contacts.map(Self.encodeContact),
-        conversations: conversationsByKey,
-        ephemeralContactIDs: snapshot.ephemeralContactIDs.map { $0.base64EncodedString() },
-        bluetoothContactIDs: snapshot.bluetoothChatIDs.map { $0.base64EncodedString() },
-        activeConversationIDs: snapshot.activeConversationIDs.map { $0.base64EncodedString() },
-        myName: snapshot.myName,
-        olmAccountPickle: nil,  // crypto lives in the sibling blob now
-        olmFallbackKey: nil))
-    return saveCrypto(snapshot) && bulkSaved
-  }
-
-  /// Re-seals only the crypto blob (account + per-contact session state). Cheap
-  /// fast-path for the hot ratchet-advance path, where the bulk conversation
-  /// history is unchanged and need not be re-encoded. No-op before `attach`.
-  /// Returns whether the blob reached disk: a failure here means the sealed
-  /// ratchet state now lags the live one, which the caller should surface.
-  @discardableResult
-  func saveCrypto(_ snapshot: Snapshot) -> Bool {
-    guard let cryptoStore else { return false }
-    let crypto: PersistedCrypto
-    do {
-      // Export every live secret before writing anything. A single export
-      // failure leaves the last known-good crypto blob untouched.
-      var sessions: [String: PersistedSession] = [:]
-      let ids = Set(snapshot.sessions.keys)
-        .union(snapshot.pendingInitiation.keys)
-        .union(snapshot.lastInitiationIn.keys)
-      for id in ids {
-        let pickle: Data?
-        if let session = snapshot.sessions[id] {
-          pickle = try cryptoExporter.exportSession(session)
-        } else {
-          pickle = nil
-        }
-        let entry = PersistedSession(
-          pickle: pickle,
-          pendingInitiation: snapshot.pendingInitiation[id],
-          lastInitiationIn: snapshot.lastInitiationIn[id])
-        if !entry.isEmpty { sessions[id.base64EncodedString()] = entry }
-      }
-      var exported = PersistedCrypto()
-      if let account = snapshot.account {
-        exported.olmAccountPickle = try cryptoExporter.exportAccount(account)
-      }
-      exported.olmFallbackKey = snapshot.account?.exportFallbackKey()
-      exported.fallbackRotatedAt = snapshot.fallbackRotatedAt?.timeIntervalSince1970
-      exported.sessions = sessions
-      crypto = exported
-    } catch {
-      return false
-    }
-    return cryptoStore.save(crypto)
   }
 
   // MARK: - Account
@@ -297,6 +244,81 @@ final class SessionPersistence {
 }
 
 extension SessionPersistence {
+  /// Writes one recoverable full generation. The journal becomes durable before
+  /// either split destination changes and is removed only after both land.
+  @discardableResult
+  func save(_ snapshot: Snapshot) -> Bool {
+    guard let store, let cryptoStore, let transactionStore,
+      let crypto = encodeCrypto(snapshot)
+    else { return false }
+    var conversationsByKey: [String: [ChatMessage]] = [:]
+    for (id, messages) in snapshot.conversations {
+      conversationsByKey[id.base64EncodedString()] = messages
+    }
+    let bulk = PersistedState(
+      contacts: snapshot.contacts.map(Self.encodeContact),
+      conversations: conversationsByKey,
+      ephemeralContactIDs: snapshot.ephemeralContactIDs.map { $0.base64EncodedString() },
+      bluetoothContactIDs: snapshot.bluetoothChatIDs.map { $0.base64EncodedString() },
+      activeConversationIDs: snapshot.activeConversationIDs.map { $0.base64EncodedString() },
+      myName: snapshot.myName,
+      olmAccountPickle: nil,
+      olmFallbackKey: nil)
+    guard transactionStore.save(PersistedStateTransaction(bulk: bulk, crypto: crypto)) else {
+      return false
+    }
+    let bulkSaved = store.save(bulk)
+    let cryptoSaved = cryptoStore.save(crypto)
+    guard bulkSaved, cryptoSaved else { return false }
+    return transactionStore.wipe()
+  }
+
+  /// Re-seals only the crypto blob after a ratchet advance. Export completes
+  /// before the previous generation is replaced.
+  @discardableResult
+  func saveCrypto(_ snapshot: Snapshot) -> Bool {
+    guard transactionIsClear(), let cryptoStore, let crypto = encodeCrypto(snapshot) else {
+      return false
+    }
+    return cryptoStore.save(crypto)
+  }
+
+  private func transactionIsClear() -> Bool {
+    guard let transactionStore else { return false }
+    do {
+      return try transactionStore.load(PersistedStateTransaction.self) == nil
+    } catch {
+      return false
+    }
+  }
+
+  private func encodeCrypto(_ snapshot: Snapshot) -> PersistedCrypto? {
+    do {
+      var sessions: [String: PersistedSession] = [:]
+      let ids = Set(snapshot.sessions.keys)
+        .union(snapshot.pendingInitiation.keys)
+        .union(snapshot.lastInitiationIn.keys)
+      for id in ids {
+        let pickle = try snapshot.sessions[id].map(cryptoExporter.exportSession)
+        let entry = PersistedSession(
+          pickle: pickle,
+          pendingInitiation: snapshot.pendingInitiation[id],
+          lastInitiationIn: snapshot.lastInitiationIn[id])
+        if !entry.isEmpty { sessions[id.base64EncodedString()] = entry }
+      }
+      var exported = PersistedCrypto()
+      if let account = snapshot.account {
+        exported.olmAccountPickle = try cryptoExporter.exportAccount(account)
+      }
+      exported.olmFallbackKey = snapshot.account?.exportFallbackKey()
+      exported.fallbackRotatedAt = snapshot.fallbackRotatedAt?.timeIntervalSince1970
+      exported.sessions = sessions
+      return exported
+    } catch {
+      return nil
+    }
+  }
+
   convenience init() {
     self.init(
       cryptoExporter: SessionCryptoExporter(
