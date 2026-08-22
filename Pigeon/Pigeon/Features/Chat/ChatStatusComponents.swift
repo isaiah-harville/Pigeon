@@ -152,7 +152,7 @@ struct RelayPicker: View {
   var body: some View {
     let relays = session.advertisedRelays(for: contact)
     if !relays.isEmpty {
-      Picker("Relay for this chat", selection: selection) {
+      Picker("Relay", selection: selection) {
         Text("Automatic").tag(URL?.none)
         ForEach(relays, id: \.self) { url in
           Text(url.host ?? url.absoluteString).tag(URL?.some(url))

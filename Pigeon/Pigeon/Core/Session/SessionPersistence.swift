@@ -68,6 +68,7 @@ final class SessionPersistence {
     var ephemeralContactIDs: Set<Data>
     var bluetoothChatIDs: Set<Data>
     var activeConversationIDs: Set<Data>
+    var blockedContacts: [BlockedContact]
     var myName: String
     /// Restored live Olm sessions, keyed by contact id. A contact appearing here
     /// is (re)established without a fresh handshake.
@@ -86,6 +87,7 @@ final class SessionPersistence {
     var ephemeralContactIDs: Set<Data>
     var bluetoothChatIDs: Set<Data>
     var activeConversationIDs: Set<Data> = []
+    var blockedContacts: [BlockedContact] = []
     var myName: String
     var account: PigeonAccount?
     /// Live per-contact session state to seal alongside the account. Keyed by
@@ -129,6 +131,9 @@ final class SessionPersistence {
       ephemeralContactIDs: Self.decodeIDs(bulk.ephemeralContactIDs),
       bluetoothChatIDs: Self.decodeIDs(bulk.bluetoothContactIDs),
       activeConversationIDs: Self.decodeIDs(bulk.activeConversationIDs),
+      blockedContacts: bulk.blockedContacts.map { blocked in
+        BlockedContact(id: blocked.id, displayName: blocked.name)
+      },
       myName: bulk.myName,
       sessions: sessionState.sessions,
       pendingInitiation: sessionState.pending,
@@ -164,7 +169,11 @@ final class SessionPersistence {
       relayURLs: contact.relayURLs.map(\.absoluteString),
       preferredRelayURL: contact.preferredRelayURL?.absoluteString,
       prekeyBundle: contact.prekeyBundle?.encoded,
-      verifiedInPerson: contact.verifiedInPerson)
+      verifiedInPerson: contact.verifiedInPerson,
+      requestState: contact.requestState,
+      introductionSent: contact.introductionSent ? 1 : 0,
+      introductionReceived: contact.introductionReceived ? 1 : 0,
+      requestCreatedAt: contact.requestCreatedAt?.timeIntervalSince1970)
   }
 
   private static func decodeContacts(_ persisted: [PersistedContact]) throws -> [Contact] {
@@ -190,7 +199,11 @@ final class SessionPersistence {
         relayURLs: persisted.relayURLs.compactMap { URL(string: $0) },
         preferredRelayURL: persisted.preferredRelayURL.flatMap { URL(string: $0) },
         prekeyBundle: prekeyBundle,
-        verifiedInPerson: persisted.verifiedInPerson)
+        verifiedInPerson: persisted.verifiedInPerson,
+        requestState: persisted.requestState ?? .none,
+        introductionSent: persisted.introductionSent == 1,
+        introductionReceived: persisted.introductionReceived == 1,
+        requestCreatedAt: persisted.requestCreatedAt.map(Date.init(timeIntervalSince1970:)))
     }
   }
 
@@ -309,6 +322,9 @@ extension SessionPersistence {
       ephemeralContactIDs: snapshot.ephemeralContactIDs.map { $0.base64EncodedString() },
       bluetoothContactIDs: snapshot.bluetoothChatIDs.map { $0.base64EncodedString() },
       activeConversationIDs: snapshot.activeConversationIDs.map { $0.base64EncodedString() },
+      blockedContacts: snapshot.blockedContacts.map { blocked in
+        PersistedBlockedContact(id: blocked.id, name: blocked.displayName)
+      },
       myName: snapshot.myName,
       olmAccountPickle: nil,
       olmFallbackKey: nil)

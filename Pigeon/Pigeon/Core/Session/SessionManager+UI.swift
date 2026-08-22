@@ -8,6 +8,32 @@ import PigeonFFI
 
 extension SessionManager {
 
+  func setAppActive(_ active: Bool) { presenter.setAppActive(active) }
+  func dismissBanner() { presenter.dismissBanner() }
+
+  var blockedContactIDs: Set<Data> { Set(blockedContacts.map(\.id)) }
+
+  /// Preserves the pre-request call surface for in-person and established
+  /// contacts; remote-link callers opt into `.outgoing` explicitly.
+  @discardableResult
+  func addContact(
+    _ bundle: PigeonIdentityBundle, name: String, relayURLs: [URL],
+    prekeyBundle: PigeonPrekeyBundle?, verifiedInPerson: Bool
+  ) -> Bool {
+    addContact(
+      bundle, name: name, relayURLs: relayURLs, prekeyBundle: prekeyBundle,
+      admission: verifiedInPerson ? .verifiedInPerson : .unverified)
+  }
+
+  /// Persists and applies the full relay list (endpoints + enabled flags).
+  func setRelayEntries(_ entries: [RelayEntry]) {
+    RelaySettings.setEntries(entries)
+    let configured = RelaySettings.urls()
+    relayURLs = RelayTransport.advertisedRelays(
+      configured: configured, excluding: relay?.incompatibleRelayURLs ?? [])
+    relay?.reconfigure(configured)
+  }
+
   // MARK: - UI passthroughs
 
   var status: TransportStatus { mesh.status }
@@ -20,6 +46,14 @@ extension SessionManager {
   /// Hosts of our own relays we can currently receive on, for the chat header.
   var relayHosts: [String] { relay?.onlineRelayHosts ?? [] }
   var incompatibleRelayURLs: Set<URL> { relay?.incompatibleRelayURLs ?? [] }
+
+  var relayEligibleContactIDs: [Data] {
+    contacts.filter { $0.requestState != .incoming }.map(\.id)
+  }
+
+  func relayEligibleContact(_ id: Data) -> Contact? {
+    contacts.first { $0.id == id && $0.requestState != .incoming }
+  }
 
   /// Master network switch. Disabling tears down Bluetooth, local Wi-Fi, and
   /// relay links while preserving queued ciphertext and local state.
@@ -254,12 +288,79 @@ extension SessionManager {
 
   // MARK: - Contacts book vs. conversations
 
+  /// Incoming requests appear only after their one permitted introduction has
+  /// arrived; the authenticated session/card may be staged earlier off-screen.
+  var incomingMessageRequests: [Contact] {
+    contacts.filter { $0.requestState == .incoming && $0.introductionReceived }
+  }
+
+  /// Request senders get one ordinary introductory message. Recipients cannot
+  /// reply until accepting; normal contacts are unrestricted.
+  func canSendMessage(to contact: Contact) -> Bool {
+    guard let current = contacts.first(where: { $0.id == contact.id }) else { return false }
+    switch current.requestState {
+    case .none: return true
+    case .incoming: return false
+    case .outgoing: return !current.introductionSent
+    }
+  }
+
+  /// Promotes a request into the normal address book and sends a durable,
+  /// acknowledged event so the requester can lift its one-message limit.
+  func acceptMessageRequest(from contact: Contact) {
+    guard let index = contacts.firstIndex(where: { $0.id == contact.id }),
+      contacts[index].requestState == .incoming
+    else { return }
+    contacts[index].requestState = .none
+    activeConversationIDs.insert(contact.id)
+    var accepted = ChatMessage(
+      mine: true, text: "Message request accepted", pending: true)
+    accepted.system = true
+    accepted.event = .contactAccepted
+    guard record(accepted, for: contact.id) else { return }
+    refreshRelay()
+    armDeliveryDeadline(messageID: accepted.id, contactID: contact.id)
+    if let current = contacts.first(where: { $0.id == contact.id }) {
+      transmit(accepted, to: current)
+    }
+  }
+
+  func acceptOutgoingRequest(from contactID: Data) {
+    guard let index = contacts.firstIndex(where: { $0.id == contactID }),
+      contacts[index].requestState == .outgoing
+    else { return }
+    contacts[index].requestState = .none
+  }
+
+  /// Removes all relationship/session state and installs a durable reject
+  /// tombstone checked before future unknown-sender establishment work.
+  func blockContact(_ contact: Contact) {
+    if !blockedContactIDs.contains(contact.id) {
+      blockedContacts.append(BlockedContact(id: contact.id, displayName: contact.displayName))
+    }
+    conversationStore.clear(contactID: contact.id)
+    activeConversationIDs.remove(contact.id)
+    ephemeralContactIDs.remove(contact.id)
+    bluetoothChatIDs.remove(contact.id)
+    contacts.removeAll { $0.id == contact.id }
+    resetSession(for: contact.id)
+    rehandshakeGate.clear(contact.id)
+    persist()
+    refreshRelay()
+  }
+
+  func unblockContact(id: Data) {
+    guard blockedContactIDs.contains(id) else { return }
+    blockedContacts.removeAll { $0.id == id }
+    persist()
+  }
+
   /// The contacts with an open conversation, for the home (chats) list — sorted
   /// most-recent first, with chats that have no message yet (just started or
   /// freshly added) floated to the top. The full book is `contacts`.
   var chatContacts: [Contact] {
     contacts
-      .filter { activeConversationIDs.contains($0.id) }
+      .filter { $0.requestState != .incoming && activeConversationIDs.contains($0.id) }
       .sorted { lhs, rhs in
         let lhsDate = lastMessage(with: lhs)?.date ?? .distantFuture
         let rhsDate = lastMessage(with: rhs)?.date ?? .distantFuture

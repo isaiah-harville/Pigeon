@@ -21,6 +21,8 @@ struct AdvancedSettingsView: View {
     List {
       faradaySection
       lockedDeliverySection
+      pendingSendersSection
+      blockedContactsSection
       cleanSlateSection
     }
     .navigationTitle("Advanced Settings")
@@ -54,7 +56,7 @@ struct AdvancedSettingsView: View {
   private var faradaySection: some View {
     Section {
       Toggle(isOn: $connectivityEnabled) {
-        Label("Connectivity", systemImage: "antenna.radiowaves.left.and.right.slash")
+        Label("Connectivity", systemImage: "antenna.radiowaves.left.and.right")
       }
       .onChange(of: connectivityEnabled) { _, enabled in
         session.setConnectivityEnabled(enabled)
@@ -62,7 +64,9 @@ struct AdvancedSettingsView: View {
     } header: {
       Text("Faraday")
     } footer: {
-      Text("Turn off Bluetooth, local Wi-Fi discovery, and internet relays at once.")
+      Text(
+        "On allows Bluetooth, local Wi-Fi, and internet relays. "
+          + "Turn it off to stop all connectivity.")
     }
   }
 
@@ -86,23 +90,47 @@ struct AdvancedSettingsView: View {
   private var cleanSlateSection: some View {
     Section {
       Button(role: .destructive) {
+        showCleanSlateConfirmation = true
       } label: {
         Label(
-          cleanSlateRunning ? "Erasing…" : "Hold for Clean Slate",
+          cleanSlateRunning ? "Erasing…" : "Clean Slate",
           systemImage: "trash.slash"
         )
         .frame(maxWidth: .infinity, alignment: .leading)
       }
       .disabled(cleanSlateRunning)
-      .onLongPressGesture(minimumDuration: 5) {
-        showCleanSlateConfirmation = true
-      }
     } header: {
       Text("Clean Slate")
     } footer: {
       Text(
-        "Hold for 5 seconds, confirm, then authenticate. This deletes all messages "
+        "Tap, confirm, then authenticate. This deletes all messages "
           + "and contacts and creates a new long-term identity.")
+    }
+  }
+
+  private var blockedContactsSection: some View {
+    Section {
+      NavigationLink {
+        BlockedContactsView()
+      } label: {
+        Label("Blocked Contacts", systemImage: "person.crop.circle.badge.xmark")
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var pendingSendersSection: some View {
+    if session.stagedIncomingRequestCount > 0 {
+      Section {
+        Button(
+          "Clear Pending Senders (\(session.stagedIncomingRequestCount))",
+          role: .destructive
+        ) {
+          session.clearStagedIncomingRequests()
+        }
+      } footer: {
+        Text("These senders opened a secure session but have not sent an introduction.")
+      }
     }
   }
 

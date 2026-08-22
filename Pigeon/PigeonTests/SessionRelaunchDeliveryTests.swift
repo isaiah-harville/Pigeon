@@ -209,6 +209,15 @@ final class SessionRelaunchDeliveryTests: XCTestCase {
     let responderPrekey = try PigeonPrekeyBundle(
       decoding: try XCTUnwrap(responder.account).signedPrekeyBundle())
     XCTAssertFalse(responderPrekey.oneTime)
+    let initiatorCard = ContactCard(
+      name: "Initiator", bundle: initiator.bundle, relayURLs: [], relaySignature: Data(),
+      prekeyBundle: initiatorPrekey)
+    func wrapped(_ initiation: Data) throws -> Data {
+      try XCTUnwrap(
+        SessionInitiationPayload(
+          initiation: initiation, contactCard: initiatorCard.encoded()
+        ).encoded())
+    }
 
     let initiationA = try initiator.account.establishOutbound(
       peerBundle: responderPrekey.encoded, firstPlaintext: Data()
@@ -217,7 +226,16 @@ final class SessionRelaunchDeliveryTests: XCTestCase {
       peerBundle: responderPrekey.encoded, firstPlaintext: Data()
     ).initiation
     XCTAssertTrue(responder.handleInitiation(initiationA, from: contact))
-    XCTAssertTrue(responder.handleInitiation(initiationB, from: contact))
+    XCTAssertNil(responder.sessions[contact.id], "raw 1.2 initiations are rejected")
+    let wrongCardPayload = try XCTUnwrap(
+      SessionInitiationPayload(
+        initiation: initiationA,
+        contactCard: try XCTUnwrap(responder.myCard).encoded()
+      ).encoded())
+    XCTAssertTrue(responder.handleInitiation(wrongCardPayload, from: contact))
+    XCTAssertNil(responder.sessions[contact.id], "the wrapper card must match the sender")
+    XCTAssertTrue(responder.handleInitiation(try wrapped(initiationA), from: contact))
+    XCTAssertTrue(responder.handleInitiation(try wrapped(initiationB), from: contact))
     XCTAssertEqual(responder.lastInitiationIn[contact.id], initiationB)
 
     bus.disconnect(responder.myID)
@@ -228,7 +246,7 @@ final class SessionRelaunchDeliveryTests: XCTestCase {
     alternateEncodingOfA.append(contentsOf: [0x18, 0x00])
     XCTAssertNotEqual(alternateEncodingOfA, initiationA)
 
-    XCTAssertTrue(relaunched.handleInitiation(alternateEncodingOfA, from: contact))
+    XCTAssertTrue(relaunched.handleInitiation(try wrapped(alternateEncodingOfA), from: contact))
 
     XCTAssertEqual(relaunched.lastInitiationIn[contact.id], initiationB)
     XCTAssertEqual(
@@ -242,7 +260,7 @@ final class SessionRelaunchDeliveryTests: XCTestCase {
     let initiationC = try initiator.account.establishOutbound(
       peerBundle: responderPrekey.encoded, firstPlaintext: Data()
     ).initiation
-    XCTAssertTrue(relaunched.handleInitiation(initiationC, from: contact))
+    XCTAssertTrue(relaunched.handleInitiation(try wrapped(initiationC), from: contact))
     XCTAssertEqual(
       try XCTUnwrap(relaunched.sessions[contact.id]).exportPickle(), sessionBeforeReplay)
 

@@ -40,6 +40,17 @@ struct PersistedContact: Codable {
   /// Whether the contact was verified in person (scanned vs pasted). Defaults
   /// true so contacts saved before this field read as verified (§5.7 trust UX).
   var verifiedInPerson: Bool = true
+  /// Missing for pre-1.3 stores, which decode as a normal contact.
+  var requestState: ContactRequestState?
+  /// Optional so stores created before message requests remain decodable.
+  var introductionSent: Int?
+  var introductionReceived: Int?
+  var requestCreatedAt: TimeInterval?
+}
+
+struct PersistedBlockedContact: Codable {
+  var id: Data
+  var name: String
 }
 
 /// The bulky, slow-changing app state: contacts and conversation history.
@@ -56,12 +67,40 @@ struct PersistedState: Codable {
   /// shows on the home list). A contact can exist in the book without one — see
   /// the contacts/messaging split. Defaults empty.
   var activeConversationIDs: [String] = []
+  /// Optional for compatibility with stores written before message requests.
+  var blockedContacts: [PersistedBlockedContact] = []
   /// The local user's own display name, shared in their QR card.
   var myName: String = ""
   /// Legacy crypto fields — read only to migrate stores written before the
   /// crypto/bulk split, never written again (they live in `PersistedCrypto` now).
   var olmAccountPickle: Data?
   var olmFallbackKey: Data?
+
+}
+
+extension PersistedState {
+  private enum CodingKeys: String, CodingKey {
+    case contacts, conversations, ephemeralContactIDs, bluetoothContactIDs
+    case activeConversationIDs, blockedContacts, myName, olmAccountPickle, olmFallbackKey
+  }
+
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    contacts = try values.decodeIfPresent([PersistedContact].self, forKey: .contacts) ?? []
+    conversations =
+      try values.decodeIfPresent([String: [ChatMessage]].self, forKey: .conversations) ?? [:]
+    ephemeralContactIDs =
+      try values.decodeIfPresent([String].self, forKey: .ephemeralContactIDs) ?? []
+    bluetoothContactIDs =
+      try values.decodeIfPresent([String].self, forKey: .bluetoothContactIDs) ?? []
+    activeConversationIDs =
+      try values.decodeIfPresent([String].self, forKey: .activeConversationIDs) ?? []
+    blockedContacts =
+      try values.decodeIfPresent([PersistedBlockedContact].self, forKey: .blockedContacts) ?? []
+    myName = try values.decodeIfPresent(String.self, forKey: .myName) ?? ""
+    olmAccountPickle = try values.decodeIfPresent(Data.self, forKey: .olmAccountPickle)
+    olmFallbackKey = try values.decodeIfPresent(Data.self, forKey: .olmFallbackKey)
+  }
 }
 
 /// One contact's persisted Olm session state (secret — only ever written sealed).

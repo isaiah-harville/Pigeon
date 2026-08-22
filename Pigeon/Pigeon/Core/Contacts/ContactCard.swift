@@ -31,6 +31,8 @@ struct ContactCard {
   private static let version: UInt8 = 0x03
   private static let shareScheme = "pigeon"
   private static let shareHost = "contact"
+  static let maximumRelayCount = 8
+  private static let maximumRelayURLLength = 2_048
 
   init(
     name: String, bundle: PigeonIdentityBundle, relayURLs: [URL], relaySignature: Data,
@@ -87,13 +89,20 @@ struct ContactCard {
 
     self.name = payload.name
 
-    // Honour the advertised relays only if signed by this very identity.
-    let urlField = Self.relayPayload(payload.relayURLs.compactMap(URL.init(string:)))
-    if !payload.relaySignature.isEmpty,
+    // Honour a small, syntactically valid WebSocket relay set only if signed by
+    // this identity. Incoming requests do not activate these endpoints until
+    // the recipient accepts, preventing pre-consent network connections.
+    let parsedRelayURLs = payload.relayURLs.compactMap(URL.init(string:))
+    let relaysAreValid =
+      payload.relayURLs.count <= Self.maximumRelayCount
+      && parsedRelayURLs.count == payload.relayURLs.count
+      && parsedRelayURLs.allSatisfy(Self.isValidRelayURL)
+    let urlField = Self.relayPayload(parsedRelayURLs)
+    if relaysAreValid, !payload.relaySignature.isEmpty,
       let identity = try? IdentityPublicKey(rawRepresentation: bundle.identityKey),
       identity.isValidSignature(payload.relaySignature, for: urlField)
     {
-      self.relayURLs = payload.relayURLs.compactMap(URL.init(string:))
+      self.relayURLs = parsedRelayURLs
       self.relaySignature = payload.relaySignature
     } else {
       self.relayURLs = []
@@ -111,6 +120,15 @@ struct ContactCard {
     } else {
       self.prekeyBundle = nil
     }
+  }
+
+  private static func isValidRelayURL(_ url: URL) -> Bool {
+    guard url.absoluteString.utf8.count <= maximumRelayURLLength,
+      let scheme = url.scheme?.lowercased(), scheme == "ws" || scheme == "wss",
+      let host = url.host, !host.isEmpty,
+      url.user == nil, url.password == nil
+    else { return false }
+    return true
   }
 
   private static func cardPayload(from string: String) -> String? {

@@ -7,6 +7,21 @@
 
 import SwiftUI
 
+enum ChatInteraction {
+  enum EphemeralSwipeAction: Equatable {
+    case enable
+    case confirmDisable
+  }
+
+  static func shouldToggleEphemeral(width: CGFloat, height: CGFloat) -> Bool {
+    height <= -60 && abs(width) < abs(height)
+  }
+
+  static func ephemeralSwipeAction(isEphemeral: Bool) -> EphemeralSwipeAction {
+    isEphemeral ? .confirmDisable : .enable
+  }
+}
+
 /// Centered timeline chrome for day separators and low-importance system events.
 struct ChatTimelineMarker: View {
   let text: String

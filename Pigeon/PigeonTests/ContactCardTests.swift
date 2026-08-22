@@ -125,6 +125,28 @@ final class ContactCardTests: XCTestCase {
     XCTAssertEqual(decoded?.relayURLs, [])
   }
 
+  func testSignedNonWebSocketRelayURLIsDropped() throws {
+    let (idKey, bundle) = try makeIdentity()
+    let urls = [URL(string: "https://relay.example/private")!]
+    let signature = try idKey.signature(for: ContactCard.relayPayload(urls))
+    let card = ContactCard(
+      name: "Bob", bundle: bundle, relayURLs: urls, relaySignature: signature, prekeyBundle: nil)
+
+    XCTAssertEqual(ContactCard(scanned: card.encoded())?.relayURLs, [])
+  }
+
+  func testOversizedSignedRelayListIsDropped() throws {
+    let (idKey, bundle) = try makeIdentity()
+    let urls = try (0...ContactCard.maximumRelayCount).map { index in
+      try XCTUnwrap(URL(string: "wss://relay\(index).example/ws"))
+    }
+    let signature = try idKey.signature(for: ContactCard.relayPayload(urls))
+    let card = ContactCard(
+      name: "Bob", bundle: bundle, relayURLs: urls, relaySignature: signature, prekeyBundle: nil)
+
+    XCTAssertEqual(ContactCard(scanned: card.encoded())?.relayURLs, [])
+  }
+
   func testGarbageIsNotACard() {
     XCTAssertNil(ContactCard(scanned: "not base64 @@@"))
     XCTAssertNil(ContactCard(scanned: Data([1, 2, 3]).base64EncodedString()))  // too short

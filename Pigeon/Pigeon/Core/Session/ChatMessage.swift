@@ -58,6 +58,8 @@ enum DeliveryStatus: String, Codable {
 
 enum ChatSystemEvent: String, Codable {
   case screenshot
+  case contactAccepted = "contact_accepted"
+  case relayRecommendation = "relay_recommendation"
 }
 
 /// A single message in a conversation. `delivery` is set only on our own outbound
@@ -94,6 +96,8 @@ struct ChatMessage: Identifiable, Equatable, Codable {
   var otherReactions: [String] = []
   /// Short preview of the message this one replies to.
   var replySnippet: String?
+  /// Bounded relay endpoints carried by an authenticated recommendation event.
+  var relayRecommendationURLs: [String] = []
 
   /// Our own message that the peer hasn't acknowledged yet — what the
   /// store-and-forward resend loop must keep (re)sending. Derived from `delivery`,
@@ -127,6 +131,7 @@ struct ChatMessage: Identifiable, Equatable, Codable {
   private enum CodingKeys: String, CodingKey {
     case id, mine, text, date, sentAt, delivery, pending, system, transport
     case personalReaction, otherReactions, replySnippet, event, transientOutbox
+    case relayRecommendationURLs
   }
 
   init(from decoder: Decoder) throws {
@@ -144,6 +149,8 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     personalReaction = try? container.decode(String.self, forKey: .personalReaction)
     otherReactions = (try? container.decode([String].self, forKey: .otherReactions)) ?? []
     replySnippet = try? container.decode(String.self, forKey: .replySnippet)
+    relayRecommendationURLs =
+      (try? container.decode([String].self, forKey: .relayRecommendationURLs)) ?? []
   }
 
   func encode(to encoder: Encoder) throws {
@@ -161,6 +168,9 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     try container.encodeIfPresent(personalReaction, forKey: .personalReaction)
     try container.encode(otherReactions, forKey: .otherReactions)
     try container.encodeIfPresent(replySnippet, forKey: .replySnippet)
+    if !relayRecommendationURLs.isEmpty {
+      try container.encode(relayRecommendationURLs, forKey: .relayRecommendationURLs)
+    }
   }
 
   /// Reads the stored `delivery`, or migrates pre-status history: a legacy

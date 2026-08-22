@@ -37,9 +37,12 @@ extension SessionManager {
   /// initiator (re)sends msg1; the responder nudges the initiator to start.
   func ensureEstablishing(contactID: Data) {
     guard !establishedContactIDs.contains(contactID) else { return }
-    if isInitiator(toward: contactID) {
+    guard let contact = contacts.first(where: { $0.id == contactID }),
+      contact.requestState != .incoming
+    else { return }
+    if contact.requestState == .outgoing || isInitiator(toward: contactID) {
       establishIfNeeded(contactID: contactID)
-    } else if let contact = contacts.first(where: { $0.id == contactID }) {
+    } else {
       sendEnvelope(.rehandshakeRequest, payload: Data(), to: contact)
     }
   }
@@ -219,6 +222,7 @@ extension SessionManager {
       ephemeralContactIDs: ephemeralContactIDs,
       bluetoothChatIDs: bluetoothChatIDs,
       activeConversationIDs: activeConversationIDs,
+      blockedContacts: blockedContacts,
       myName: myName,
       account: account,
       sessions: sessions,

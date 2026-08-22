@@ -5,6 +5,7 @@
 //  An end-to-end-encrypted conversation with one verified contact.
 //
 
+import PigeonFFI
 import SwiftUI
 
 struct ChatView: View {
@@ -16,6 +17,8 @@ struct ChatView: View {
   @State private var showRename = false
   @State private var newName = ""
   @State private var replyTarget: ChatMessage?
+  @State private var showDisableEphemeralConfirmation = false
+  @FocusState private var composerFocused: Bool
 
   private var messages: [ChatMessage] { session.messages(with: contact) }
 
@@ -36,6 +39,18 @@ struct ChatView: View {
         TextField("Name", text: $newName)
         Button("Cancel", role: .cancel) {}
         Button("Save") { session.renameContact(contact, to: newName) }
+      }
+      .confirmationDialog(
+        "Turn off Ephemeral Chat?",
+        isPresented: $showDisableEphemeralConfirmation,
+        titleVisibility: .visible
+      ) {
+        Button("Turn Off", role: .destructive) {
+          session.setEphemeral(false, for: contact)
+        }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text("Future messages will be saved on this device.")
       }
   }
 
@@ -77,10 +92,32 @@ struct ChatView: View {
   }
 
   private var composer: some View {
-    ChatComposer(draft: $draft, replyTarget: $replyTarget) { text, reply in
+    ChatComposer(
+      draft: $draft, replyTarget: $replyTarget, focus: $composerFocused,
+      enabled: session.canSendMessage(to: contact),
+      disabledMessage: contact.requestState == .outgoing
+        ? "You sent an introduction. You can send more after they accept." : nil
+    ) { text, reply in
       session.send(text, replySnippet: reply?.replySnippetText, to: contact)
     }
+    .simultaneousGesture(
+      DragGesture(minimumDistance: 20).onEnded { value in
+        guard
+          ChatInteraction.shouldToggleEphemeral(
+            width: value.translation.width, height: value.translation.height)
+        else { return }
+        switch ChatInteraction.ephemeralSwipeAction(isEphemeral: session.isEphemeral(contact)) {
+        case .enable:
+          session.setEphemeral(true, for: contact)
+        case .confirmDisable:
+          showDisableEphemeralConfirmation = true
+        }
+      })
   }
+
+}
+
+extension ChatView {
 
   @ToolbarContentBuilder
   private var chatToolbar: some ToolbarContent {
@@ -95,20 +132,39 @@ struct ChatView: View {
 
   @ViewBuilder
   private var chatMenuContent: some View {
-    Toggle(isOn: ephemeralBinding) {
-      Label("Ephemeral chat", systemImage: "clock.arrow.circlepath")
+    if !session.advertisedRelays(for: contact).isEmpty {
+      Section("Relay Selection") {
+        RelayPicker(contact: contact)
+      }
     }
-    RelayPicker(contact: contact)
-    Button {
-      newName = contact.displayName
-      showRename = true
-    } label: {
-      Label("Rename", systemImage: "pencil")
+    if contact.requestState == .none, !session.relayURLs.isEmpty {
+      Section("Share Relay") {
+        ForEach(session.relayURLs, id: \.self) { url in
+          Button {
+            session.shareRelay(url, with: contact)
+          } label: {
+            Label(url.host ?? url.absoluteString, systemImage: "square.and.arrow.up")
+          }
+        }
+      }
     }
-    Button {
-      showSafetyNumber = true
-    } label: {
-      Label("Safety number", systemImage: "checkmark.shield")
+    Section("Chat") {
+      Toggle(isOn: ephemeralBinding) {
+        Label("Ephemeral Chat", systemImage: "clock.arrow.circlepath")
+      }
+    }
+    Section("Contact") {
+      Button {
+        newName = contact.displayName
+        showRename = true
+      } label: {
+        Label("Rename", systemImage: "pencil")
+      }
+      Button {
+        showSafetyNumber = true
+      } label: {
+        Label("Safety Number", systemImage: "checkmark.shield")
+      }
     }
   }
 
@@ -121,7 +177,9 @@ struct ChatView: View {
 
   @ViewBuilder
   private func bubble(_ message: ChatMessage) -> some View {
-    if message.system {
+    if message.event == .relayRecommendation {
+      messageBubble(message)
+    } else if message.system {
       ChatTimelineMarker(text: message.text, systemImage: ChatTimelineIcon.name(for: message.text))
     } else {
       messageBubble(message)
@@ -172,25 +230,64 @@ struct ChatView: View {
   }
 
   private func messageText(_ message: ChatMessage) -> some View {
-    MessageBubbleContent(message: message)
-      .padding(.horizontal, 13)
-      .padding(.vertical, 9)
-      .background(
-        message.mine ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.fill.tertiary),
-        in: BubbleShape(mine: message.mine)
-      )
-      .opacity(message.delivery == .sending ? 0.6 : 1)
-      .contextMenu {
-        MessageContextMenu(
-          message: message,
-          onReact: { session.toggleReaction($0, for: message, in: contact) },
-          onReply: { reply(to: message) },
-          onRetry: message.mine && message.pending
-            ? { session.retryDelivery(to: contact) } : nil)
+    Group {
+      if message.event == .relayRecommendation {
+        RelayRecommendationMessageCard(urls: message.relayRecommendationURLs, mine: message.mine)
+      } else if let card = ContactCard(scanned: message.text) {
+        ContactShareMessageCard(card: card)
+      } else {
+        MessageBubbleContent(message: message)
       }
+    }
+    .padding(.horizontal, 13)
+    .padding(.vertical, 9)
+    .background(
+      message.mine ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.fill.tertiary),
+      in: BubbleShape(mine: message.mine)
+    )
+    .opacity(message.delivery == .sending ? 0.6 : 1)
+    .contextMenu {
+      MessageContextMenu(
+        message: message,
+        onReact: { session.toggleReaction($0, for: message, in: contact) },
+        onReply: { reply(to: message) },
+        onRetry: message.mine && message.pending
+          ? { session.retryDelivery(to: contact) } : nil)
+    }
+  }
+
+  private struct ContactShareMessageCard: View {
+    @Environment(SessionManager.self) private var session
+    let card: ContactCard
+
+    private var alreadyAdded: Bool {
+      session.contacts.contains { $0.id == card.bundle.identityKey }
+    }
+
+    var body: some View {
+      VStack(alignment: .leading, spacing: 8) {
+        Label("Pigeon Contact", systemImage: "person.crop.circle.badge.plus")
+          .font(.caption.weight(.semibold))
+        Text(card.name.isEmpty ? "Unnamed" : card.name)
+          .font(.headline)
+        Button(alreadyAdded ? "In Contacts" : "Add Contact") {
+          _ = session.addContact(
+            card.bundle, name: card.name, relayURLs: card.relayURLs,
+            prekeyBundle: card.prekeyBundle, admission: .outgoingRequest)
+        }
+        .buttonStyle(.bordered)
+        .disabled(alreadyAdded)
+      }
+      .foregroundStyle(.primary)
+      .frame(minWidth: 190, alignment: .leading)
+    }
   }
 
   private func reply(to message: ChatMessage) {
     replyTarget = message
+    Task { @MainActor in
+      await Task.yield()
+      composerFocused = true
+    }
   }
 }

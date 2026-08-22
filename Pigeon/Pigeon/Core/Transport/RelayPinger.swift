@@ -4,7 +4,7 @@
 //
 //  Measures round-trip latency to relay endpoints for the settings UI, so users
 //  can pick the closest one. It opens a throwaway WebSocket to each relay and
-//  times a ping/pong; it sends no mailbox identifier and never authenticates, so
+//  negotiates protocol metadata; it sends no mailbox identifier and never authenticates, so
 //  the relay learns nothing it wouldn't from any anonymous connection. Polling
 //  runs only while the relay settings screen is open.
 //
@@ -66,7 +66,7 @@ final class RelayPinger {
   private func pingAll(_ urls: [URL]) async {
     await withTaskGroup(of: (URL, Ping).self) { group in
       for url in urls {
-        group.addTask { (url, await Self.ping(url)) }
+        group.addTask { (url, await Self.probe(url)) }
       }
       for await (url, result) in group {
         pings[url] = result
@@ -76,7 +76,7 @@ final class RelayPinger {
 
   /// Opens an anonymous WebSocket, negotiates the public protocol metadata, and
   /// measures the complete fresh-connection round trip. No mailbox is supplied.
-  nonisolated private static func ping(_ url: URL) async -> Ping {
+  nonisolated static func probe(_ url: URL) async -> Ping {
     let config = URLSessionConfiguration.ephemeral
     config.timeoutIntervalForRequest = 6
     config.waitsForConnectivity = false
