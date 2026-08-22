@@ -56,6 +56,10 @@ enum DeliveryStatus: String, Codable {
   var needsAttention: Bool { self == .failed || self == .expired }
 }
 
+enum ChatSystemEvent: String, Codable {
+  case screenshot
+}
+
 /// A single message in a conversation. `delivery` is set only on our own outbound
 /// messages and drives the Sent → Delivered status (and the not-delivered resend
 /// affordance); `pending` is the derived "not yet acknowledged" flag the
@@ -63,7 +67,7 @@ enum DeliveryStatus: String, Codable {
 struct ChatMessage: Identifiable, Equatable, Codable {
   var id = UUID()
   let mine: Bool
-  let text: String
+  var text: String
   /// When this message arrived on *this* device (local time), used for ordering
   /// and day separators. For our own messages this is also the send time.
   var date = Date()
@@ -71,10 +75,17 @@ struct ChatMessage: Identifiable, Equatable, Codable {
   /// message waited in store-and-forward before reaching us; `nil` for our own
   /// messages (we display `date`). Surfaces a "delivered late" hint in the UI.
   var sentAt: Date?
-  /// Outbound delivery state; `nil` for received and system messages.
+  /// Outbound delivery state; `nil` for received messages and local-only system
+  /// notices. Durable system events use it until the peer acknowledges them.
   var delivery: DeliveryStatus?
   /// A centered notice (e.g. "Ephemeral enabled") rather than a chat bubble.
   var system: Bool = false
+  /// Authenticated cooperative event reported by the peer's client. This is not
+  /// platform attestation: a modified client can suppress or forge the report.
+  var event: ChatSystemEvent?
+  /// Persists a pending system event in an ephemeral chat only until delivery.
+  /// It is an encrypted outbox record, not retained conversation history.
+  var transientOutbox = false
   /// Which link this message travelled over (locally observed), shown in the UI.
   /// `nil` for older history or messages not yet dispatched.
   var transport: TransportChannel?
@@ -115,7 +126,7 @@ struct ChatMessage: Identifiable, Equatable, Codable {
   // so adding fields doesn't discard already-stored history.
   private enum CodingKeys: String, CodingKey {
     case id, mine, text, date, sentAt, delivery, pending, system, transport
-    case personalReaction, otherReactions, replySnippet
+    case personalReaction, otherReactions, replySnippet, event, transientOutbox
   }
 
   init(from decoder: Decoder) throws {
@@ -127,6 +138,8 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     sentAt = try? container.decode(Date.self, forKey: .sentAt)
     delivery = Self.decodeDelivery(from: container, mine: mine)
     system = (try? container.decode(Bool.self, forKey: .system)) ?? false
+    event = try? container.decode(ChatSystemEvent.self, forKey: .event)
+    transientOutbox = (try? container.decode(Bool.self, forKey: .transientOutbox)) ?? false
     transport = try? container.decode(TransportChannel.self, forKey: .transport)
     personalReaction = try? container.decode(String.self, forKey: .personalReaction)
     otherReactions = (try? container.decode([String].self, forKey: .otherReactions)) ?? []
@@ -142,6 +155,8 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     try container.encodeIfPresent(sentAt, forKey: .sentAt)
     try container.encodeIfPresent(delivery, forKey: .delivery)
     try container.encode(system, forKey: .system)
+    try container.encodeIfPresent(event, forKey: .event)
+    try container.encode(transientOutbox, forKey: .transientOutbox)
     try container.encodeIfPresent(transport, forKey: .transport)
     try container.encodeIfPresent(personalReaction, forKey: .personalReaction)
     try container.encode(otherReactions, forKey: .otherReactions)

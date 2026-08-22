@@ -8,6 +8,10 @@
 import Foundation
 
 extension SessionManager {
+  static func screenshotNotice(mine: Bool, contactName: String) -> String {
+    mine ? "You reported a screenshot" : "\(contactName) reported a screenshot"
+  }
+
   /// On-wire form of an app message, carried *inside* the Double Ratchet
   /// ciphertext (so the ratchet authenticates these bytes end-to-end; JSON key
   /// ordering is therefore not security-relevant). Encoded as JSON for forward
@@ -20,6 +24,7 @@ extension SessionManager {
     let id: UUID
     let text: String
     let replySnippet: String?
+    let event: ChatSystemEvent?
     /// The sender's send time, so a message delayed in store-and-forward shows
     /// when it was actually sent rather than when it happened to arrive.
     let sentAt: Date?
@@ -35,7 +40,7 @@ extension SessionManager {
   static func encodeMessage(_ message: ChatMessage) -> Data? {
     let payload = AppMessagePayload(
       id: message.id, text: message.text, replySnippet: message.replySnippet,
-      sentAt: message.date)
+      event: message.event, sentAt: message.date)
     return try? JSONEncoder().encode(payload)
   }
 
@@ -46,6 +51,8 @@ extension SessionManager {
     var message = ChatMessage(mine: false, text: payload.text)
     message.id = payload.id
     message.replySnippet = payload.replySnippet.map(clampSnippet)
+    message.event = payload.event
+    message.system = payload.event != nil
     // A message can't have been sent after it arrived; clamp a fast/skewed peer
     // clock to our arrival time so the displayed send time is never in the future.
     message.sentAt = payload.sentAt.map { min($0, message.date) }

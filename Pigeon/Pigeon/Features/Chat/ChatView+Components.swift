@@ -35,6 +35,7 @@ enum ChatTimelineIcon {
     if text.hasPrefix("Switched to Local") { return "dot.radiowaves.left.and.right" }
     if text.hasPrefix("Switched to relay") { return "globe" }
     if text.hasPrefix("Ephemeral") { return "clock.arrow.circlepath" }
+    if text.hasSuffix("reported a screenshot") { return "camera.viewfinder" }
     return nil
   }
 }

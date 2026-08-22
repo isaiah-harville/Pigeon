@@ -91,4 +91,27 @@ final class MessageCodecTests: XCTestCase {
     XCTAssertNil(
       SessionManager.decodeReaction(Data([0x03]) + Data(String(repeating: "z", count: 36).utf8)))
   }
+
+  // MARK: - Screenshot events
+
+  func testScreenshotEventRoundTripsAsDurableSystemMessage() throws {
+    var message = ChatMessage(mine: true, text: "You reported a screenshot", pending: true)
+    message.system = true
+    message.event = .screenshot
+
+    let encoded = try XCTUnwrap(SessionManager.encodeMessage(message))
+    let decoded = try XCTUnwrap(SessionManager.decodeMessage(encoded))
+
+    XCTAssertTrue(decoded.system)
+    XCTAssertEqual(decoded.event, .screenshot)
+  }
+
+  func testScreenshotNoticesIdentifyWhoCapturedTheChat() {
+    XCTAssertEqual(
+      SessionManager.screenshotNotice(mine: true, contactName: "Sam"),
+      "You reported a screenshot")
+    XCTAssertEqual(
+      SessionManager.screenshotNotice(mine: false, contactName: "Sam"),
+      "Sam reported a screenshot")
+  }
 }

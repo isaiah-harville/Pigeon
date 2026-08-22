@@ -45,31 +45,39 @@ struct PigeonApp: App {
 
   var body: some Scene {
     WindowGroup {
-      Group {
-        if let services {
-          ContentView(pendingContactCode: $pendingContactCode)
-            .environment(services.identity)
-            .environment(services.session)
-            .environment(vault)
-            .environment(\.cleanSlateAction, CleanSlateAction(perform: performCleanSlate))
-        } else {
-          StartupRecoveryView(message: startupError)
+      rootContent
+        .screenCaptureShield()
+        .onOpenURL(perform: queueContactImport)
+        .task { retryStartupIfNeeded() }
+        .onChange(of: scenePhase) { _, phase in
+          if phase == .active { retryStartupIfNeeded() }
+          services?.session.setAppActive(phase == .active)
         }
-      }
-      .onOpenURL(perform: queueContactImport)
-      .task { retryStartupIfNeeded() }
-      .onChange(of: scenePhase) { _, phase in
-        if phase == .active { retryStartupIfNeeded() }
-        services?.session.setAppActive(phase == .active)
-      }
-      #if os(iOS)
-        // A locked background launch couldn't read the keys; the moment the
-        // device unlocks we can, so initialize then — even before foreground.
-        .onReceive(
-          NotificationCenter.default.publisher(
-            for: UIApplication.protectedDataDidBecomeAvailableNotification)
-        ) { _ in retryStartupIfNeeded() }
-      #endif
+        #if os(iOS)
+          // A locked background launch couldn't read the keys; the moment the
+          // device unlocks we can, so initialize then — even before foreground.
+          .onReceive(
+            NotificationCenter.default.publisher(
+              for: UIApplication.protectedDataDidBecomeAvailableNotification)
+          ) { _ in retryStartupIfNeeded() }
+          .onReceive(
+            NotificationCenter.default.publisher(
+              for: UIApplication.userDidTakeScreenshotNotification)
+          ) { _ in services?.session.reportScreenshotTaken() }
+        #endif
+    }
+  }
+
+  @ViewBuilder
+  private var rootContent: some View {
+    if let services {
+      ContentView(pendingContactCode: $pendingContactCode)
+        .environment(services.identity)
+        .environment(services.session)
+        .environment(vault)
+        .environment(\.cleanSlateAction, CleanSlateAction(perform: performCleanSlate))
+    } else {
+      StartupRecoveryView(message: startupError)
     }
   }
 

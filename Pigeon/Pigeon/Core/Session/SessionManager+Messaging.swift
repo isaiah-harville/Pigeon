@@ -129,6 +129,9 @@ extension SessionManager {
       requestRehandshake(with: contact)
       return true
     }
+    if received.event == .screenshot {
+      received.text = Self.screenshotNotice(mine: false, contactName: contact.displayName)
+    }
     // Deduplicate by the sender's message id (a retried message arrives twice).
     if conversationStore.contains(messageID: received.id, for: contact.id) {
       guard persistCrypto() else { return false }
@@ -242,6 +245,29 @@ extension SessionManager {
     default: break
     }
     return isPersistenceHealthy && persistCrypto()
+  }
+
+  /// Records a screenshot in the visible conversation and mirrors the event to
+  /// that peer over the existing authenticated session. iOS reports screenshots
+  /// after capture, so this is an audit notice rather than prevention.
+  func reportScreenshotTaken() {
+    guard let contactID = activeChatID,
+      let contact = contacts.first(where: { $0.id == contactID })
+    else { return }
+    var event = ChatMessage(
+      mine: true,
+      text: Self.screenshotNotice(mine: true, contactName: contact.displayName),
+      pending: true)
+    event.system = true
+    event.event = .screenshot
+    event.transientOutbox = isEphemeral(contact)
+    guard record(event, for: contact.id) else { return }
+    armDeliveryDeadline(messageID: event.id, contactID: contact.id)
+    if establishedContactIDs.contains(contact.id) {
+      transmit(event, to: contact)
+    } else {
+      ensureEstablishing(contactID: contact.id)
+    }
   }
 
   /// Recovers a lost/stale session. The initiator re-establishes; the responder

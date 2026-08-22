@@ -56,7 +56,9 @@ final class ConversationStore {
   /// ephemeral (the owner supplies that, since it owns the ephemeral set).
   func record(_ message: ChatMessage, for contactID: Data, ephemeral: Bool) {
     conversations[contactID, default: []].append(message)
-    if !ephemeral { persistedConversations[contactID, default: []].append(message) }
+    if !ephemeral || message.transientOutbox {
+      persistedConversations[contactID, default: []].append(message)
+    }
   }
 
   /// Drops a contact's entire message history from both the in-memory view and
@@ -71,6 +73,9 @@ final class ConversationStore {
   /// disk mirror, so the Sent → Delivered status survives relaunch.
   func setDelivery(_ status: DeliveryStatus, messageID: UUID, contactID: Data) {
     mutate(messageID: messageID, contactID: contactID) { $0.delivery = status }
+    if status == .delivered || status == .expired {
+      removeTransientOutbox(messageID: messageID, contactID: contactID)
+    }
   }
 
   /// Flips an *undispatched* message to `.failed` (a no-op once it has reached
@@ -138,6 +143,12 @@ final class ConversationStore {
   private func mutate(messageID: UUID, contactID: Data, _ edit: (inout ChatMessage) -> Void) {
     Self.apply(edit, to: &conversations, messageID: messageID, contactID: contactID)
     Self.apply(edit, to: &persistedConversations, messageID: messageID, contactID: contactID)
+  }
+
+  private func removeTransientOutbox(messageID: UUID, contactID: Data) {
+    guard var messages = persistedConversations[contactID] else { return }
+    messages.removeAll { $0.id == messageID && $0.transientOutbox }
+    persistedConversations[contactID] = messages.isEmpty ? nil : messages
   }
 
   /// Edits the matching message in one conversation map in place (copy, edit,
