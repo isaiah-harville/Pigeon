@@ -63,13 +63,17 @@ private final class MemoryIdentityInitializationStore: IdentityInitializationSto
 
 private final class MemoryIdentityKeyStore: KeyStore {
   var data: Data?
+  private(set) var setCount = 0
 
   init(data: Data?) {
     self.data = data
   }
 
   func get() throws -> Data? { data }
-  func set(_ data: Data, accessibility: KeychainAccessibility) throws { self.data = data }
+  func set(_ data: Data, accessibility: KeychainAccessibility) throws {
+    setCount += 1
+    self.data = data
+  }
   func setAccessibility(_ accessibility: KeychainAccessibility) throws {}
   func delete() throws { data = nil }
 }
@@ -143,5 +147,21 @@ final class IdentityManagerTests: XCTestCase {
       XCTAssertEqual(error as? IdentityManagerError, .missingStoredIdentity)
     }
     XCTAssertNil(keyStore.data)
+  }
+
+  func testExistingOnlyLoadNeverCreatesMissingIdentity() {
+    let keyStore = MemoryIdentityKeyStore(data: nil)
+    let initialization = MemoryIdentityInitializationStore(wasInitialized: false)
+
+    XCTAssertThrowsError(
+      try IdentityManager(
+        store: keyStore, initializationStore: initialization,
+        creationPolicy: .existingOnly)
+    ) { error in
+      XCTAssertEqual(error as? IdentityManagerError, .missingStoredIdentity)
+    }
+    XCTAssertNil(keyStore.data)
+    XCTAssertEqual(keyStore.setCount, 0)
+    XCTAssertFalse(initialization.wasInitialized)
   }
 }

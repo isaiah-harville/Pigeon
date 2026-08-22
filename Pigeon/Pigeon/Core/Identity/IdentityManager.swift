@@ -14,6 +14,11 @@ enum IdentityManagerError: Error, Equatable {
   case missingStoredIdentity
 }
 
+enum IdentityCreationPolicy: Equatable {
+  case allowCreation
+  case existingOnly
+}
+
 /// Non-secret installation evidence. It distinguishes a genuine first launch
 /// from loss of a previously persisted identity, which must never self-heal by
 /// silently generating a new trust root.
@@ -69,15 +74,32 @@ final class IdentityManager {
   convenience init() throws {
     try self.init(
       store: KeychainStore(account: IdentityManager.identityAccount),
-      initializationStore: UserDefaultsIdentityInitializationStore())
+      initializationStore: UserDefaultsIdentityInitializationStore(),
+      creationPolicy: .allowCreation)
+  }
+
+  convenience init(creationPolicy: IdentityCreationPolicy) throws {
+    try self.init(
+      store: KeychainStore(account: IdentityManager.identityAccount),
+      initializationStore: UserDefaultsIdentityInitializationStore(),
+      creationPolicy: creationPolicy)
   }
 
   convenience init(store: any KeyStore) throws {
-    try self.init(store: store, initializationStore: nil)
+    try self.init(store: store, initializationStore: nil, creationPolicy: .allowCreation)
+  }
+
+  convenience init(
+    store: any KeyStore, initializationStore: (any IdentityInitializationStore)?
+  ) throws {
+    try self.init(
+      store: store, initializationStore: initializationStore,
+      creationPolicy: .allowCreation)
   }
 
   init(
-    store: any KeyStore, initializationStore: (any IdentityInitializationStore)?
+    store: any KeyStore, initializationStore: (any IdentityInitializationStore)?,
+    creationPolicy: IdentityCreationPolicy
   ) throws {
     self.store = store
 
@@ -89,7 +111,7 @@ final class IdentityManager {
       self.privateKey = try Curve25519.Signing.PrivateKey(rawRepresentation: existing)
       initializationStore?.markInitialized()
     } else {
-      guard initializationStore?.wasInitialized != true else {
+      guard creationPolicy == .allowCreation, initializationStore?.wasInitialized != true else {
         throw IdentityManagerError.missingStoredIdentity
       }
       let fresh = Curve25519.Signing.PrivateKey()

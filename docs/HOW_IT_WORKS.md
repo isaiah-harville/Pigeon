@@ -412,9 +412,9 @@ security audit and must not be treated as proven-secure. See the
   identity key and prekeys) are stored in the iPhone **Keychain**, marked
   *this-device-only*: never synced to iCloud, never in backups, never moved to
   another device. Their *lock-state* accessibility is
-  `WhenUnlocked` by default, or `AfterFirstUnlock` if you enable background
-  delivery — both are Apple data-protection classes ([Apple Platform
-  Security][appsec]).
+  `AfterFirstUnlock` by default for cold background delivery, or the stricter
+  `WhenUnlocked` if you turn that feature off — both are Apple data-protection
+  classes ([Apple Platform Security][appsec]).
 - The **message store** is encrypted with a key sealed behind **Face ID /
   passcode**, so your history stays locked until you authenticate even if the
   phone is in hand.

@@ -71,11 +71,10 @@ struct MenuView: View {
 
   private var backgroundDeliveryFooter: String {
     """
-    Notify you of new messages while your device is locked. This keeps your \
-    identity key readable in the background after the first unlock. Turn it off \
-    to make your keys readable only while unlocked, at the cost of background \
-    notifications — an unlikely attack vector that only matters if you lose your \
-    phone. Either way, message content is never previewed in a notification.
+    Allows Pigeon to relaunch after your first device unlock and show a generic \
+    new-message notification while locked. Message content stays hidden. Turning \
+    this off requires an unlocked device for relaunch; an already-running \
+    unlocked session continues normal delivery.
     """
   }
 

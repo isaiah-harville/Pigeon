@@ -90,15 +90,27 @@ struct PigeonApp: App {
 
   private static func loadServices() -> StartupResult {
     #if os(iOS)
-      guard UIApplication.shared.isProtectedDataAvailable else {
-        return StartupResult(
-          services: nil,
-          errorMessage: "Waiting for the device to unlock before loading identity keys.")
-      }
+      let protectedDataAvailable = UIApplication.shared.isProtectedDataAvailable
+    #else
+      let protectedDataAvailable = true
     #endif
 
+    let backgroundDeliveryEnabled = BackgroundDelivery.isEnabled
+    guard
+      StartupPolicy.shouldAttemptIdentityLoad(
+        protectedDataAvailable: protectedDataAvailable,
+        backgroundDeliveryEnabled: backgroundDeliveryEnabled)
+    else { return waitingForUnlock() }
+
     do {
-      let identity = try IdentityManager()
+      let identity = try IdentityManager(
+        creationPolicy: StartupPolicy.identityCreationPolicy(
+          protectedDataAvailable: protectedDataAvailable))
+      let mode = StartupPolicy.mode(
+        protectedDataAvailable: protectedDataAvailable,
+        backgroundDeliveryEnabled: backgroundDeliveryEnabled,
+        identityReadable: true)
+      guard mode != .waitForUnlock else { return waitingForUnlock() }
       let session = SessionManager(identity: identity)
       let notifier = MessageNotifier()
       // Wire here (not in a view task): a background relaunch on a BLE/relay
@@ -118,10 +130,17 @@ struct PigeonApp: App {
         services: AppServices(identity: identity, session: session, notifier: notifier),
         errorMessage: nil)
     } catch {
+      if !protectedDataAvailable { return waitingForUnlock() }
       return StartupResult(
         services: nil,
         errorMessage: "Pigeon could not load its device identity.")
     }
+  }
+
+  private static func waitingForUnlock() -> StartupResult {
+    StartupResult(
+      services: nil,
+      errorMessage: "Waiting for the device to unlock before loading identity keys.")
   }
 }
 

@@ -111,7 +111,9 @@ sessions in `pigeon-core`). The mesh layer relays opaque ciphertext;
   notifications. The message itself is never decrypted while locked: inbound
   envelopes are held in memory (and retained on the relay, unacked) and processed
   only after the vault is unlocked. Plaintext and history stay behind the
-  biometric-gated vault regardless of this setting.
+  biometric-gated vault regardless of this setting. Locked startup is
+  load-existing-only: it can never generate or replace an identity before
+  protected data becomes available.
 - **Secure Enclave is deliberately not used**: it supports only P-256, which is
   incompatible with the X25519/Ed25519 stack the protocols require.
 - The public key's **SHA-256 fingerprint** is the device's address/handle.

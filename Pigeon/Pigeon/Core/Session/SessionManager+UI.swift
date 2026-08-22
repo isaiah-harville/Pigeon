@@ -99,8 +99,10 @@ extension SessionManager {
     #endif
   }
 
-  /// Whether Pigeon may receive messages while the device is locked. On by
-  /// default; backed by the identity keys' keychain accessibility.
+  /// Whether Pigeon may cold relaunch and authenticate to relays while the
+  /// device is locked. On by default; backed by the identity key's Keychain
+  /// accessibility. An already-running unlocked session follows the normal
+  /// durable locked-delivery path regardless of this relaunch preference.
   var backgroundDeliveryEnabled: Bool { BackgroundDelivery.isEnabled }
 
   /// Applies a new background-delivery preference: rewrites the identity keys'
