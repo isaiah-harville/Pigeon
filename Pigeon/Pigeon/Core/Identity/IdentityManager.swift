@@ -137,9 +137,16 @@ final class IdentityManager {
   /// existing trust relationships become invalid. The caller must also rebuild
   /// the Olm `PigeonAccount` (which is bound to this identity) from the new seed.
   func resetIdentity() throws {
-    let accessibility = BackgroundDelivery.accessibility
     let fresh = Curve25519.Signing.PrivateKey()
-    try store.set(fresh.rawRepresentation, accessibility: accessibility)
-    self.privateKey = fresh
+    try replaceIdentity(with: fresh.rawRepresentation)
+  }
+
+  /// Idempotently promotes a pre-staged Clean Slate identity. Reapplying the
+  /// same seed after a crash cannot create another public identity.
+  func replaceIdentity(with seed: Data) throws {
+    let replacement = try Curve25519.Signing.PrivateKey(rawRepresentation: seed)
+    try store.set(seed, accessibility: BackgroundDelivery.accessibility)
+    guard try store.get() == seed else { throw IdentityManagerError.missingStoredIdentity }
+    self.privateKey = replacement
   }
 }

@@ -31,6 +31,36 @@ extension SessionManager {
     if enabled { flushOnConnectivity() }
   }
 
+  /// Stops every live link, deletes the complete encrypted store family, then
+  /// replaces the long-term identity. The caller must immediately replace this
+  /// manager because its relay mailbox and Olm account belong to the old key.
+  func prepareCleanSlate(
+    identitySeed: Data,
+    replaceVault: () throws -> Void
+  ) async throws {
+    guard isUnlocked else { throw CleanSlateError.wipeFailed }
+    await relay?.unregisterPushForCleanSlate()
+    mesh.setConnectivityEnabled(false)
+    do {
+      try CleanSlateExecutor.run(
+        wipe: { persistence.wipeAll() },
+        rotateIdentity: { try identity.replaceIdentity(with: identitySeed) },
+        rotateVault: replaceVault)
+      isPersistenceHealthy = false
+    } catch CleanSlateError.wipeFailed {
+      // A multi-file deletion can fail after removing only part of the store.
+      // Keep the live graph offline so stale in-memory ratchets cannot rewrite
+      // or communicate against that ambiguous state; a retry completes it.
+      isPersistenceHealthy = false
+      throw CleanSlateError.wipeFailed
+    } catch {
+      // The data is gone but the identity replacement failed atomically. Keep
+      // the old manager offline; the app rebuilds an empty service graph.
+      isPersistenceHealthy = false
+      throw error
+    }
+  }
+
   /// Pull-to-refresh recovery for the chats screen: restart link discovery /
   /// relay sockets, then immediately drive handshakes and pending sends. The
   /// reconnect itself fires a connectivity event, but we also flush directly so

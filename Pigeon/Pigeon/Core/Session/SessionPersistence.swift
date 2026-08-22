@@ -21,6 +21,7 @@
 //  handed back here on the next save.
 //
 
+import CryptoKit
 import Foundation
 import PigeonFFI
 
@@ -254,6 +255,43 @@ final class SessionPersistence {
 }
 
 extension SessionPersistence {
+  /// Completes a pending Clean Slate before a service graph exists. Store
+  /// deletion does not require the old DEK; the random key is never used to
+  /// decrypt and exists only because `EncryptedStore` owns its location.
+  static func wipeDefaultStoreFamily() -> Bool {
+    let store = EncryptedStore(key: SymmetricKey(size: .bits256))
+    let cryptoStore = store.companion(suffix: Self.cryptoSuffix)
+    let transactionStore = store.companion(suffix: Self.transactionSuffix)
+    return wipe(store: store, cryptoStore: cryptoStore, transactionStore: transactionStore)
+  }
+
+  /// Irreversibly removes bulk history, cryptographic state, and any pending
+  /// transaction journal. Every deletion is attempted even if another fails.
+  @discardableResult
+  func wipeAll() -> Bool {
+    guard let store, let cryptoStore, let transactionStore else { return false }
+    let wiped = Self.wipe(
+      store: store, cryptoStore: cryptoStore, transactionStore: transactionStore)
+    if wiped {
+      self.store = nil
+      self.cryptoStore = nil
+      self.transactionStore = nil
+    }
+    return wiped
+  }
+
+  private static func wipe(
+    store: EncryptedStore,
+    cryptoStore: EncryptedStore,
+    transactionStore: EncryptedStore
+  ) -> Bool {
+    // Do not short-circuit: every path must be attempted on each recovery pass.
+    let bulkWiped = store.wipe()
+    let cryptoWiped = cryptoStore.wipe()
+    let transactionWiped = transactionStore.wipe()
+    return bulkWiped && cryptoWiped && transactionWiped
+  }
+
   /// Writes one recoverable full generation. The journal becomes durable before
   /// either split destination changes and is removed only after both land.
   @discardableResult

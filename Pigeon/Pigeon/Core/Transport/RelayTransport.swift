@@ -521,6 +521,23 @@ extension RelayTransport {
 
 extension RelayTransport {
 
+  /// Best-effort removal of the APNs token from every reachable authenticated
+  /// mailbox before an identity is retired. Awaiting each socket write ensures
+  /// teardown does not cancel a merely queued unregister frame. Offline relays
+  /// cannot be reached here and must expire stale registrations server-side.
+  func unregisterPushForCleanSlate() async {
+    guard let token = pushToken else { return }
+    pushToken = nil
+    for connection in connections.values where connection.authenticate && connection.ready {
+      guard let socket = connection.socket,
+        let data = try? JSONSerialization.data(
+          withJSONObject: ["type": "unregister_push", "token": token]),
+        let text = String(bytes: data, encoding: .utf8)
+      else { continue }
+      try? await socket.send(.string(text))
+    }
+  }
+
   /// Sets (or clears) our APNs device token and reconciles it across our live,
   /// authenticated relay connections: a rotated or cleared token is unregistered
   /// and the new one registered. New connections pick the current token up at
