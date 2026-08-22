@@ -24,6 +24,10 @@
 import Foundation
 import Network
 
+// Socket lifecycle, framing, and routing stay together so relay state changes
+// can be audited without chasing cross-file private state.
+// swiftlint:disable file_length
+
 @MainActor
 @Observable
 final class RelayTransport: Transport {
@@ -93,6 +97,7 @@ final class RelayTransport: Transport {
   /// to (which already know our mailbox) ever see it. Relays without a push
   /// gateway reply with an error we ignore (best-effort, exactly as before).
   private(set) var pushToken: String?
+  private(set) var isEnabled: Bool
 
   /// Our own relays — where we subscribe to receive. We advertise these to
   /// contacts so they can deposit to us.
@@ -132,8 +137,13 @@ final class RelayTransport: Transport {
     init(authenticate: Bool) { self.authenticate = authenticate }
   }
 
-  init(mailboxHex: String, sign: @escaping (Data) -> Data?) {
+  convenience init(mailboxHex: String, sign: @escaping (Data) -> Data?) {
+    self.init(mailboxHex: mailboxHex, enabled: true, sign: sign)
+  }
+
+  init(mailboxHex: String, enabled: Bool, sign: @escaping (Data) -> Data?) {
     self.mailboxHex = mailboxHex
+    isEnabled = enabled
     self.sign = sign
     startPathMonitor()
   }
@@ -147,6 +157,10 @@ final class RelayTransport: Transport {
   /// longer in that union. Call whenever our relays or the contact set change.
   func reconfigure(_ myRelays: [URL]) {
     self.myRelays = myRelays
+    guard isEnabled else {
+      refreshLinkState()
+      return
+    }
     let contactRelays = recipients().flatMap { relaysForRecipient($0) }
     let wanted = Self.wantedConnections(myRelays: myRelays, contactRelays: contactRelays)
     let previousIncompatible = incompatibleRelayURLs
@@ -180,6 +194,7 @@ final class RelayTransport: Transport {
   // MARK: - Transport
 
   func refreshConnections() {
+    guard isEnabled else { return }
     guard !connections.isEmpty || !myRelays.isEmpty else { return }
     let configuredRelays = myRelays
     // Pull-to-refresh intentionally tears down every relay socket, including
@@ -191,6 +206,23 @@ final class RelayTransport: Transport {
     connections.removeAll()
     note(.transportRefresh)
     reconfigure(configuredRelays)
+  }
+
+  func setEnabled(_ enabled: Bool) {
+    guard isEnabled != enabled else { return }
+    isEnabled = enabled
+    if enabled {
+      reconfigure(myRelays)
+    } else {
+      for connection in connections.values {
+        connection.task?.cancel()
+        connection.socket?.cancel(with: .goingAway, reason: nil)
+      }
+      connections.removeAll()
+      onlineRelayHosts = []
+      readyRelayURLs = []
+      linkState = .disabled
+    }
   }
 
 }
@@ -351,6 +383,12 @@ extension RelayTransport {
   /// stays live. Link state reflects our own mailbox relays (whether we can
   /// *receive*); publish-only connections to contacts' relays don't change it.
   private func refreshLinkState() {
+    guard isEnabled else {
+      onlineRelayHosts = []
+      readyRelayURLs = []
+      linkState = .disabled
+      return
+    }
     onlineRelayHosts = myRelays.compactMap { connections[$0]?.ready == true ? host($0) : nil }
     readyRelayURLs = Set(
       connections.filter { $0.value.ready && $0.value.socket != nil }.map(\.key))
@@ -408,6 +446,7 @@ extension RelayTransport {
   /// that we can process and ack it — instead of leaving it in the mailbox until
   /// some future reconnect. Publish-only contact relays are left untouched.
   func resubscribeOwnRelays() {
+    guard isEnabled else { return }
     for (url, connection) in connections where connection.authenticate {
       connection.task?.cancel()
       connection.socket?.cancel(with: .goingAway, reason: nil)
@@ -436,7 +475,7 @@ extension RelayTransport {
     defer { networkAvailable = available }
     // Act only on the down→up transition; an interface change while already
     // online doesn't warrant tearing healthy sockets down.
-    guard available, !networkAvailable else { return }
+    guard isEnabled, available, !networkAvailable else { return }
     reconnectStalled()
   }
 
@@ -503,6 +542,7 @@ extension RelayTransport {
 extension RelayTransport {
 
   func broadcast(_ message: Data, to recipient: Data?) {
+    guard isEnabled else { return }
     // Only directly-addressed messages go over the relay; flood packets don't.
     guard let recipient else { return }
     // No ready relay for this recipient yet: hold the deposit and retry on the

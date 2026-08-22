@@ -130,18 +130,24 @@ final class SessionManager {
       self.mesh = mesh
       self.relay = nil
     } else {
+      let connectivityEnabled = ConnectivitySettings.isEnabled
       // Run the mesh over BLE and an internet relay concurrently. The relay is
       // inert until the user configures an endpoint.
       let mailboxHex = identity.publicKey.rawRepresentation
         .map { String(format: "%02x", $0) }.joined()
       let relay = RelayTransport(
-        mailboxHex: mailboxHex
+        mailboxHex: mailboxHex, enabled: connectivityEnabled
       ) { [identity] nonce in try? identity.sign(nonce) }
       // Local delivery runs over both BLE and same-network Wi-Fi; the relay
       // reaches peers out of local range. The mesh dedups across all three.
       self.mesh = MeshService(
-        transport: CompositeTransport([PeerTransport(), LocalWiFiTransport(), relay]))
+        transport: CompositeTransport([
+          PeerTransport(enabled: connectivityEnabled),
+          LocalWiFiTransport(enabled: connectivityEnabled),
+          relay,
+        ]))
       self.relay = relay
+      self.mesh.setConnectivityEnabled(connectivityEnabled)
     }
     // `self` is fully initialized here, so closures may capture it.
     if let relay {

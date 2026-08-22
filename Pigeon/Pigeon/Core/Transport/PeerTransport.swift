@@ -24,6 +24,10 @@ import CoreBluetooth
 import Foundation
 import PigeonFFI
 
+// The central and peripheral delegates intentionally live beside the state they
+// mutate so the radio lifecycle remains auditable as one unit.
+// swiftlint:disable file_length
+
 /// The BLE implementation of `Transport`. Drives Bluetooth discovery and
 /// messaging and publishes observable state for the UI. Runs on the main actor;
 /// CoreBluetooth callbacks are delivered on the main queue.
@@ -37,6 +41,7 @@ final class PeerTransport: NSObject, Transport {
   private(set) var connectedPeerCount = 0
   /// Recent activity, newest last, surfaced by the app's diagnostics UI.
   private(set) var log: [String] = []
+  private(set) var isEnabled: Bool
 
   /// Invoked with each fully reassembled inbound message and its source id.
   var onMessage: ((_ message: Data, _ peerID: String) -> TransportMessageDisposition)?
@@ -79,7 +84,12 @@ final class PeerTransport: NSObject, Transport {
   /// Whether our GATT service has been added (or restored), so we don't re-add it.
   private var didAddService = false
 
-  override init() {
+  override convenience init() {
+    self.init(enabled: true)
+  }
+
+  init(enabled: Bool) {
+    isEnabled = enabled
     super.init()
     // Restoration identifiers let iOS relaunch us in the background on a BLE
     // event after the app was terminated (see willRestoreState handlers).
@@ -95,6 +105,11 @@ final class PeerTransport: NSObject, Transport {
       ])
     // Periodically recover stuck links: keep scanning and reconnect any
     // known peer that isn't currently connected.
+    if enabled { startSweepTimer() }
+  }
+
+  private func startSweepTimer() {
+    guard sweepTimer == nil else { return }
     sweepTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
       guard let self else { return }
       Task { @MainActor in self.sweep() }
@@ -102,6 +117,7 @@ final class PeerTransport: NSObject, Transport {
   }
 
   private func sweep() {
+    guard isEnabled else { return }
     guard central.state == .poweredOn else { return }
     startScanningIfReady()
     for peripheral in peripherals.values
@@ -118,6 +134,7 @@ final class PeerTransport: NSObject, Transport {
   }
 
   func broadcast(_ message: Data, to _: Data?) {
+    guard isEnabled else { return }
     let fragments: [Fragment]
     do {
       fragments = try fragmenter.fragment(
@@ -153,6 +170,7 @@ final class PeerTransport: NSObject, Transport {
   }
 
   func refreshConnections() {
+    guard isEnabled else { return }
     guard central.state == .poweredOn else { return }
     central.stopScan()
     startScanningIfReady()
@@ -161,6 +179,33 @@ final class PeerTransport: NSObject, Transport {
       peripheral.discoverServices([BluetoothConstants.service])
     }
     note(.transportRefresh)
+  }
+
+  func setEnabled(_ enabled: Bool) {
+    guard isEnabled != enabled else { return }
+    isEnabled = enabled
+    if enabled {
+      startSweepTimer()
+      installPeripheralServiceIfReady()
+      startScanningIfReady()
+      sweep()
+    } else {
+      sweepTimer?.invalidate()
+      sweepTimer = nil
+      central.stopScan()
+      for peripheral in peripherals.values {
+        central.cancelPeripheralConnection(peripheral)
+      }
+      peripheralManager.stopAdvertising()
+      peripheralManager.removeAllServices()
+      didAddService = false
+      outboundCharacteristic = nil
+      subscribedCentrals.removeAll()
+      inboundCharacteristics.removeAll()
+      pendingNotifications.removeAll()
+      connectedPeerCount = 0
+      status = .idle
+    }
   }
 
   // MARK: - Fragment sizing
@@ -227,6 +272,7 @@ final class PeerTransport: NSObject, Transport {
 
   /// Decodes a fragment from raw BLE bytes and delivers a completed message.
   private func receive(_ data: Data, from source: UUID) {
+    guard isEnabled else { return }
     do {
       let fragment = try Fragment(decoding: data)
       if let message = try reassembly.reassembler(for: source).ingest(fragment) {
@@ -239,6 +285,7 @@ final class PeerTransport: NSObject, Transport {
   }
 
   private func startScanningIfReady() {
+    guard isEnabled else { return }
     guard central.state == .poweredOn else { return }
     central.scanForPeripherals(
       withServices: [BluetoothConstants.service],
@@ -252,6 +299,10 @@ final class PeerTransport: NSObject, Transport {
 
 extension PeerTransport: CBCentralManagerDelegate {
   func centralManagerDidUpdateState(_ manager: CBCentralManager) {
+    guard isEnabled else {
+      status = .idle
+      return
+    }
     switch manager.state {
     case .poweredOn: startScanningIfReady()
     case .unauthorized: status = .unauthorized
@@ -261,10 +312,14 @@ extension PeerTransport: CBCentralManagerDelegate {
   }
 
   func centralManager(_ manager: CBCentralManager, willRestoreState dict: [String: Any]) {
-    // Reattach to peripherals iOS restored after relaunching us in the background.
     guard let restored = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] else {
       return
     }
+    guard isEnabled else {
+      for peripheral in restored { manager.cancelPeripheralConnection(peripheral) }
+      return
+    }
+    // Reattach to peripherals iOS restored after relaunching us in the background.
     for peripheral in restored {
       peripheral.delegate = self
       peripherals[peripheral.identifier] = peripheral
@@ -282,6 +337,7 @@ extension PeerTransport: CBCentralManagerDelegate {
     _ manager: CBCentralManager, didDiscover peripheral: CBPeripheral,
     advertisementData _: [String: Any], rssi _: NSNumber
   ) {
+    guard isEnabled else { return }
     if let existing = peripherals[peripheral.identifier] {
       // Known peer that dropped (e.g. its app restarted): reconnect.
       if existing.state != .connected { manager.connect(existing, options: nil) }
@@ -292,7 +348,11 @@ extension PeerTransport: CBCentralManagerDelegate {
     manager.connect(peripheral, options: nil)
   }
 
-  func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
+  func centralManager(_ manager: CBCentralManager, didConnect peripheral: CBPeripheral) {
+    guard isEnabled else {
+      manager.cancelPeripheralConnection(peripheral)
+      return
+    }
     peripheral.delegate = self
     peripheral.discoverServices([BluetoothConstants.service])
     updateConnectedCount()
@@ -307,6 +367,7 @@ extension PeerTransport: CBCentralManagerDelegate {
     reassembly.drop(peripheral.identifier)
     updateConnectedCount()
     note(.peerDisconnected)
+    guard isEnabled else { return }
     // Keep the peripheral retained and issue a pending connect: CoreBluetooth
     // reconnects automatically when the peer returns (e.g. after an app restart).
     manager.connect(peripheral, options: nil)
@@ -318,6 +379,7 @@ extension PeerTransport: CBCentralManagerDelegate {
     error _: Error?
   ) {
     note(.peerConnectionFailed)
+    guard isEnabled else { return }
     manager.connect(peripheral, options: nil)  // stay pending until available
   }
 }
@@ -326,6 +388,7 @@ extension PeerTransport: CBCentralManagerDelegate {
 
 extension PeerTransport: CBPeripheralDelegate {
   func peripheral(_ peripheral: CBPeripheral, didDiscoverServices _: Error?) {
+    guard isEnabled else { return }
     for service in peripheral.services ?? [] where service.uuid == BluetoothConstants.service {
       peripheral.discoverCharacteristics(
         [BluetoothConstants.inbound, BluetoothConstants.outbound],
@@ -337,6 +400,7 @@ extension PeerTransport: CBPeripheralDelegate {
     _ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService,
     error _: Error?
   ) {
+    guard isEnabled else { return }
     for characteristic in service.characteristics ?? [] {
       switch characteristic.uuid {
       case BluetoothConstants.inbound:
@@ -356,6 +420,7 @@ extension PeerTransport: CBPeripheralDelegate {
     _ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic,
     error _: Error?
   ) {
+    guard isEnabled else { return }
     guard let data = characteristic.value else { return }
     note(.transportReceived)
     receive(data, from: peripheral.identifier)
@@ -366,7 +431,17 @@ extension PeerTransport: CBPeripheralDelegate {
 
 extension PeerTransport: CBPeripheralManagerDelegate {
   func peripheralManagerDidUpdateState(_ manager: CBPeripheralManager) {
-    guard manager.state == .poweredOn, !didAddService else { return }
+    guard isEnabled else {
+      manager.stopAdvertising()
+      manager.removeAllServices()
+      return
+    }
+    guard manager.state == .poweredOn else { return }
+    installPeripheralServiceIfReady()
+  }
+
+  private func installPeripheralServiceIfReady() {
+    guard isEnabled, peripheralManager.state == .poweredOn, !didAddService else { return }
 
     let inbound = CBMutableCharacteristic(
       type: BluetoothConstants.inbound,
@@ -382,15 +457,20 @@ extension PeerTransport: CBPeripheralManagerDelegate {
 
     let service = CBMutableService(type: BluetoothConstants.service, primary: true)
     service.characteristics = [inbound, outbound]
-    manager.add(service)
+    peripheralManager.add(service)
   }
 
   // MARK: State restoration (relaunched in the background on a BLE event)
 
   func peripheralManager(
-    _: CBPeripheralManager,
+    _ manager: CBPeripheralManager,
     willRestoreState dict: [String: Any]
   ) {
+    guard isEnabled else {
+      manager.stopAdvertising()
+      manager.removeAllServices()
+      return
+    }
     // Recover our advertised service so we can keep notifying restored centrals.
     if let services = dict[CBPeripheralManagerRestoredStateServicesKey] as? [CBMutableService] {
       for service in services where service.uuid == BluetoothConstants.service {
@@ -406,6 +486,11 @@ extension PeerTransport: CBPeripheralManagerDelegate {
 
   func peripheralManager(_ manager: CBPeripheralManager, didAdd _: CBService, error _: Error?) {
     didAddService = true
+    guard isEnabled else {
+      manager.removeAllServices()
+      didAddService = false
+      return
+    }
     manager.startAdvertising([
       CBAdvertisementDataServiceUUIDsKey: [BluetoothConstants.service],
       CBAdvertisementDataLocalNameKey: "Pigeon",
@@ -414,6 +499,10 @@ extension PeerTransport: CBPeripheralManagerDelegate {
   }
 
   func peripheralManager(_ manager: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
+    guard isEnabled else {
+      if let first = requests.first { manager.respond(to: first, withResult: .writeNotPermitted) }
+      return
+    }
     for request in requests {
       if let value = request.value {
         note(.transportReceived)
@@ -433,6 +522,7 @@ extension PeerTransport: CBPeripheralManagerDelegate {
     _: CBPeripheralManager, central: CBCentral,
     didSubscribeTo _: CBCharacteristic
   ) {
+    guard isEnabled else { return }
     if !subscribedCentrals.contains(where: { $0.identifier == central.identifier }) {
       subscribedCentrals.append(central)
     }

@@ -15,25 +15,18 @@ final class CompositeTransport: Transport {
   /// The first transport is treated as primary for the headline `status`
   /// (BLE — the always-available local link).
   private let transports: [any Transport]
+  private var isEnabled = true
 
   init(_ transports: [any Transport]) {
     self.transports = transports
   }
 
   var onMessage: ((_ message: Data, _ peerID: String) -> TransportMessageDisposition)? {
-    didSet {
-      for transport in transports {
-        transport.onMessage = onMessage
-      }
-    }
+    didSet { installCallbacks() }
   }
 
   var onConnectivity: (() -> Void)? {
-    didSet {
-      for transport in transports {
-        transport.onConnectivity = onConnectivity
-      }
-    }
+    didSet { installCallbacks() }
   }
 
   func broadcast(_ message: Data, to recipient: Data?) {
@@ -43,14 +36,24 @@ final class CompositeTransport: Transport {
   /// Fans the send out to every child, passing the channel filter down so each
   /// transport decides whether it should carry this message.
   func broadcast(_ message: Data, to recipient: Data?, over channels: Set<TransportKind>) {
+    guard isEnabled else { return }
     for transport in transports {
       transport.broadcast(message, to: recipient, over: channels)
     }
   }
 
   func refreshConnections() {
+    guard isEnabled else { return }
     for transport in transports {
       transport.refreshConnections()
+    }
+  }
+
+  func setEnabled(_ enabled: Bool) {
+    guard isEnabled != enabled else { return }
+    isEnabled = enabled
+    for transport in transports {
+      transport.setEnabled(enabled)
     }
   }
 
@@ -63,4 +66,17 @@ final class CompositeTransport: Transport {
   }
 
   var log: [String] { transports.flatMap(\.log) }
+
+  private func installCallbacks() {
+    for transport in transports {
+      transport.onMessage = { [weak self] message, peerID in
+        guard let self, self.isEnabled else { return .retryAfterRestart }
+        return self.onMessage?(message, peerID) ?? .retryAfterRestart
+      }
+      transport.onConnectivity = { [weak self] in
+        guard let self, self.isEnabled else { return }
+        self.onConnectivity?()
+      }
+    }
+  }
 }

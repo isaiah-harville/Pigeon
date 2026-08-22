@@ -21,6 +21,16 @@ extension SessionManager {
   var relayHosts: [String] { relay?.onlineRelayHosts ?? [] }
   var incompatibleRelayURLs: Set<URL> { relay?.incompatibleRelayURLs ?? [] }
 
+  /// Master network switch. Disabling tears down Bluetooth, local Wi-Fi, and
+  /// relay links while preserving queued ciphertext and local state.
+  var connectivityEnabled: Bool { ConnectivitySettings.isEnabled }
+
+  func setConnectivityEnabled(_ enabled: Bool) {
+    ConnectivitySettings.setEnabled(enabled)
+    mesh.setConnectivityEnabled(enabled)
+    if enabled { flushOnConnectivity() }
+  }
+
   /// Pull-to-refresh recovery for the chats screen: restart link discovery /
   /// relay sockets, then immediately drive handshakes and pending sends. The
   /// reconnect itself fires a connectivity event, but we also flush directly so

@@ -14,6 +14,38 @@
 
 import Foundation
 
+/// Small synchronized gate for transport delegates that execute off the main
+/// actor. It prevents a stale callback from observing an earlier enabled value
+/// after Faraday mode has begun tearing the link down.
+final class TransportGate: @unchecked Sendable {
+  private let lock = NSLock()
+  private var enabled: Bool
+
+  init(enabled: Bool) {
+    self.enabled = enabled
+  }
+
+  var isEnabled: Bool {
+    lock.withLock { enabled }
+  }
+
+  func setEnabled(_ enabled: Bool) {
+    lock.withLock { self.enabled = enabled }
+  }
+
+  /// Runs a delegate action while holding the same lock used by disable. If the
+  /// action starts first, disabling waits for it and then tears its resources
+  /// down; if disabling starts first, the action is rejected.
+  @discardableResult
+  func performIfEnabled(_ action: () -> Void) -> Bool {
+    lock.withLock {
+      guard enabled else { return false }
+      action()
+      return true
+    }
+  }
+}
+
 /// Link state surfaced to the UI. The vocabulary is intentionally small and
 /// shared across transports; a transport maps its own state onto the nearest
 /// case (e.g. a radio that is off reports `.poweredOff`).
@@ -116,6 +148,10 @@ protocol Transport: AnyObject {
   /// User-initiated recovery nudge. Transports should restart discovery or
   /// reconnect their sockets without changing app/session state.
   func refreshConnections()
+
+  /// Starts or stops this link. Disabling must stop discovery, disconnect live
+  /// resources, and reject network activity until explicitly re-enabled.
+  func setEnabled(_ enabled: Bool)
 }
 
 /// Tells a durable transport whether it may delete an inbound message. A retry
@@ -138,4 +174,6 @@ extension Transport {
   }
 
   func refreshConnections() {}
+
+  func setEnabled(_: Bool) {}
 }
