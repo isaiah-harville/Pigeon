@@ -18,6 +18,8 @@ struct RelayEntry: Equatable, Hashable {
 }
 
 enum RelaySettings {
+  static let maximumSharedRelayCount = 8
+  private static let maximumSharedRelayURLLength = 2_048
   private static let key = "pigeon.relay.urls"
   private static let disabledKey = "pigeon.relay.disabled"
   private static let pushKey = "pigeon.relay.push"
@@ -73,6 +75,21 @@ enum RelaySettings {
       url.host?.isEmpty == false
     else { return false }
     return true
+  }
+
+  static func sanitizeSharedRelayURLs(_ strings: [String]) -> [String] {
+    guard strings.count <= maximumSharedRelayCount else { return [] }
+    var seen = Set<String>()
+    var accepted: [String] = []
+    for string in strings {
+      guard string.utf8.count <= maximumSharedRelayURLLength,
+        let url = URL(string: string), isValidEndpoint(string),
+        url.user == nil, url.password == nil
+      else { return [] }
+      let canonical = url.absoluteString
+      if seen.insert(canonical).inserted { accepted.append(canonical) }
+    }
+    return accepted
   }
 
   /// Whether an endpoint is TLS-protected (`wss://`). Plain `ws://` still works —

@@ -21,12 +21,18 @@
 //  handed back here on the next save.
 //
 
+import CryptoKit
 import Foundation
 import PigeonFFI
 
 enum SessionPersistenceError: Error {
   case unreadableStore
   case invalidCryptoState
+}
+
+struct SessionCryptoExporter {
+  let exportAccount: (PigeonAccount) throws -> Data
+  let exportSession: (PigeonSession) throws -> Data
 }
 
 /// Reads and writes the coordinator's durable state through `EncryptedStore`,
@@ -41,9 +47,18 @@ final class SessionPersistence {
   /// The crypto store (account + per-contact session state), a sibling of `store`
   /// under the same key. Re-sealed on its own via `saveCrypto`.
   private var cryptoStore: EncryptedStore?
+  /// Durable intent for a full two-file generation. It exists only while a
+  /// recoverable full-state commit still needs to be applied or cleaned up.
+  private var transactionStore: EncryptedStore?
+  private let cryptoExporter: SessionCryptoExporter
 
   /// Suffix for the crypto companion blob (appended to the bulk store's name).
   private static let cryptoSuffix = ".crypto"
+  private static let transactionSuffix = ".transaction"
+
+  init(cryptoExporter: SessionCryptoExporter) {
+    self.cryptoExporter = cryptoExporter
+  }
 
   /// Everything restored from disk at unlock, ready for the coordinator to apply.
   struct Loaded {
@@ -53,12 +68,14 @@ final class SessionPersistence {
     var ephemeralContactIDs: Set<Data>
     var bluetoothChatIDs: Set<Data>
     var activeConversationIDs: Set<Data>
+    var blockedContacts: [BlockedContact]
     var myName: String
     /// Restored live Olm sessions, keyed by contact id. A contact appearing here
     /// is (re)established without a fresh handshake.
     var sessions: [Data: PigeonSession]
     var pendingInitiation: [Data: Data]
     var lastInitiationIn: [Data: Data]
+    var acceptedInitiationDigests: [Data: Set<Data>]
     /// When the signed-prekey (fallback) was last rotated; `nil` if never stamped.
     var fallbackRotatedAt: Date?
   }
@@ -70,6 +87,7 @@ final class SessionPersistence {
     var ephemeralContactIDs: Set<Data>
     var bluetoothChatIDs: Set<Data>
     var activeConversationIDs: Set<Data> = []
+    var blockedContacts: [BlockedContact] = []
     var myName: String
     var account: PigeonAccount?
     /// Live per-contact session state to seal alongside the account. Keyed by
@@ -77,6 +95,7 @@ final class SessionPersistence {
     var sessions: [Data: PigeonSession]
     var pendingInitiation: [Data: Data]
     var lastInitiationIn: [Data: Data]
+    var acceptedInitiationDigests: [Data: Set<Data>] = [:]
     var fallbackRotatedAt: Date?
   }
 
@@ -88,9 +107,17 @@ final class SessionPersistence {
   /// the next save).
   func attach(_ store: EncryptedStore, identitySeed: Data) throws -> Loaded {
     let cryptoStore = store.companion(suffix: Self.cryptoSuffix)
+    let transactionStore = store.companion(suffix: Self.transactionSuffix)
     let bulk: PersistedState
     let crypto: PersistedCrypto
     do {
+      if let pending = try transactionStore.load(PersistedStateTransaction.self) {
+        let bulkRecovered = store.save(pending.bulk)
+        let cryptoRecovered = cryptoStore.save(pending.crypto)
+        guard bulkRecovered, cryptoRecovered, transactionStore.wipe() else {
+          throw SessionPersistenceError.unreadableStore
+        }
+      }
       bulk = try store.load(PersistedState.self) ?? PersistedState()
       crypto = try cryptoStore.load(PersistedCrypto.self) ?? PersistedCrypto(migratingFrom: bulk)
     } catch {
@@ -104,67 +131,19 @@ final class SessionPersistence {
       ephemeralContactIDs: Self.decodeIDs(bulk.ephemeralContactIDs),
       bluetoothChatIDs: Self.decodeIDs(bulk.bluetoothContactIDs),
       activeConversationIDs: Self.decodeIDs(bulk.activeConversationIDs),
+      blockedContacts: bulk.blockedContacts.map { blocked in
+        BlockedContact(id: blocked.id, displayName: blocked.name)
+      },
       myName: bulk.myName,
       sessions: sessionState.sessions,
       pendingInitiation: sessionState.pending,
       lastInitiationIn: sessionState.lastIn,
+      acceptedInitiationDigests: sessionState.acceptedDigests,
       fallbackRotatedAt: crypto.fallbackRotatedAt.map { Date(timeIntervalSince1970: $0) })
     self.store = store
     self.cryptoStore = cryptoStore
+    self.transactionStore = transactionStore
     return loaded
-  }
-
-  /// Writes the full state: the bulk blob (contacts + conversations + flags) and
-  /// the crypto blob (account + per-contact session state). No-op before `attach`.
-  /// Returns whether both blobs reached disk.
-  @discardableResult
-  func save(_ snapshot: Snapshot) -> Bool {
-    guard let store else { return false }
-    var conversationsByKey: [String: [ChatMessage]] = [:]
-    for (id, messages) in snapshot.conversations {
-      conversationsByKey[id.base64EncodedString()] = messages
-    }
-    let bulkSaved = store.save(
-      PersistedState(
-        contacts: snapshot.contacts.map(Self.encodeContact),
-        conversations: conversationsByKey,
-        ephemeralContactIDs: snapshot.ephemeralContactIDs.map { $0.base64EncodedString() },
-        bluetoothContactIDs: snapshot.bluetoothChatIDs.map { $0.base64EncodedString() },
-        activeConversationIDs: snapshot.activeConversationIDs.map { $0.base64EncodedString() },
-        myName: snapshot.myName,
-        olmAccountPickle: nil,  // crypto lives in the sibling blob now
-        olmFallbackKey: nil))
-    return saveCrypto(snapshot) && bulkSaved
-  }
-
-  /// Re-seals only the crypto blob (account + per-contact session state). Cheap
-  /// fast-path for the hot ratchet-advance path, where the bulk conversation
-  /// history is unchanged and need not be re-encoded. No-op before `attach`.
-  /// Returns whether the blob reached disk: a failure here means the sealed
-  /// ratchet state now lags the live one, which the caller should surface.
-  @discardableResult
-  func saveCrypto(_ snapshot: Snapshot) -> Bool {
-    guard let cryptoStore else { return false }
-    // The session pickle is re-exported here so the sealed ratchet state never
-    // lags the live one (a stale pickle would reuse Olm message indices). Secret
-    // — only ever written sealed.
-    var sessions: [String: PersistedSession] = [:]
-    let ids = Set(snapshot.sessions.keys)
-      .union(snapshot.pendingInitiation.keys)
-      .union(snapshot.lastInitiationIn.keys)
-    for id in ids {
-      let entry = PersistedSession(
-        pickle: try? snapshot.sessions[id]?.exportPickle(),
-        pendingInitiation: snapshot.pendingInitiation[id],
-        lastInitiationIn: snapshot.lastInitiationIn[id])
-      if !entry.isEmpty { sessions[id.base64EncodedString()] = entry }
-    }
-    var crypto = PersistedCrypto()
-    crypto.olmAccountPickle = snapshot.account.flatMap { try? $0.exportOlmPickle() }
-    crypto.olmFallbackKey = snapshot.account?.exportFallbackKey()
-    crypto.fallbackRotatedAt = snapshot.fallbackRotatedAt?.timeIntervalSince1970
-    crypto.sessions = sessions
-    return cryptoStore.save(crypto)
   }
 
   // MARK: - Account
@@ -190,7 +169,11 @@ final class SessionPersistence {
       relayURLs: contact.relayURLs.map(\.absoluteString),
       preferredRelayURL: contact.preferredRelayURL?.absoluteString,
       prekeyBundle: contact.prekeyBundle?.encoded,
-      verifiedInPerson: contact.verifiedInPerson)
+      verifiedInPerson: contact.verifiedInPerson,
+      requestState: contact.requestState,
+      introductionSent: contact.introductionSent ? 1 : 0,
+      introductionReceived: contact.introductionReceived ? 1 : 0,
+      requestCreatedAt: contact.requestCreatedAt?.timeIntervalSince1970)
   }
 
   private static func decodeContacts(_ persisted: [PersistedContact]) throws -> [Contact] {
@@ -216,7 +199,11 @@ final class SessionPersistence {
         relayURLs: persisted.relayURLs.compactMap { URL(string: $0) },
         preferredRelayURL: persisted.preferredRelayURL.flatMap { URL(string: $0) },
         prekeyBundle: prekeyBundle,
-        verifiedInPerson: persisted.verifiedInPerson)
+        verifiedInPerson: persisted.verifiedInPerson,
+        requestState: persisted.requestState ?? .none,
+        introductionSent: persisted.introductionSent == 1,
+        introductionReceived: persisted.introductionReceived == 1,
+        requestCreatedAt: persisted.requestCreatedAt.map(Date.init(timeIntervalSince1970:)))
     }
   }
 
@@ -225,11 +212,13 @@ final class SessionPersistence {
   /// keyed by contact id. A session whose pickle no longer decodes is simply
   /// skipped (it re-establishes on next contact), never crashing the unlock.
   private static func decodeSessionState(_ persisted: [String: PersistedSession]) throws -> (
-    sessions: [Data: PigeonSession], pending: [Data: Data], lastIn: [Data: Data]
+    sessions: [Data: PigeonSession], pending: [Data: Data], lastIn: [Data: Data],
+    acceptedDigests: [Data: Set<Data>]
   ) {
     var sessions: [Data: PigeonSession] = [:]
     var pending: [Data: Data] = [:]
     var lastIn: [Data: Data] = [:]
+    var acceptedDigests: [Data: Set<Data>] = [:]
     for (key, entry) in persisted {
       guard let id = Data(base64Encoded: key) else {
         throw SessionPersistenceError.invalidCryptoState
@@ -244,8 +233,13 @@ final class SessionPersistence {
       }
       if let initiation = entry.pendingInitiation { pending[id] = initiation }
       if let initiation = entry.lastInitiationIn { lastIn[id] = initiation }
+      var digests = Set(entry.acceptedInitiationDigests)
+      if let initiation = entry.lastInitiationIn {
+        digests.insert(InitiationReplayLedger.digest(initiation))
+      }
+      if !digests.isEmpty { acceptedDigests[id] = digests }
     }
-    return (sessions, pending, lastIn)
+    return (sessions, pending, lastIn, acceptedDigests)
   }
 
   private static func decodeConversations(_ stored: [String: [ChatMessage]]) throws -> [Data:
@@ -271,4 +265,135 @@ final class SessionPersistence {
     }
     return ids
   }
+}
+
+extension SessionPersistence {
+  /// Completes a pending Clean Slate before a service graph exists. Store
+  /// deletion does not require the old DEK; the random key is never used to
+  /// decrypt and exists only because `EncryptedStore` owns its location.
+  static func wipeDefaultStoreFamily() -> Bool {
+    let store = EncryptedStore(key: SymmetricKey(size: .bits256))
+    let cryptoStore = store.companion(suffix: Self.cryptoSuffix)
+    let transactionStore = store.companion(suffix: Self.transactionSuffix)
+    return wipe(store: store, cryptoStore: cryptoStore, transactionStore: transactionStore)
+  }
+
+  /// Irreversibly removes bulk history, cryptographic state, and any pending
+  /// transaction journal. Every deletion is attempted even if another fails.
+  @discardableResult
+  func wipeAll() -> Bool {
+    guard let store, let cryptoStore, let transactionStore else { return false }
+    let wiped = Self.wipe(
+      store: store, cryptoStore: cryptoStore, transactionStore: transactionStore)
+    if wiped {
+      self.store = nil
+      self.cryptoStore = nil
+      self.transactionStore = nil
+    }
+    return wiped
+  }
+
+  private static func wipe(
+    store: EncryptedStore,
+    cryptoStore: EncryptedStore,
+    transactionStore: EncryptedStore
+  ) -> Bool {
+    // Do not short-circuit: every path must be attempted on each recovery pass.
+    let bulkWiped = store.wipe()
+    let cryptoWiped = cryptoStore.wipe()
+    let transactionWiped = transactionStore.wipe()
+    return bulkWiped && cryptoWiped && transactionWiped
+  }
+
+  /// Writes one recoverable full generation. The journal becomes durable before
+  /// either split destination changes and is removed only after both land.
+  @discardableResult
+  func save(_ snapshot: Snapshot) -> Bool {
+    guard let store, let cryptoStore, let transactionStore,
+      let crypto = encodeCrypto(snapshot)
+    else { return false }
+    var conversationsByKey: [String: [ChatMessage]] = [:]
+    for (id, messages) in snapshot.conversations {
+      conversationsByKey[id.base64EncodedString()] = messages
+    }
+    let bulk = PersistedState(
+      contacts: snapshot.contacts.map(Self.encodeContact),
+      conversations: conversationsByKey,
+      ephemeralContactIDs: snapshot.ephemeralContactIDs.map { $0.base64EncodedString() },
+      bluetoothContactIDs: snapshot.bluetoothChatIDs.map { $0.base64EncodedString() },
+      activeConversationIDs: snapshot.activeConversationIDs.map { $0.base64EncodedString() },
+      blockedContacts: snapshot.blockedContacts.map { blocked in
+        PersistedBlockedContact(id: blocked.id, name: blocked.displayName)
+      },
+      myName: snapshot.myName,
+      olmAccountPickle: nil,
+      olmFallbackKey: nil)
+    guard transactionStore.save(PersistedStateTransaction(bulk: bulk, crypto: crypto)) else {
+      return false
+    }
+    let bulkSaved = store.save(bulk)
+    let cryptoSaved = cryptoStore.save(crypto)
+    guard bulkSaved, cryptoSaved else { return false }
+    return transactionStore.wipe()
+  }
+
+  /// Re-seals only the crypto blob after a ratchet advance. Export completes
+  /// before the previous generation is replaced.
+  @discardableResult
+  func saveCrypto(_ snapshot: Snapshot) -> Bool {
+    guard transactionIsClear(), let cryptoStore, let crypto = encodeCrypto(snapshot) else {
+      return false
+    }
+    return cryptoStore.save(crypto)
+  }
+
+  private func transactionIsClear() -> Bool {
+    guard let transactionStore else { return false }
+    do {
+      return try transactionStore.load(PersistedStateTransaction.self) == nil
+    } catch {
+      return false
+    }
+  }
+
+  private func encodeCrypto(_ snapshot: Snapshot) -> PersistedCrypto? {
+    do {
+      var sessions: [String: PersistedSession] = [:]
+      let ids = Set(snapshot.sessions.keys)
+        .union(snapshot.pendingInitiation.keys)
+        .union(snapshot.lastInitiationIn.keys)
+        .union(snapshot.acceptedInitiationDigests.keys)
+      for id in ids {
+        let pickle = try snapshot.sessions[id].map(cryptoExporter.exportSession)
+        let sortedDigests =
+          snapshot.acceptedInitiationDigests[id]?.sorted { first, second in
+            first.lexicographicallyPrecedes(second)
+          } ?? []
+        let entry = PersistedSession(
+          pickle: pickle,
+          pendingInitiation: snapshot.pendingInitiation[id],
+          lastInitiationIn: snapshot.lastInitiationIn[id],
+          acceptedInitiationDigests: sortedDigests)
+        if !entry.isEmpty { sessions[id.base64EncodedString()] = entry }
+      }
+      var exported = PersistedCrypto()
+      if let account = snapshot.account {
+        exported.olmAccountPickle = try cryptoExporter.exportAccount(account)
+      }
+      exported.olmFallbackKey = snapshot.account?.exportFallbackKey()
+      exported.fallbackRotatedAt = snapshot.fallbackRotatedAt?.timeIntervalSince1970
+      exported.sessions = sessions
+      return exported
+    } catch {
+      return nil
+    }
+  }
+
+  convenience init() {
+    self.init(
+      cryptoExporter: SessionCryptoExporter(
+        exportAccount: { try $0.exportOlmPickle() },
+        exportSession: { try $0.exportPickle() }))
+  }
+
 }

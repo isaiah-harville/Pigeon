@@ -10,6 +10,33 @@
 import CryptoKit
 import Foundation
 
+enum IdentityManagerError: Error, Equatable {
+  case missingStoredIdentity
+}
+
+enum IdentityCreationPolicy: Equatable {
+  case allowCreation
+  case existingOnly
+}
+
+/// Non-secret installation evidence. It distinguishes a genuine first launch
+/// from loss of a previously persisted identity, which must never self-heal by
+/// silently generating a new trust root.
+protocol IdentityInitializationStore {
+  var wasInitialized: Bool { get }
+  func markInitialized()
+}
+
+private struct UserDefaultsIdentityInitializationStore: IdentityInitializationStore {
+  private let key = "pigeon.identity.initialized"
+
+  var wasInitialized: Bool { UserDefaults.standard.bool(forKey: key) }
+
+  func markInitialized() {
+    UserDefaults.standard.set(true, forKey: key)
+  }
+}
+
 /// Creates and holds the device's long-term **Ed25519 identity key**, stored in
 /// the Keychain (never leaving the device).
 ///
@@ -45,10 +72,35 @@ final class IdentityManager {
 
   /// Loads the existing identity key, generating and persisting one if missing.
   convenience init() throws {
-    try self.init(store: KeychainStore(account: IdentityManager.identityAccount))
+    try self.init(
+      store: KeychainStore(account: IdentityManager.identityAccount),
+      initializationStore: UserDefaultsIdentityInitializationStore(),
+      creationPolicy: .allowCreation)
   }
 
-  init(store: any KeyStore) throws {
+  convenience init(creationPolicy: IdentityCreationPolicy) throws {
+    try self.init(
+      store: KeychainStore(account: IdentityManager.identityAccount),
+      initializationStore: UserDefaultsIdentityInitializationStore(),
+      creationPolicy: creationPolicy)
+  }
+
+  convenience init(store: any KeyStore) throws {
+    try self.init(store: store, initializationStore: nil, creationPolicy: .allowCreation)
+  }
+
+  convenience init(
+    store: any KeyStore, initializationStore: (any IdentityInitializationStore)?
+  ) throws {
+    try self.init(
+      store: store, initializationStore: initializationStore,
+      creationPolicy: .allowCreation)
+  }
+
+  init(
+    store: any KeyStore, initializationStore: (any IdentityInitializationStore)?,
+    creationPolicy: IdentityCreationPolicy
+  ) throws {
     self.store = store
 
     // A new key adopts the accessibility implied by the background-delivery
@@ -57,10 +109,15 @@ final class IdentityManager {
 
     if let existing = try store.get() {
       self.privateKey = try Curve25519.Signing.PrivateKey(rawRepresentation: existing)
+      initializationStore?.markInitialized()
     } else {
+      guard creationPolicy == .allowCreation, initializationStore?.wasInitialized != true else {
+        throw IdentityManagerError.missingStoredIdentity
+      }
       let fresh = Curve25519.Signing.PrivateKey()
       try store.set(fresh.rawRepresentation, accessibility: accessibility)
       self.privateKey = fresh
+      initializationStore?.markInitialized()
     }
   }
 
@@ -80,9 +137,16 @@ final class IdentityManager {
   /// existing trust relationships become invalid. The caller must also rebuild
   /// the Olm `PigeonAccount` (which is bound to this identity) from the new seed.
   func resetIdentity() throws {
-    let accessibility = BackgroundDelivery.accessibility
     let fresh = Curve25519.Signing.PrivateKey()
-    try store.set(fresh.rawRepresentation, accessibility: accessibility)
-    self.privateKey = fresh
+    try replaceIdentity(with: fresh.rawRepresentation)
+  }
+
+  /// Idempotently promotes a pre-staged Clean Slate identity. Reapplying the
+  /// same seed after a crash cannot create another public identity.
+  func replaceIdentity(with seed: Data) throws {
+    let replacement = try Curve25519.Signing.PrivateKey(rawRepresentation: seed)
+    try store.set(seed, accessibility: BackgroundDelivery.accessibility)
+    guard try store.get() == seed else { throw IdentityManagerError.missingStoredIdentity }
+    self.privateKey = replacement
   }
 }

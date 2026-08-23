@@ -8,6 +8,26 @@
 import Foundation
 import PigeonFFI
 
+enum ContactRequestState: String, Codable {
+  case none
+  case incoming
+  case outgoing
+}
+
+enum ContactAdmission {
+  case verifiedInPerson
+  case unverified
+  case outgoingRequest
+
+  var verifiedInPerson: Bool { self == .verifiedInPerson }
+  var requestState: ContactRequestState { self == .outgoingRequest ? .outgoing : .none }
+}
+
+struct BlockedContact: Identifiable, Equatable {
+  let id: Data
+  let displayName: String
+}
+
 /// A verified peer. The `bundle` carries their Ed25519 identity, Olm Curve25519
 /// identity key, and the signature binding them; decoding a `PigeonIdentityBundle`
 /// already verified that binding before it could become a Contact.
@@ -32,6 +52,14 @@ struct Contact: Identifiable, Equatable {
   /// shared over some other channel. Drives the "not verified in person" cue.
   /// Defaults true so contacts added before this distinction read as verified.
   var verifiedInPerson: Bool = true
+  /// Pending one-sided contact exchange. Incoming requests stay out of the
+  /// address book/chat list until accepted; outgoing requests may send one intro.
+  var requestState: ContactRequestState = .none
+  /// Durable admission state, independent of deletable/ephemeral chat history.
+  var introductionSent: Bool = false
+  var introductionReceived: Bool = false
+  /// Admission timestamp for bounded, expiring unknown-sender quarantine.
+  var requestCreatedAt: Date?
 
   /// Identity public key, used as the stable contact id.
   var id: Data { bundle.identityKey }

@@ -24,24 +24,58 @@ extension SessionManager {
     }
 
     guard isPersistenceHealthy else { return .retryAfterRestart }
+    guard purgeExpiredIncomingRequests(now: Date()) else { return .retryAfterRestart }
 
-    guard let contact = contacts.first(where: { $0.id == envelope.sender }) else {
-      return .consumed
+    guard !blockedContactIDs.contains(envelope.sender) else { return .consumed }
+
+    guard let (contact, admittedUnknown) = contactForInbound(envelope) else { return .consumed }
+    let consumed = dispatchInbound(envelope, from: contact, channel: channel)
+    removeRejectedUnknown(contact, ifAdmitted: admittedUnknown)
+    return consumed ? .consumed : .retryAfterRestart
+  }
+
+  private func contactForInbound(_ envelope: SessionEnvelope) -> (Contact, Bool)? {
+    if let known = contacts.first(where: { $0.id == envelope.sender }) { return (known, false) }
+    let requestDates = contacts.compactMap { contact in
+      contact.requestState == .incoming ? contact.requestCreatedAt : nil
     }
-    let consumed: Bool
+    guard Self.canAdmitIncomingRequest(existingDates: requestDates, now: Date()),
+      envelope.type == .x3dhInit,
+      let request = SessionInitiationPayload(decoding: envelope.payload),
+      let card = ContactCard(scanned: request.contactCard),
+      card.bundle.identityKey == envelope.sender,
+      envelope.sender != myID
+    else { return nil }
+    let sanitized = DisplayName.sanitize(card.name)
+    let contact = Contact(
+      bundle: card.bundle, displayName: sanitized.isEmpty ? "Unnamed" : sanitized,
+      relayURLs: card.relayURLs, prekeyBundle: card.prekeyBundle,
+      verifiedInPerson: false, requestState: .incoming, requestCreatedAt: Date())
+    contacts.append(contact)
+    return (contact, true)
+  }
+
+  private func dispatchInbound(
+    _ envelope: SessionEnvelope, from contact: Contact, channel: TransportChannel
+  ) -> Bool {
     switch envelope.type {
-    case .x3dhInit: consumed = handleInitiation(envelope.payload, from: contact)
-    case .message: consumed = handleMessage(envelope.payload, from: contact, channel: channel)
+    case .x3dhInit: return handleInitiation(envelope.payload, from: contact)
+    case .message: return handleMessage(envelope.payload, from: contact, channel: channel)
     case .rehandshakeRequest:
       handleRehandshakeRequest(from: contact)
-      consumed = isPersistenceHealthy
-    case .ack: consumed = handleAck(envelope.payload, from: contact)
-    case .control: consumed = handleControl(envelope.payload, from: contact)
+      return isPersistenceHealthy
+    case .ack: return handleAck(envelope.payload, from: contact)
+    case .control: return handleControl(envelope.payload, from: contact)
     // Olm is async-first: there is no interactive Noise handshake anymore, so a
     // `.handshake` envelope (only ever sent by the old protocol) is ignored.
-    case .handshake: consumed = true
+    case .handshake: return true
     }
-    return consumed ? .consumed : .retryAfterRestart
+  }
+
+  private func removeRejectedUnknown(_ contact: Contact, ifAdmitted admitted: Bool) {
+    if admitted, sessions[contact.id] == nil {
+      contacts.removeAll { $0.id == contact.id }
+    }
   }
 
   /// Responder side of async first contact: a peer opened an Olm session against
@@ -49,9 +83,18 @@ extension SessionManager {
   /// Reconstruct the session from the initiation, then process the `message`
   /// envelopes that follow normally.
   func handleInitiation(_ payload: Data, from contact: Contact) -> Bool {
+    guard let request = SessionInitiationPayload(decoding: payload),
+      let senderCard = ContactCard(scanned: request.contactCard),
+      senderCard.bundle.identityKey == contact.id
+    else {
+      note(.sessionRejected)
+      return true
+    }
+    let initiation = request.initiation
     // Only the lexicographic responder accepts initiations; if we're the
-    // initiator we drive our own session and ignore a crossed initiation.
-    guard !isInitiator(toward: contact.id) else { return true }
+    // initiator we drive our own session and ignore a crossed initiation. A
+    // one-sided request may start from either role.
+    guard contact.requestState == .incoming || !isInitiator(toward: contact.id) else { return true }
 
     // A retransmit of the initiation we already processed: don't rebuild (that
     // would make a second session), but re-send the establishment ack — the peer
@@ -59,12 +102,9 @@ extension SessionManager {
     // persist `lastInitiationIn` across relaunch we can no longer rely on
     // forgetting it to trigger a rebuild-and-reack. A *different* payload means
     // the peer genuinely restarted — fall through and rebuild.
-    if payload == lastInitiationIn[contact.id] {
-      if let session = sessions[contact.id],
-        let ack = try? session.encrypt(plaintext: Self.establishmentAck)
-      {
-        sendEnvelope(.ack, payload: ack, to: contact)
-      }
+    if resendAckForRepeatedInitiation(initiation, from: contact) { return true }
+
+    guard let initiationDigest = freshInitiationDigest(initiation, from: contact) else {
       return true
     }
 
@@ -72,14 +112,15 @@ extension SessionManager {
 
     // Establish, then confirm the initiation's verified identity matches this
     // contact (constant-time inside ed25519 verification) — the binding check.
-    guard let inbound = try? account.establishInbound(initiation: payload),
+    guard let inbound = try? account.establishInbound(initiation: initiation),
       inbound.session.remoteIdentityKey() == contact.bundle.identityKey
     else {
       note(.sessionRejected)
       return true
     }
 
-    lastInitiationIn[contact.id] = payload
+    lastInitiationIn[contact.id] = initiation
+    acceptedInitiationDigests[contact.id, default: []].insert(initiationDigest)
     sessions[contact.id] = inbound.session
     establishedContactIDs.insert(contact.id)
     guard persist() else { return false }  // establishInbound may have consumed a one-time key
@@ -97,6 +138,31 @@ extension SessionManager {
     return true
   }
 
+  private func resendAckForRepeatedInitiation(_ initiation: Data, from contact: Contact) -> Bool {
+    guard initiation == lastInitiationIn[contact.id] else { return false }
+    if let session = sessions[contact.id],
+      let ack = try? session.encrypt(plaintext: Self.establishmentAck)
+    {
+      sendEnvelope(.ack, payload: ack, to: contact)
+    }
+    return true
+  }
+
+  private func freshInitiationDigest(_ payload: Data, from contact: Contact) -> Data? {
+    guard let canonicalInitiation = try? canonicalizeInitiation(encoded: payload) else {
+      note(.sessionRejected)
+      return nil
+    }
+    let digest = InitiationReplayLedger.digest(canonicalInitiation)
+    let acceptedDigests = acceptedInitiationDigests[contact.id, default: []]
+    guard !acceptedDigests.contains(digest) else { return nil }
+    guard acceptedDigests.count < InitiationReplayLedger.maximumEntriesPerContact else {
+      note(.sessionRejected)
+      return nil
+    }
+    return digest
+  }
+
   func handleMessage(_ payload: Data, from contact: Contact, channel: TransportChannel) -> Bool {
     guard let session = sessions[contact.id], establishedContactIDs.contains(contact.id) else {
       // We have no session for a contact that's messaging us — our state is
@@ -111,21 +177,51 @@ extension SessionManager {
       requestRehandshake(with: contact)
       return true
     }
+    normalizeSystemEvent(&received, from: contact)
     // Deduplicate by the sender's message id (a retried message arrives twice).
     if conversationStore.contains(messageID: received.id, for: contact.id) {
       guard persistCrypto() else { return false }
+    } else if shouldDiscardRequestMessage(received, from: contact) {
+      // Decrypt to advance the authenticated ratchet, but retain exactly one
+      // introductory message. Ack extras so they cannot create a retry loop.
+      guard persistCrypto() else { return false }
     } else {
+      if contact.requestState == .incoming,
+        !received.system, received.event == nil,
+        let index = contacts.firstIndex(where: { $0.id == contact.id })
+      {
+        contacts[index].introductionReceived = true
+      }
       received.transport = channel
       guard record(received, for: contact.id) else { return false }
 
       // Surface a banner/notification only after the message and ratchet are durable.
       presenter.notifyIncoming(
-        contactID: contact.id, title: contact.displayName, body: received.text)
+        contactID: contact.id,
+        title: contact.requestState == .incoming ? "Message Request" : contact.displayName,
+        body: contact.requestState == .incoming ? "New message request" : received.text)
     }
     // The incoming message is durable, so its relay copy can be removed even if
     // persisting the newly encrypted end-to-end acknowledgement later fails.
     sendAck(messageID: received.id, to: contact)
     return true
+  }
+
+  private func normalizeSystemEvent(_ message: inout ChatMessage, from contact: Contact) {
+    if message.event == .screenshot {
+      message.text = Self.screenshotNotice(mine: false, contactName: contact.displayName)
+    } else if message.event == .contactAccepted {
+      message.text = "Message request accepted"
+      acceptOutgoingRequest(from: contact.id)
+    } else if message.event == .relayRecommendation {
+      message.text = "\(contact.displayName) shared a relay"
+    }
+  }
+
+  private func shouldDiscardRequestMessage(_ message: ChatMessage, from contact: Contact) -> Bool {
+    guard contact.requestState == .incoming else { return false }
+    if message.system || message.event != nil { return true }
+    return contacts.first { $0.id == contact.id }?.introductionReceived == true
   }
 
   func sendAck(messageID: UUID, to contact: Contact) {
@@ -158,6 +254,9 @@ extension SessionManager {
   /// Switches a chat between the relay (default) and Bluetooth, mirroring the
   /// change to the peer so both ends of the chat use the same link.
   func setChatUsesBluetooth(_ useBluetooth: Bool, for contact: Contact) {
+    guard let current = contacts.first(where: { $0.id == contact.id }),
+      current.requestState == .none
+    else { return }
     guard bluetoothChatIDs.contains(contact.id) != useBluetooth else { return }
     applyTransport(useBluetooth: useBluetooth, for: contact.id, announce: true)
     sendTransportState(to: contact)
@@ -209,6 +308,7 @@ extension SessionManager {
       let plaintext = try? session.decrypt(message: payload),
       let command = plaintext.first
     else { return true }
+    guard contact.requestState == .none else { return persistCrypto() }
     switch command {
     case 0x01, 0x02:
       guard plaintext.count == 2 else { return persistCrypto() }
@@ -226,11 +326,35 @@ extension SessionManager {
     return isPersistenceHealthy && persistCrypto()
   }
 
+  /// Records a screenshot in the visible conversation and mirrors the event to
+  /// that peer over the existing authenticated session. iOS reports screenshots
+  /// after capture, so this is an audit notice rather than prevention.
+  func reportScreenshotTaken() {
+    guard let contactID = activeChatID,
+      let contact = contacts.first(where: { $0.id == contactID })
+    else { return }
+    var event = ChatMessage(
+      mine: true,
+      text: Self.screenshotNotice(mine: true, contactName: contact.displayName),
+      pending: true)
+    event.system = true
+    event.event = .screenshot
+    event.transientOutbox = isEphemeral(contact)
+    guard record(event, for: contact.id) else { return }
+    armDeliveryDeadline(messageID: event.id, contactID: contact.id)
+    if establishedContactIDs.contains(contact.id) {
+      transmit(event, to: contact)
+    } else {
+      ensureEstablishing(contactID: contact.id)
+    }
+  }
+
   /// Recovers a lost/stale session. The initiator re-establishes; the responder
   /// asks the initiator to do so. Triggered by *network* input (an undecryptable
   /// message, a missing session for an inbound message), so it's rate-limited per
   /// contact: a spoofed flood can't drive endless resets or re-request spam.
   func requestRehandshake(with contact: Contact) {
+    guard contact.requestState == .none else { return }
     guard rehandshakeGate.allow(contact.id, now: Date()) else { return }
     if isInitiator(toward: contact.id) {
       resetSession(for: contact.id)
@@ -241,6 +365,7 @@ extension SessionManager {
   }
 
   func handleRehandshakeRequest(from contact: Contact) {
+    guard contact.requestState == .none else { return }
     guard isInitiator(toward: contact.id) else { return }  // only the initiator can start
     // An initiation we sent is still in flight (not yet acked): just resend it
     // rather than resetting the session we just stood up. Clobbering it would
@@ -273,8 +398,9 @@ extension SessionManager {
   /// that initiation; it cannot start one itself.)
   func establishIfNeeded(contactID: Data) {
     guard !establishedContactIDs.contains(contactID) else { return }
-    guard isInitiator(toward: contactID),
-      let contact = contacts.first(where: { $0.id == contactID })
+    guard let contact = contacts.first(where: { $0.id == contactID }),
+      contact.requestState != .incoming,
+      contact.requestState == .outgoing || isInitiator(toward: contactID)
     else { return }
     guard contact.prekeyBundle != nil else {
       // Olm is async-first with no interactive fallback, so without a published
@@ -312,9 +438,14 @@ extension SessionManager {
       return
     }
     sessions[contact.id] = outbound.session
-    pendingInitiation[contact.id] = outbound.initiation
+    guard let card = myCard,
+      let initiationPayload = SessionInitiationPayload(
+        initiation: outbound.initiation, contactCard: card.encoded()
+      ).encoded()
+    else { return }
+    pendingInitiation[contact.id] = initiationPayload
     establishedContactIDs.insert(contact.id)
-    sendEnvelope(.x3dhInit, payload: outbound.initiation, to: contact)
+    sendEnvelope(.x3dhInit, payload: initiationPayload, to: contact)
     note(.firstContactStarted)
     sendPending(to: contact)  // deliver anything queued (initiation precedes it)
     if ephemeralContactIDs.contains(contact.id) { sendEphemeralState(to: contact) }

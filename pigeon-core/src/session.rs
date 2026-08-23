@@ -77,7 +77,9 @@ impl Session {
     ///
     /// `message` must be an [`OlmMessage::PreKey`]. The matching one-time key (if
     /// the initiator used one) is consumed from `local` here — that consumption
-    /// is the replay defence, so a replayed initiation will fail.
+    /// is the replay defence, so a replayed one-time-prekey initiation will fail.
+    /// Olm deliberately permits fallback-key reuse; callers must durably reject
+    /// fallback initiations they have already accepted.
     ///
     /// Verify the initiator's safety number (`identity.identity_key`) before
     /// trusting the session.

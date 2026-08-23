@@ -6,6 +6,7 @@
 //  relays are advertised/used, and endpoint validation.
 //
 
+import CryptoKit
 import XCTest
 
 @testable import Pigeon
@@ -54,6 +55,17 @@ final class RelaySettingsTests: XCTestCase {
     XCTAssertTrue(RelaySettings.urls().isEmpty)
   }
 
+  func testRelaySelectorRemainsAvailableWhileConnectivityIsOffline() throws {
+    let identity = try IdentityManager(
+      store: InMemoryKeyStore(seed: Curve25519.Signing.PrivateKey().rawRepresentation))
+    let manager = SessionManager(
+      identity: identity,
+      mesh: MeshService(transport: RelaySettingsNoopTransport()))
+
+    XCTAssertFalse(manager.relayURLs.isEmpty)
+    XCTAssertTrue(manager.hasRelay)
+  }
+
   func testEndpointValidation() {
     XCTAssertTrue(RelaySettings.isValidEndpoint("wss://relay.example/ws"))
     XCTAssertTrue(RelaySettings.isValidEndpoint("ws://relay.example/ws"))
@@ -68,4 +80,16 @@ final class RelaySettingsTests: XCTestCase {
     XCTAssertTrue(RelaySettings.isSecureEndpoint(secure))
     XCTAssertFalse(RelaySettings.isSecureEndpoint(insecure))
   }
+}
+
+@MainActor
+private final class RelaySettingsNoopTransport: Transport {
+  let kind: TransportKind? = .relay
+  var status: TransportStatus = .idle
+  var connectedPeerCount = 0
+  var log: [String] = []
+  var onMessage: ((Data, String) -> TransportMessageDisposition)?
+  var onConnectivity: (() -> Void)?
+
+  func broadcast(_: Data, to _: Data?) {}
 }

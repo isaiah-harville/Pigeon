@@ -12,8 +12,17 @@
 //  coordinator's facade), so the crypto paths are untouched by the extraction.
 //
 
+import CryptoKit
 import Foundation
 import PigeonFFI
+
+enum InitiationReplayLedger {
+  static let maximumEntriesPerContact = 256
+
+  static func digest(_ payload: Data) -> Data {
+    Data(SHA256.hash(data: payload))
+  }
+}
 
 /// Owns the live messaging-session state. `@Observable` so views observing
 /// establishment (e.g. the chat's lock indicator) refresh as sessions stand up.
@@ -30,16 +39,23 @@ final class SessionRegistry {
   /// the peer acks (proof it stood up the session).
   var pendingInitiation: [Data: Data] = [:]
   /// The last initiation payload we processed as responder, to ignore retransmits
-  /// (re-running `establishInbound` would build a second session); a *different*
-  /// payload signals a genuine peer restart and triggers a rebuild.
+  /// (re-running `establishInbound` would build a second session). Historical
+  /// non-current payloads are rejected through `acceptedInitiationDigests`.
   var lastInitiationIn: [Data: Data] = [:]
+  /// Digests of all accepted inbound initiations, retained across session
+  /// replacement and relaunch so an older fallback-prekey initiation cannot
+  /// become fresh again merely because a newer initiation is current.
+  var acceptedInitiationDigests: [Data: Set<Data>] = [:]
 
-  /// Clears all per-contact session state, so the next establishment starts a
-  /// fresh handshake (manual recovery, a re-scan, or a detected desync).
+  /// Clears live per-contact session state so the next establishment starts a
+  /// fresh handshake. The replay ledger deliberately survives resets and
+  /// contact removal; only a full identity rotation may make old recordings
+  /// irrelevant.
   func reset(_ id: Data) {
     sessions[id] = nil
     pendingInitiation[id] = nil
     lastInitiationIn[id] = nil
     established.remove(id)
   }
+
 }

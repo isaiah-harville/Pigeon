@@ -24,7 +24,7 @@ struct ContactsListView: View {
 
   /// All contacts, sorted by display name (case-insensitive).
   private var contacts: [Contact] {
-    session.contacts.sorted { lhs, rhs in
+    session.contacts.filter { $0.requestState != .incoming }.sorted { lhs, rhs in
       lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
     }
   }

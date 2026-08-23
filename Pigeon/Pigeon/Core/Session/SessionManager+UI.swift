@@ -8,6 +8,32 @@ import PigeonFFI
 
 extension SessionManager {
 
+  func setAppActive(_ active: Bool) { presenter.setAppActive(active) }
+  func dismissBanner() { presenter.dismissBanner() }
+
+  var blockedContactIDs: Set<Data> { Set(blockedContacts.map(\.id)) }
+
+  /// Preserves the pre-request call surface for in-person and established
+  /// contacts; remote-link callers opt into `.outgoing` explicitly.
+  @discardableResult
+  func addContact(
+    _ bundle: PigeonIdentityBundle, name: String, relayURLs: [URL],
+    prekeyBundle: PigeonPrekeyBundle?, verifiedInPerson: Bool
+  ) -> Bool {
+    addContact(
+      bundle, name: name, relayURLs: relayURLs, prekeyBundle: prekeyBundle,
+      admission: verifiedInPerson ? .verifiedInPerson : .unverified)
+  }
+
+  /// Persists and applies the full relay list (endpoints + enabled flags).
+  func setRelayEntries(_ entries: [RelayEntry]) {
+    RelaySettings.setEntries(entries)
+    let configured = RelaySettings.urls()
+    relayURLs = RelayTransport.advertisedRelays(
+      configured: configured, excluding: relay?.incompatibleRelayURLs ?? [])
+    relay?.reconfigure(configured)
+  }
+
   // MARK: - UI passthroughs
 
   var status: TransportStatus { mesh.status }
@@ -20,6 +46,54 @@ extension SessionManager {
   /// Hosts of our own relays we can currently receive on, for the chat header.
   var relayHosts: [String] { relay?.onlineRelayHosts ?? [] }
   var incompatibleRelayURLs: Set<URL> { relay?.incompatibleRelayURLs ?? [] }
+
+  var relayEligibleContactIDs: [Data] {
+    contacts.filter { $0.requestState != .incoming }.map(\.id)
+  }
+
+  func relayEligibleContact(_ id: Data) -> Contact? {
+    contacts.first { $0.id == id && $0.requestState != .incoming }
+  }
+
+  /// Master network switch. Disabling tears down Bluetooth, local Wi-Fi, and
+  /// relay links while preserving queued ciphertext and local state.
+  var connectivityEnabled: Bool { ConnectivitySettings.isEnabled }
+
+  func setConnectivityEnabled(_ enabled: Bool) {
+    ConnectivitySettings.setEnabled(enabled)
+    mesh.setConnectivityEnabled(enabled)
+    if enabled { flushOnConnectivity() }
+  }
+
+  /// Stops every live link, deletes the complete encrypted store family, then
+  /// replaces the long-term identity. The caller must immediately replace this
+  /// manager because its relay mailbox and Olm account belong to the old key.
+  func prepareCleanSlate(
+    identitySeed: Data,
+    replaceVault: () throws -> Void
+  ) async throws {
+    guard isUnlocked else { throw CleanSlateError.wipeFailed }
+    await relay?.unregisterPushForCleanSlate()
+    mesh.setConnectivityEnabled(false)
+    do {
+      try CleanSlateExecutor.run(
+        wipe: { persistence.wipeAll() },
+        rotateIdentity: { try identity.replaceIdentity(with: identitySeed) },
+        rotateVault: replaceVault)
+      isPersistenceHealthy = false
+    } catch CleanSlateError.wipeFailed {
+      // A multi-file deletion can fail after removing only part of the store.
+      // Keep the live graph offline so stale in-memory ratchets cannot rewrite
+      // or communicate against that ambiguous state; a retry completes it.
+      isPersistenceHealthy = false
+      throw CleanSlateError.wipeFailed
+    } catch {
+      // The data is gone but the identity replacement failed atomically. Keep
+      // the old manager offline; the app rebuilds an empty service graph.
+      isPersistenceHealthy = false
+      throw error
+    }
+  }
 
   /// Pull-to-refresh recovery for the chats screen: restart link discovery /
   /// relay sockets, then immediately drive handshakes and pending sends. The
@@ -34,7 +108,7 @@ extension SessionManager {
   }
 
   /// Whether a relay is configured at all, so the UI can offer the relay option.
-  var hasRelay: Bool { relayLinkState != .disabled }
+  var hasRelay: Bool { !relayURLs.isEmpty }
 
   /// Whether `contact`'s chat sends over Bluetooth. Relay is the default for
   /// every chat (we encourage relays); Bluetooth is the opt-in second option.
@@ -99,8 +173,10 @@ extension SessionManager {
     #endif
   }
 
-  /// Whether Pigeon may receive messages while the device is locked. On by
-  /// default; backed by the identity keys' keychain accessibility.
+  /// Whether Pigeon may cold relaunch and authenticate to relays while the
+  /// device is locked. On by default; backed by the identity key's Keychain
+  /// accessibility. An already-running unlocked session follows the normal
+  /// durable locked-delivery path regardless of this relaunch preference.
   var backgroundDeliveryEnabled: Bool { BackgroundDelivery.isEnabled }
 
   /// Applies a new background-delivery preference: rewrites the identity keys'
@@ -212,12 +288,79 @@ extension SessionManager {
 
   // MARK: - Contacts book vs. conversations
 
+  /// Incoming requests appear only after their one permitted introduction has
+  /// arrived; the authenticated session/card may be staged earlier off-screen.
+  var incomingMessageRequests: [Contact] {
+    contacts.filter { $0.requestState == .incoming && $0.introductionReceived }
+  }
+
+  /// Request senders get one ordinary introductory message. Recipients cannot
+  /// reply until accepting; normal contacts are unrestricted.
+  func canSendMessage(to contact: Contact) -> Bool {
+    guard let current = contacts.first(where: { $0.id == contact.id }) else { return false }
+    switch current.requestState {
+    case .none: return true
+    case .incoming: return false
+    case .outgoing: return !current.introductionSent
+    }
+  }
+
+  /// Promotes a request into the normal address book and sends a durable,
+  /// acknowledged event so the requester can lift its one-message limit.
+  func acceptMessageRequest(from contact: Contact) {
+    guard let index = contacts.firstIndex(where: { $0.id == contact.id }),
+      contacts[index].requestState == .incoming
+    else { return }
+    contacts[index].requestState = .none
+    activeConversationIDs.insert(contact.id)
+    var accepted = ChatMessage(
+      mine: true, text: "Message request accepted", pending: true)
+    accepted.system = true
+    accepted.event = .contactAccepted
+    guard record(accepted, for: contact.id) else { return }
+    refreshRelay()
+    armDeliveryDeadline(messageID: accepted.id, contactID: contact.id)
+    if let current = contacts.first(where: { $0.id == contact.id }) {
+      transmit(accepted, to: current)
+    }
+  }
+
+  func acceptOutgoingRequest(from contactID: Data) {
+    guard let index = contacts.firstIndex(where: { $0.id == contactID }),
+      contacts[index].requestState == .outgoing
+    else { return }
+    contacts[index].requestState = .none
+  }
+
+  /// Removes all relationship/session state and installs a durable reject
+  /// tombstone checked before future unknown-sender establishment work.
+  func blockContact(_ contact: Contact) {
+    if !blockedContactIDs.contains(contact.id) {
+      blockedContacts.append(BlockedContact(id: contact.id, displayName: contact.displayName))
+    }
+    conversationStore.clear(contactID: contact.id)
+    activeConversationIDs.remove(contact.id)
+    ephemeralContactIDs.remove(contact.id)
+    bluetoothChatIDs.remove(contact.id)
+    contacts.removeAll { $0.id == contact.id }
+    resetSession(for: contact.id)
+    rehandshakeGate.clear(contact.id)
+    persist()
+    refreshRelay()
+  }
+
+  func unblockContact(id: Data) {
+    guard blockedContactIDs.contains(id) else { return }
+    blockedContacts.removeAll { $0.id == id }
+    persist()
+  }
+
   /// The contacts with an open conversation, for the home (chats) list — sorted
   /// most-recent first, with chats that have no message yet (just started or
   /// freshly added) floated to the top. The full book is `contacts`.
   var chatContacts: [Contact] {
     contacts
-      .filter { activeConversationIDs.contains($0.id) }
+      .filter { $0.requestState != .incoming && activeConversationIDs.contains($0.id) }
       .sorted { lhs, rhs in
         let lhsDate = lastMessage(with: lhs)?.date ?? .distantFuture
         let rhsDate = lastMessage(with: rhs)?.date ?? .distantFuture
@@ -250,9 +393,11 @@ extension SessionManager {
   }
 
   /// Fully forgets a contact: clears its conversation, drops it from the book, and
-  /// resets its Olm session. Reaching this contact again requires re-scanning
-  /// their QR (the deliberate, documented reset path). The opposite of
-  /// `deleteConversation`, which keeps the contact.
+  /// resets its Olm session. The compact replay tombstone remains so removing
+  /// and re-adding the same identity cannot make a recorded initiation fresh.
+  /// Reaching this contact again requires re-scanning their QR (the deliberate,
+  /// documented reset path). The opposite of `deleteConversation`, which keeps
+  /// the contact.
   func removeContact(_ contact: Contact) {
     conversationStore.clear(contactID: contact.id)
     activeConversationIDs.remove(contact.id)

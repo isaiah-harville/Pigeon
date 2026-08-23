@@ -223,7 +223,8 @@ struct AddContactView: View {
     let name = card.name.isEmpty ? "Unnamed" : card.name
     if session.addContact(
       card.bundle, name: name, relayURLs: card.relayURLs,
-      prekeyBundle: card.prekeyBundle, verifiedInPerson: verifiedInPerson)
+      prekeyBundle: card.prekeyBundle,
+      admission: verifiedInPerson ? .verifiedInPerson : .outgoingRequest)
     {
       error = nil
       pasted = ""

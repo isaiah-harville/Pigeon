@@ -30,7 +30,7 @@ struct ChatsListView: View {
 
   private var content: some View {
     Group {
-      if session.chatContacts.isEmpty {
+      if session.chatContacts.isEmpty && session.incomingMessageRequests.isEmpty {
         emptyState
       } else {
         contactList
@@ -39,7 +39,9 @@ struct ChatsListView: View {
     // The bubble floats over the content, bottom-right. The empty state has its
     // own add button, so it's only shown when there are chats.
     .overlay(alignment: .bottomTrailing) {
-      if !session.chatContacts.isEmpty { addContactBubble }
+      if !session.chatContacts.isEmpty || !session.incomingMessageRequests.isEmpty {
+        addContactBubble
+      }
     }
     .navigationTitle("Pigeon")
     .navigationBarTitleDisplayMode(.inline)
@@ -119,30 +121,52 @@ struct ChatsListView: View {
 
   private var contactList: some View {
     List {
-      ForEach(session.chatContacts) { contact in
+      messageRequestsSection
+      chatRows
+    }
+    .listStyle(.plain)
+  }
+
+  @ViewBuilder
+  private var messageRequestsSection: some View {
+    if !session.incomingMessageRequests.isEmpty {
+      Section("Message Requests") {
         NavigationLink {
-          ChatView(contact: contact)
+          MessageRequestsView()
         } label: {
-          ContactRow(contact: contact)
-        }
-        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-        .swipeActions(edge: .trailing) {
-          Button(role: .destructive) {
-            session.deleteConversation(with: contact)
-          } label: {
-            Label("Delete", systemImage: "trash")
-          }
+          Label(
+            "Message Requests (\(session.incomingMessageRequests.count))",
+            systemImage: "person.crop.circle.badge.questionmark")
         }
       }
     }
-    .listStyle(.plain)
+  }
+
+  private var chatRows: some View {
+    ForEach(session.chatContacts) { contact in
+      NavigationLink {
+        ChatView(contact: contact)
+      } label: {
+        ContactRow(contact: contact)
+      }
+      .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+      .swipeActions(edge: .trailing) {
+        Button(role: .destructive) {
+          session.deleteConversation(with: contact)
+        } label: {
+          Label("Delete", systemImage: "trash")
+        }
+      }
+    }
   }
 
   // MARK: - Empty state
 
   // Two cases: no contacts at all (add one), or contacts exist in the book but no
   // open conversation (open one).
-  private var hasContacts: Bool { !session.contacts.isEmpty }
+  private var hasContacts: Bool {
+    session.contacts.contains { $0.requestState != .incoming }
+  }
 
   private var emptyState: some View {
     VStack(spacing: 20) {

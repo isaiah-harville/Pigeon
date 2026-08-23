@@ -7,6 +7,16 @@
 
 import SwiftUI
 
+enum ChatInteraction {
+  static func shouldSwitchTransport(width: CGFloat, height: CGFloat) -> Bool {
+    abs(width) >= 24 && abs(width) > abs(height)
+  }
+
+  static func canConfigureChat(requestState: ContactRequestState) -> Bool {
+    requestState == .none
+  }
+}
+
 /// Centered timeline chrome for day separators and low-importance system events.
 struct ChatTimelineMarker: View {
   let text: String
@@ -35,6 +45,7 @@ enum ChatTimelineIcon {
     if text.hasPrefix("Switched to Local") { return "dot.radiowaves.left.and.right" }
     if text.hasPrefix("Switched to relay") { return "globe" }
     if text.hasPrefix("Ephemeral") { return "clock.arrow.circlepath" }
+    if text.hasSuffix("reported a screenshot") { return "camera.viewfinder" }
     return nil
   }
 }

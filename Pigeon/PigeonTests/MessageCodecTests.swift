@@ -91,4 +91,59 @@ final class MessageCodecTests: XCTestCase {
     XCTAssertNil(
       SessionManager.decodeReaction(Data([0x03]) + Data(String(repeating: "z", count: 36).utf8)))
   }
+
+  // MARK: - Screenshot events
+
+  func testScreenshotEventRoundTripsAsDurableSystemMessage() throws {
+    var message = ChatMessage(mine: true, text: "You reported a screenshot", pending: true)
+    message.system = true
+    message.event = .screenshot
+
+    let encoded = try XCTUnwrap(SessionManager.encodeMessage(message))
+    let decoded = try XCTUnwrap(SessionManager.decodeMessage(encoded))
+
+    XCTAssertTrue(decoded.system)
+    XCTAssertEqual(decoded.event, .screenshot)
+  }
+
+  func testScreenshotNoticesIdentifyWhoCapturedTheChat() {
+    XCTAssertEqual(
+      SessionManager.screenshotNotice(mine: true, contactName: "Sam"),
+      "You reported a screenshot")
+    XCTAssertEqual(
+      SessionManager.screenshotNotice(mine: false, contactName: "Sam"),
+      "Sam reported a screenshot")
+  }
+
+  func testRelayRecommendationRoundTripsAsAuthenticatedTypedMessage() throws {
+    var message = ChatMessage(mine: true, text: "Shared a relay", pending: true)
+    message.system = true
+    message.event = .relayRecommendation
+    message.relayRecommendationURLs = ["wss://relay.example/ws"]
+
+    let encoded = try XCTUnwrap(SessionManager.encodeMessage(message))
+    let decoded = try XCTUnwrap(SessionManager.decodeMessage(encoded))
+
+    XCTAssertEqual(decoded.event, .relayRecommendation)
+    XCTAssertEqual(decoded.relayRecommendationURLs, ["wss://relay.example/ws"])
+  }
+
+  func testRelayRecommendationDropsUnsafeAndOversizedEndpoints() throws {
+    var message = ChatMessage(mine: true, text: "Shared a relay", pending: true)
+    message.system = true
+    message.event = .relayRecommendation
+    message.relayRecommendationURLs =
+      [
+        "https://not-a-websocket.example",
+        "wss://user:password@relay.example/ws",
+      ]
+      + (0...RelaySettings.maximumSharedRelayCount).map { index in
+        "wss://relay\(index).example/ws"
+      }
+
+    let encoded = try XCTUnwrap(SessionManager.encodeMessage(message))
+    let decoded = try XCTUnwrap(SessionManager.decodeMessage(encoded))
+
+    XCTAssertEqual(decoded.relayRecommendationURLs, [])
+  }
 }

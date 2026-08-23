@@ -90,14 +90,23 @@ final class InMemoryKeyStore: KeyStore {
 @MainActor
 final class SessionRelaunchDeliveryTests: XCTestCase {
 
+  private enum TestError: Error {
+    case couldNotGenerateOrderedIdentity
+  }
+
   /// Builds a device's SessionManager over the bus, unlocked against `storeFile`
   /// with the given key + identity seed, and connects it to the bus.
-  private func launch(seed: Data, key: SymmetricKey, storeFile: String, bus: TestBus) throws
+  private func launch(
+    seed: Data, key: SymmetricKey, storeFile: String, bus: TestBus,
+    persistence: SessionPersistence? = nil
+  ) throws
     -> SessionManager
   {
     let identity = try IdentityManager(store: InMemoryKeyStore(seed: seed))
     let transport = FakeTransport(identity: identity.publicKey.rawRepresentation, bus: bus)
-    let manager = SessionManager(identity: identity, mesh: MeshService(transport: transport))
+    let manager = SessionManager(
+      identity: identity, mesh: MeshService(transport: transport),
+      persistence: persistence ?? SessionPersistence())
     let store = EncryptedStore(key: key, fileName: storeFile)
     try manager.attachStore(store)
     bus.connect(identity.publicKey.rawRepresentation, transport)
@@ -114,6 +123,153 @@ final class SessionRelaunchDeliveryTests: XCTestCase {
   }
 
   private func newSeed() -> Data { Curve25519.Signing.PrivateKey().rawRepresentation }
+
+  private func account(preceding identity: Data) throws -> (
+    account: PigeonAccount, bundle: PigeonIdentityBundle
+  ) {
+    for _ in 0..<512 {
+      let account = try PigeonAccount.fromIdentitySeed(seed: newSeed())
+      let bundle = try PigeonIdentityBundle(decoding: account.identityBundle())
+      if bundle.identityKey.lexicographicallyPrecedes(identity) {
+        return (account, bundle)
+      }
+    }
+    throw TestError.couldNotGenerateOrderedIdentity
+  }
+
+  private enum ExportFailure: Error {
+    case injected
+  }
+
+  func testSessionExportFailureFreezesCoordinatorAndEmitsNoMessage() throws {
+    let bus = TestBus()
+    let keyA = SymmetricKey(size: .bits256)
+    let keyB = SymmetricKey(size: .bits256)
+    let fileA = "export-failure-a.store"
+    let fileB = "export-failure-b.store"
+    for (key, file) in [(keyA, fileA), (keyB, fileB)] {
+      EncryptedStore(key: key, fileName: file).wipe()
+      EncryptedStore(key: key, fileName: file).companion(suffix: ".crypto").wipe()
+    }
+
+    var failSessionExport = false
+    let exporter = SessionCryptoExporter(
+      exportAccount: { try $0.exportOlmPickle() },
+      exportSession: {
+        if failSessionExport { throw ExportFailure.injected }
+        return try $0.exportPickle()
+      })
+    let a = try launch(
+      seed: newSeed(), key: keyA, storeFile: fileA, bus: bus,
+      persistence: SessionPersistence(cryptoExporter: exporter))
+    let b = try launch(seed: newSeed(), key: keyB, storeFile: fileB, bus: bus)
+
+    let aIsInitiator = a.isInitiator(toward: b.myID)
+    let initiator = aIsInitiator ? a : b
+    let responder = aIsInitiator ? b : a
+    let (initiatorBundle, initiatorPrekey) = try card(initiator)
+    let (responderBundle, responderPrekey) = try card(responder)
+    responder.addContact(
+      initiatorBundle, name: "Initiator", relayURLs: [], prekeyBundle: initiatorPrekey,
+      verifiedInPerson: true)
+    initiator.addContact(
+      responderBundle, name: "Responder", relayURLs: [], prekeyBundle: responderPrekey,
+      verifiedInPerson: true)
+    XCTAssertTrue(a.establishedContactIDs.contains(b.myID))
+    XCTAssertTrue(b.establishedContactIDs.contains(a.myID))
+
+    failSessionExport = true
+    let recipient = try XCTUnwrap(a.contacts.first { $0.id == b.myID })
+    a.send("must not leave the sender", to: recipient)
+
+    XCTAssertFalse(a.isPersistenceHealthy)
+    XCTAssertFalse(texts(b, with: a.myID).contains("must not leave the sender"))
+  }
+
+  func testOlderFallbackInitiationCannotReplaceNewerSessionAfterRelaunch() throws {
+    let bus = TestBus()
+    let responderSeed = newSeed()
+    let responderKey = SymmetricKey(size: .bits256)
+    let storeFile = "fallback-initiation-replay.store"
+    let store = EncryptedStore(key: responderKey, fileName: storeFile)
+    store.wipe()
+    store.companion(suffix: ".crypto").wipe()
+    store.companion(suffix: ".transaction").wipe()
+
+    let responder = try launch(
+      seed: responderSeed, key: responderKey, storeFile: storeFile, bus: bus)
+    let initiator = try account(preceding: responder.myID)
+    let initiatorPrekey = try PigeonPrekeyBundle(
+      decoding: initiator.account.signedPrekeyBundle())
+    XCTAssertTrue(
+      responder.addContact(
+        initiator.bundle, name: "Initiator", relayURLs: [], prekeyBundle: initiatorPrekey,
+        verifiedInPerson: true))
+    let contact = try XCTUnwrap(responder.contacts.first { $0.id == initiator.bundle.identityKey })
+    let responderPrekey = try PigeonPrekeyBundle(
+      decoding: try XCTUnwrap(responder.account).signedPrekeyBundle())
+    XCTAssertFalse(responderPrekey.oneTime)
+    let initiatorCard = ContactCard(
+      name: "Initiator", bundle: initiator.bundle, relayURLs: [], relaySignature: Data(),
+      prekeyBundle: initiatorPrekey)
+    func wrapped(_ initiation: Data) throws -> Data {
+      try XCTUnwrap(
+        SessionInitiationPayload(
+          initiation: initiation, contactCard: initiatorCard.encoded()
+        ).encoded())
+    }
+
+    let initiationA = try initiator.account.establishOutbound(
+      peerBundle: responderPrekey.encoded, firstPlaintext: Data()
+    ).initiation
+    let initiationB = try initiator.account.establishOutbound(
+      peerBundle: responderPrekey.encoded, firstPlaintext: Data()
+    ).initiation
+    XCTAssertTrue(responder.handleInitiation(initiationA, from: contact))
+    XCTAssertNil(responder.sessions[contact.id], "raw 1.2 initiations are rejected")
+    let wrongCardPayload = try XCTUnwrap(
+      SessionInitiationPayload(
+        initiation: initiationA,
+        contactCard: try XCTUnwrap(responder.myCard).encoded()
+      ).encoded())
+    XCTAssertTrue(responder.handleInitiation(wrongCardPayload, from: contact))
+    XCTAssertNil(responder.sessions[contact.id], "the wrapper card must match the sender")
+    XCTAssertTrue(responder.handleInitiation(try wrapped(initiationA), from: contact))
+    XCTAssertTrue(responder.handleInitiation(try wrapped(initiationB), from: contact))
+    XCTAssertEqual(responder.lastInitiationIn[contact.id], initiationB)
+
+    bus.disconnect(responder.myID)
+    let relaunched = try launch(
+      seed: responderSeed, key: responderKey, storeFile: storeFile, bus: bus)
+    let sessionBeforeReplay = try XCTUnwrap(relaunched.sessions[contact.id]).exportPickle()
+    var alternateEncodingOfA = initiationA
+    alternateEncodingOfA.append(contentsOf: [0x18, 0x00])
+    XCTAssertNotEqual(alternateEncodingOfA, initiationA)
+
+    XCTAssertTrue(relaunched.handleInitiation(try wrapped(alternateEncodingOfA), from: contact))
+
+    XCTAssertEqual(relaunched.lastInitiationIn[contact.id], initiationB)
+    XCTAssertEqual(
+      try XCTUnwrap(relaunched.sessions[contact.id]).exportPickle(), sessionBeforeReplay)
+
+    let boundedLedger = Set(
+      (0..<InitiationReplayLedger.maximumEntriesPerContact).map {
+        Data(SHA256.hash(data: Data("ledger-\($0)".utf8)))
+      })
+    relaunched.acceptedInitiationDigests[contact.id] = boundedLedger
+    let initiationC = try initiator.account.establishOutbound(
+      peerBundle: responderPrekey.encoded, firstPlaintext: Data()
+    ).initiation
+    XCTAssertTrue(relaunched.handleInitiation(try wrapped(initiationC), from: contact))
+    XCTAssertEqual(
+      try XCTUnwrap(relaunched.sessions[contact.id]).exportPickle(), sessionBeforeReplay)
+
+    relaunched.removeContact(contact)
+    bus.disconnect(relaunched.myID)
+    let afterRemoval = try launch(
+      seed: responderSeed, key: responderKey, storeFile: storeFile, bus: bus)
+    XCTAssertEqual(afterRemoval.acceptedInitiationDigests[contact.id], boundedLedger)
+  }
 
   /// Two devices establish; the *initiator* is then terminated; the *responder*
   /// sends a message to it; the initiator relaunches and must receive it (and

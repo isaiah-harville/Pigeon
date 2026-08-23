@@ -40,6 +40,17 @@ struct PersistedContact: Codable {
   /// Whether the contact was verified in person (scanned vs pasted). Defaults
   /// true so contacts saved before this field read as verified (§5.7 trust UX).
   var verifiedInPerson: Bool = true
+  /// Missing for pre-1.3 stores, which decode as a normal contact.
+  var requestState: ContactRequestState?
+  /// Optional so stores created before message requests remain decodable.
+  var introductionSent: Int?
+  var introductionReceived: Int?
+  var requestCreatedAt: TimeInterval?
+}
+
+struct PersistedBlockedContact: Codable {
+  var id: Data
+  var name: String
 }
 
 /// The bulky, slow-changing app state: contacts and conversation history.
@@ -56,12 +67,40 @@ struct PersistedState: Codable {
   /// shows on the home list). A contact can exist in the book without one — see
   /// the contacts/messaging split. Defaults empty.
   var activeConversationIDs: [String] = []
+  /// Optional for compatibility with stores written before message requests.
+  var blockedContacts: [PersistedBlockedContact] = []
   /// The local user's own display name, shared in their QR card.
   var myName: String = ""
   /// Legacy crypto fields — read only to migrate stores written before the
   /// crypto/bulk split, never written again (they live in `PersistedCrypto` now).
   var olmAccountPickle: Data?
   var olmFallbackKey: Data?
+
+}
+
+extension PersistedState {
+  private enum CodingKeys: String, CodingKey {
+    case contacts, conversations, ephemeralContactIDs, bluetoothContactIDs
+    case activeConversationIDs, blockedContacts, myName, olmAccountPickle, olmFallbackKey
+  }
+
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    contacts = try values.decodeIfPresent([PersistedContact].self, forKey: .contacts) ?? []
+    conversations =
+      try values.decodeIfPresent([String: [ChatMessage]].self, forKey: .conversations) ?? [:]
+    ephemeralContactIDs =
+      try values.decodeIfPresent([String].self, forKey: .ephemeralContactIDs) ?? []
+    bluetoothContactIDs =
+      try values.decodeIfPresent([String].self, forKey: .bluetoothContactIDs) ?? []
+    activeConversationIDs =
+      try values.decodeIfPresent([String].self, forKey: .activeConversationIDs) ?? []
+    blockedContacts =
+      try values.decodeIfPresent([PersistedBlockedContact].self, forKey: .blockedContacts) ?? []
+    myName = try values.decodeIfPresent(String.self, forKey: .myName) ?? ""
+    olmAccountPickle = try values.decodeIfPresent(Data.self, forKey: .olmAccountPickle)
+    olmFallbackKey = try values.decodeIfPresent(Data.self, forKey: .olmFallbackKey)
+  }
 }
 
 /// One contact's persisted Olm session state (secret — only ever written sealed).
@@ -75,8 +114,36 @@ struct PersistedSession: Codable {
   /// The last initiation we processed (responder-side dedup), so a retransmit
   /// after relaunch doesn't rebuild a second session. `nil` until we accept one.
   var lastInitiationIn: Data?
+  /// SHA-256 digests of every initiation accepted for this contact.
+  var acceptedInitiationDigests: [Data]
 
-  var isEmpty: Bool { pickle == nil && pendingInitiation == nil && lastInitiationIn == nil }
+  var isEmpty: Bool {
+    pickle == nil && pendingInitiation == nil && lastInitiationIn == nil
+      && acceptedInitiationDigests.isEmpty
+  }
+
+  init(
+    pickle: Data?, pendingInitiation: Data?, lastInitiationIn: Data?,
+    acceptedInitiationDigests: [Data]
+  ) {
+    self.pickle = pickle
+    self.pendingInitiation = pendingInitiation
+    self.lastInitiationIn = lastInitiationIn
+    self.acceptedInitiationDigests = acceptedInitiationDigests
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case pickle, pendingInitiation, lastInitiationIn, acceptedInitiationDigests
+  }
+
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    pickle = try values.decodeIfPresent(Data.self, forKey: .pickle)
+    pendingInitiation = try values.decodeIfPresent(Data.self, forKey: .pendingInitiation)
+    lastInitiationIn = try values.decodeIfPresent(Data.self, forKey: .lastInitiationIn)
+    acceptedInitiationDigests =
+      try values.decodeIfPresent([Data].self, forKey: .acceptedInitiationDigests) ?? []
+  }
 }
 
 /// The small, frequently-rewritten crypto state, sealed apart from the bulk so a
@@ -104,10 +171,32 @@ struct PersistedCrypto: Codable {
   init() {}
 }
 
+/// One recoverable full-state generation. This record is sealed before either
+/// split destination is replaced, so startup can finish an interrupted commit
+/// without combining conversation state and ratchets from different saves.
+struct PersistedStateTransaction: Codable {
+  let bulk: PersistedState
+  let crypto: PersistedCrypto
+}
+
+/// Narrow file-system seam used to inject deterministic atomic-write failures.
+/// Production still uses `Data.write(.atomic)` and `FileManager.removeItem`.
+struct EncryptedStoreIO {
+  let write: (Data, URL, Data.WritingOptions) throws -> Void
+  let remove: (URL) throws -> Void
+
+  static func live() -> EncryptedStoreIO {
+    EncryptedStoreIO(
+      write: { try $0.write(to: $1, options: $2) },
+      remove: { try FileManager.default.removeItem(at: $0) })
+  }
+}
+
 /// Reads and writes a single sealed `Codable` blob in Application Support.
 struct EncryptedStore {
   private let key: SymmetricKey
   private let url: URL?
+  private let io: EncryptedStoreIO
 
   /// The default bulk store.
   init(key: SymmetricKey) {
@@ -122,17 +211,22 @@ struct EncryptedStore {
       appropriateFor: nil,
       create: true)
     self.url = base?.appendingPathComponent(fileName)
+    self.io = .live()
   }
 
   /// Explicit location injection for deterministic recovery tests.
   init(key: SymmetricKey, url: URL) {
-    self.key = key
-    self.url = url
+    self.init(key: key, optionalURL: url, io: .live())
   }
 
-  private init(key: SymmetricKey, optionalURL: URL?) {
+  init(key: SymmetricKey, url: URL, io: EncryptedStoreIO) {
+    self.init(key: key, optionalURL: url, io: io)
+  }
+
+  private init(key: SymmetricKey, optionalURL: URL?, io: EncryptedStoreIO) {
     self.key = key
     self.url = optionalURL
+    self.io = io
   }
 
   /// A companion store under the same key and directory whose file name is this
@@ -146,7 +240,8 @@ struct EncryptedStore {
     }
     return EncryptedStore(
       key: key,
-      optionalURL: companionURL)
+      optionalURL: companionURL,
+      io: io)
   }
 
   /// Returns `nil` only when no store exists. An inaccessible, unauthentic, or
@@ -194,8 +289,8 @@ struct EncryptedStore {
       let blob = try? SecretBox.seal(plaintext, key: key)
     else { return false }
     do {
-      try blob.write(
-        to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+      try io.write(
+        blob, url, [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
       return true
     } catch {
       return false
@@ -203,8 +298,15 @@ struct EncryptedStore {
   }
 
   /// Removes this on-disk blob (used when switching to ephemeral mode / wipe).
-  func wipe() {
-    guard let url else { return }
-    try? FileManager.default.removeItem(at: url)
+  @discardableResult
+  func wipe() -> Bool {
+    guard let url else { return false }
+    guard FileManager.default.fileExists(atPath: url.path) else { return true }
+    do {
+      try io.remove(url)
+      return true
+    } catch {
+      return false
+    }
   }
 }

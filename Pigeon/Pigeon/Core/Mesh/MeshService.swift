@@ -66,6 +66,12 @@ final class MeshService {
     transport.refreshConnections()
   }
 
+  /// Enables or disables every underlying network link. The transport owns the
+  /// concrete teardown; the mesh keeps its dedup state for when links return.
+  func setConnectivityEnabled(_ enabled: Bool) {
+    transport.setEnabled(enabled)
+  }
+
   private func handleInbound(_ data: Data, channel: TransportChannel)
     -> TransportMessageDisposition
   {

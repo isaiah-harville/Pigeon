@@ -118,7 +118,7 @@ struct RelaySettingsView: View {
   }
 
   private func pingRank(_ url: URL) -> Int {
-    if case .ms(let ms) = pinger.pings[url] { return ms }
+    if case .available(let ms, _) = pinger.pings[url] { return ms }
     return .max
   }
 
@@ -144,11 +144,7 @@ struct RelaySettingsView: View {
       HStack(spacing: 10) {
         Image(systemName: entry.enabled ? "checkmark.circle.fill" : "circle")
           .foregroundStyle(entry.enabled ? Color.accentColor : Color.secondary)
-        Text(entry.url.absoluteString)
-          .font(.callout.monospaced())
-          .lineLimit(1)
-          .truncationMode(.middle)
-          .foregroundStyle(entry.enabled ? .primary : .secondary)
+        relayEndpointLabel(entry)
         if entry.url == RelaySettings.recommendedURL {
           Image(systemName: "checkmark.seal.fill")
             .font(.footnote)
@@ -167,36 +163,6 @@ struct RelaySettingsView: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
-  }
-
-  @ViewBuilder
-  private func pingLabel(_ url: URL) -> some View {
-    if session.incompatibleRelayURLs.contains(url) {
-      Text("incompatible")
-        .font(.caption)
-        .foregroundStyle(.red)
-    } else {
-      switch pinger.pings[url] {
-      case .ms(let ms):
-        Text("\(ms) ms")
-          .font(.caption.monospacedDigit())
-          .foregroundStyle(pingColor(ms))
-      case .unreachable:
-        Text("offline")
-          .font(.caption)
-          .foregroundStyle(.red)
-      case .measuring, .none:
-        ProgressView().controlSize(.mini)
-      }
-    }
-  }
-
-  private func pingColor(_ ms: Int) -> Color {
-    switch ms {
-    case ..<100: return .green
-    case ..<300: return .orange
-    default: return .red
-    }
   }
 
   private var addRelayRow: some View {
@@ -221,6 +187,86 @@ struct RelaySettingsView: View {
     """
   }
 
+}
+
+// MARK: - Relay version status
+
+extension RelaySettingsView {
+
+  private func relayEndpointLabel(_ entry: RelayEntry) -> some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Text(entry.url.absoluteString)
+        .font(.callout.monospaced())
+        .lineLimit(1)
+        .truncationMode(.middle)
+        .foregroundStyle(entry.enabled ? .primary : .secondary)
+      relayVersionLabel(entry.url)
+    }
+  }
+
+  @ViewBuilder
+  private func pingLabel(_ url: URL) -> some View {
+    switch pinger.pings[url] {
+    case .available(let ms, let info):
+      switch info.compatibility {
+      case .compatible:
+        Text("\(ms) ms")
+          .font(.caption.monospacedDigit())
+          .foregroundStyle(pingColor(ms))
+      case .updateRelay:
+        updateLabel("Update relay")
+      case .updateApp:
+        updateLabel("Update Pigeon")
+      case .incompatible:
+        updateLabel("Incompatible")
+      }
+    case .unreachable:
+      Text("offline")
+        .font(.caption)
+        .foregroundStyle(.red)
+    case .measuring, .none:
+      if session.incompatibleRelayURLs.contains(url) {
+        updateLabel("Incompatible")
+      } else {
+        ProgressView().controlSize(.mini)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func relayVersionLabel(_ url: URL) -> some View {
+    if case .available(_, let info) = pinger.pings[url] {
+      Text(relayVersionText(info))
+        .font(.caption2.monospaced())
+        .foregroundStyle(.secondary)
+    }
+  }
+
+  private func relayVersionText(_ info: RelayTransport.RelayInfo) -> String {
+    let release = info.relayVersion.map { "Relay \($0)" } ?? "Relay version unavailable"
+    if let selected = info.selectedProtocolVersion {
+      return "\(release) · Protocol \(selected)"
+    }
+    if let minimum = info.minimumProtocolVersion, let maximum = info.maximumProtocolVersion {
+      let range = minimum == maximum ? "\(minimum)" : "\(minimum)–\(maximum)"
+      return "\(release) · Protocol \(range)"
+    }
+    return release
+  }
+
+  private func updateLabel(_ text: String) -> some View {
+    Text(text)
+      .font(.caption)
+      .foregroundStyle(.red)
+  }
+
+  private func pingColor(_ ms: Int) -> Color {
+    switch ms {
+    case ..<100: return .green
+    case ..<300: return .orange
+    default: return .red
+    }
+  }
 }
 
 // MARK: - Mutations & status

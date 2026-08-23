@@ -10,7 +10,10 @@ import SwiftUI
 struct ChatComposer: View {
   @Binding var draft: String
   @Binding var replyTarget: ChatMessage?
+  var focus: FocusState<Bool>.Binding
 
+  var enabled = true
+  var disabledMessage: String?
   let onSend: (String, ChatMessage?) -> Void
 
   var body: some View {
@@ -21,18 +24,26 @@ struct ChatComposer: View {
         }
       }
       inputRow
+      if !enabled, let disabledMessage {
+        Text(disabledMessage)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
     }
     .padding()
   }
 
   private var inputRow: some View {
     HStack(spacing: 8) {
-      TextField("Message", text: $draft, axis: .vertical)
+      TextField(enabled ? "Message" : "Waiting for acceptance", text: $draft, axis: .vertical)
+        .focused(focus)
         .textFieldStyle(.plain)
         .lineLimit(1...4)
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(Capsule().fill(.fill.tertiary))
+        .disabled(!enabled)
       sendButton
     }
   }
@@ -49,8 +60,8 @@ struct ChatComposer: View {
         .frame(width: 38, height: 38)
         .background(Capsule().fill(Color.accentColor))
     }
-    .disabled(draft.isEmpty)
-    .opacity(draft.isEmpty ? 0.45 : 1)
+    .disabled(draft.isEmpty || !enabled)
+    .opacity(draft.isEmpty || !enabled ? 0.45 : 1)
   }
 }
 

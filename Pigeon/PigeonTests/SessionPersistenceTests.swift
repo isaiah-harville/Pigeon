@@ -17,6 +17,17 @@ import XCTest
 @MainActor
 final class SessionPersistenceTests: XCTestCase {
 
+  func testLegacyPersistedSessionDecodesWithEmptyReplayLedger() throws {
+    let decoded = try JSONDecoder().decode(PersistedSession.self, from: Data("{}".utf8))
+
+    XCTAssertTrue(decoded.acceptedInitiationDigests.isEmpty)
+    XCTAssertTrue(decoded.isEmpty)
+  }
+
+  private enum ExportFailure: Error {
+    case injected
+  }
+
   func testCorruptBulkStoreFailsInsteadOfStartingEmpty() throws {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("pigeon-corrupt-\(UUID().uuidString).store")
@@ -53,6 +64,7 @@ final class SessionPersistenceTests: XCTestCase {
     let store = EncryptedStore(key: SymmetricKey(size: .bits256))
     store.wipe()
     store.companion(suffix: ".crypto").wipe()
+    store.companion(suffix: ".transaction").wipe()
     return store
   }
 
@@ -170,5 +182,224 @@ final class SessionPersistenceTests: XCTestCase {
     XCTAssertNotNil(reloaded.sessions[contactID])
     XCTAssertEqual(
       reloaded.fallbackRotatedAt?.timeIntervalSince1970, stamp.timeIntervalSince1970)
+  }
+
+  func testAccountExportFailureDoesNotReplaceLastGoodCryptoState() throws {
+    let store = freshStore()
+    let alice = try PigeonAccount.generate()
+    let snapshot = SessionPersistence.Snapshot(
+      contacts: [],
+      conversations: [:],
+      ephemeralContactIDs: [],
+      bluetoothChatIDs: [],
+      myName: "Alice",
+      account: alice,
+      sessions: [:],
+      pendingInitiation: [:],
+      lastInitiationIn: [:],
+      fallbackRotatedAt: nil)
+
+    let healthy = SessionPersistence()
+    _ = try healthy.attach(store, identitySeed: alice.exportSeed())
+    XCTAssertTrue(healthy.saveCrypto(snapshot))
+    let cryptoStore = store.companion(suffix: ".crypto")
+    let before = try XCTUnwrap(cryptoStore.load(PersistedCrypto.self))
+
+    let failing = SessionPersistence(
+      cryptoExporter: SessionCryptoExporter(
+        exportAccount: { _ in throw ExportFailure.injected },
+        exportSession: { try $0.exportPickle() }))
+    _ = try failing.attach(store, identitySeed: alice.exportSeed())
+
+    XCTAssertFalse(failing.saveCrypto(snapshot))
+    let after = try XCTUnwrap(cryptoStore.load(PersistedCrypto.self))
+    XCTAssertEqual(after.olmAccountPickle, before.olmAccountPickle)
+    XCTAssertEqual(after.olmFallbackKey, before.olmFallbackKey)
+  }
+
+  func testBulkWriteFailureRecoversOneMatchingStateGeneration() throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("pigeon-transaction-\(UUID().uuidString).store")
+    let key = SymmetricKey(size: .bits256)
+    var failBulkWrite = false
+    let io = EncryptedStoreIO(
+      write: { data, destination, options in
+        if failBulkWrite, destination == url { throw ExportFailure.injected }
+        try data.write(to: destination, options: options)
+      },
+      remove: { try FileManager.default.removeItem(at: $0) })
+    let faultingStore = EncryptedStore(key: key, url: url, io: io)
+    defer {
+      EncryptedStore(key: key, url: url).wipe()
+      EncryptedStore(key: key, url: url).companion(suffix: ".crypto").wipe()
+      EncryptedStore(key: key, url: url).companion(suffix: ".transaction").wipe()
+    }
+
+    let account = try PigeonAccount.generate()
+    let persistence = SessionPersistence()
+    _ = try persistence.attach(faultingStore, identitySeed: account.exportSeed())
+    XCTAssertTrue(
+      persistence.save(
+        snapshot(account: account, name: "before", rotatedAt: nil)))
+
+    let expectedStamp = Date(timeIntervalSince1970: 1_800_000_000)
+    failBulkWrite = true
+    XCTAssertFalse(
+      persistence.save(
+        snapshot(account: account, name: "after", rotatedAt: expectedStamp)))
+
+    failBulkWrite = false
+    let recovered = try SessionPersistence().attach(
+      EncryptedStore(key: key, url: url), identitySeed: account.exportSeed())
+    XCTAssertEqual(recovered.myName, "after")
+    XCTAssertEqual(recovered.fallbackRotatedAt, expectedStamp)
+    XCTAssertNil(
+      try EncryptedStore(key: key, url: url).companion(suffix: ".transaction")
+        .load(PersistedStateTransaction.self))
+  }
+
+  func testCryptoWriteFailureRecoversOneMatchingStateGeneration() throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("pigeon-crypto-transaction-\(UUID().uuidString).store")
+    let key = SymmetricKey(size: .bits256)
+    let cryptoURL = url.deletingLastPathComponent()
+      .appendingPathComponent(url.lastPathComponent + ".crypto")
+    var failCryptoWrite = false
+    let io = EncryptedStoreIO(
+      write: { data, destination, options in
+        if failCryptoWrite, destination == cryptoURL { throw ExportFailure.injected }
+        try data.write(to: destination, options: options)
+      },
+      remove: { try FileManager.default.removeItem(at: $0) })
+    let faultingStore = EncryptedStore(key: key, url: url, io: io)
+    defer { wipeStoreFamily(key: key, url: url) }
+
+    let account = try PigeonAccount.generate()
+    let peer = try PigeonAccount.generate()
+    let prekey = try XCTUnwrap(peer.takeOneTimePrekeyBundles().first)
+    let outbound = try account.establishOutbound(
+      peerBundle: prekey, firstPlaintext: Data("first".utf8))
+    let inbound = try peer.establishInbound(initiation: outbound.initiation)
+    let contactID = peer.identityPublicKey()
+    let beforeMarker = Data("before-marker".utf8)
+    let afterMarker = Data("after-marker".utf8)
+    let persistence = SessionPersistence()
+    _ = try persistence.attach(faultingStore, identitySeed: account.exportSeed())
+    XCTAssertTrue(
+      persistence.save(
+        SessionPersistence.Snapshot(
+          contacts: [],
+          conversations: [contactID: [ChatMessage(mine: true, text: "before")]],
+          ephemeralContactIDs: [],
+          bluetoothChatIDs: [],
+          activeConversationIDs: [contactID],
+          myName: "before",
+          account: account,
+          sessions: [contactID: outbound.session],
+          pendingInitiation: [contactID: beforeMarker],
+          lastInitiationIn: [contactID: beforeMarker],
+          fallbackRotatedAt: nil)))
+
+    let advance = try outbound.session.encrypt(plaintext: Data("advance".utf8))
+    XCTAssertEqual(try inbound.session.decrypt(message: advance), Data("advance".utf8))
+
+    let expectedStamp = Date(timeIntervalSince1970: 1_800_000_001)
+    failCryptoWrite = true
+    XCTAssertFalse(
+      persistence.save(
+        SessionPersistence.Snapshot(
+          contacts: [],
+          conversations: [contactID: [ChatMessage(mine: true, text: "after")]],
+          ephemeralContactIDs: [],
+          bluetoothChatIDs: [],
+          activeConversationIDs: [contactID],
+          myName: "after",
+          account: account,
+          sessions: [contactID: outbound.session],
+          pendingInitiation: [contactID: afterMarker],
+          lastInitiationIn: [contactID: afterMarker],
+          fallbackRotatedAt: expectedStamp)))
+
+    failCryptoWrite = false
+    let recovered = try SessionPersistence().attach(
+      EncryptedStore(key: key, url: url), identitySeed: account.exportSeed())
+    XCTAssertEqual(recovered.myName, "after")
+    XCTAssertEqual(recovered.fallbackRotatedAt, expectedStamp)
+    XCTAssertEqual(recovered.conversations[contactID]?.map(\.text), ["after"])
+    XCTAssertEqual(recovered.pendingInitiation[contactID], afterMarker)
+    XCTAssertEqual(recovered.lastInitiationIn[contactID], afterMarker)
+    let recoveredSession = try XCTUnwrap(recovered.sessions[contactID])
+    let continued = try recoveredSession.encrypt(plaintext: Data("continued".utf8))
+    XCTAssertEqual(try inbound.session.decrypt(message: continued), Data("continued".utf8))
+  }
+
+  func testTransactionCleanupFailureIsRecoveredBeforeNewWrites() throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("pigeon-cleanup-transaction-\(UUID().uuidString).store")
+    let key = SymmetricKey(size: .bits256)
+    let transactionURL = url.deletingLastPathComponent()
+      .appendingPathComponent(url.lastPathComponent + ".transaction")
+    var failTransactionRemoval = false
+    let io = EncryptedStoreIO(
+      write: { try $0.write(to: $1, options: $2) },
+      remove: {
+        if failTransactionRemoval, $0 == transactionURL { throw ExportFailure.injected }
+        try FileManager.default.removeItem(at: $0)
+      })
+    let faultingStore = EncryptedStore(key: key, url: url, io: io)
+    defer { wipeStoreFamily(key: key, url: url) }
+
+    let account = try PigeonAccount.generate()
+    let persistence = SessionPersistence()
+    _ = try persistence.attach(faultingStore, identitySeed: account.exportSeed())
+    XCTAssertTrue(
+      persistence.save(
+        snapshot(account: account, name: "before", rotatedAt: nil)))
+
+    let expectedStamp = Date(timeIntervalSince1970: 1_800_000_002)
+    failTransactionRemoval = true
+    XCTAssertFalse(
+      persistence.save(
+        snapshot(account: account, name: "after", rotatedAt: expectedStamp)))
+    XCTAssertNotNil(
+      try faultingStore.companion(suffix: ".transaction")
+        .load(PersistedStateTransaction.self))
+    XCTAssertFalse(
+      persistence.saveCrypto(
+        snapshot(
+          account: account, name: "must not supersede journal",
+          rotatedAt: Date(timeIntervalSince1970: 1_800_000_003))))
+
+    failTransactionRemoval = false
+    let recovered = try SessionPersistence().attach(
+      EncryptedStore(key: key, url: url), identitySeed: account.exportSeed())
+    XCTAssertEqual(recovered.myName, "after")
+    XCTAssertEqual(recovered.fallbackRotatedAt, expectedStamp)
+    XCTAssertNil(
+      try EncryptedStore(key: key, url: url).companion(suffix: ".transaction")
+        .load(PersistedStateTransaction.self))
+  }
+
+  private func snapshot(
+    account: PigeonAccount, name: String, rotatedAt: Date?
+  ) -> SessionPersistence.Snapshot {
+    SessionPersistence.Snapshot(
+      contacts: [],
+      conversations: [:],
+      ephemeralContactIDs: [],
+      bluetoothChatIDs: [],
+      myName: name,
+      account: account,
+      sessions: [:],
+      pendingInitiation: [:],
+      lastInitiationIn: [:],
+      fallbackRotatedAt: rotatedAt)
+  }
+
+  private func wipeStoreFamily(key: SymmetricKey, url: URL) {
+    let store = EncryptedStore(key: key, url: url)
+    store.wipe()
+    store.companion(suffix: ".crypto").wipe()
+    store.companion(suffix: ".transaction").wipe()
   }
 }

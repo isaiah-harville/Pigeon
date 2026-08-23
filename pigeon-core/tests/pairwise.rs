@@ -135,6 +135,23 @@ fn one_time_prekey_replay_is_rejected() {
 }
 
 #[test]
+fn fallback_prekey_replay_is_accepted_by_the_olm_account() {
+    let alice = Account::new().unwrap();
+    let mut bob = Account::new().unwrap();
+
+    let bundle = bob.signed_prekey_bundle();
+    let (_a, initiation) = Session::establish_outbound(&alice, &bundle, b"hi").unwrap();
+
+    let (_first, plaintext) =
+        Session::establish_inbound(&mut bob, &initiation.identity, &initiation.message).unwrap();
+    assert_eq!(plaintext, b"hi");
+
+    let (_replayed, replayed_plaintext) =
+        Session::establish_inbound(&mut bob, &initiation.identity, &initiation.message).unwrap();
+    assert_eq!(replayed_plaintext, b"hi");
+}
+
+#[test]
 fn tampered_identity_binding_is_rejected() {
     let alice = Account::new().unwrap();
     let mut bob = Account::new().unwrap();

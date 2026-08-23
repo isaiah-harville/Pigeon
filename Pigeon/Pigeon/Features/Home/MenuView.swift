@@ -3,7 +3,7 @@
 //  Pigeon
 //
 //  The app hub, reachable from the home screen's menu button: your identity
-//  (and QR code), Bluetooth status, and recent activity.
+//  (and QR code), connectivity status, and recent activity.
 //
 
 import SwiftUI
@@ -14,8 +14,6 @@ struct MenuView: View {
   @Environment(\.dismiss) private var dismiss
 
   @AppStorage("pigeon.appearance") private var appearanceValue = AppAppearance.system.rawValue
-  @State private var receiveWhileLocked = true
-  @State private var showCopied = false
 
   var body: some View {
     NavigationStack {
@@ -23,60 +21,74 @@ struct MenuView: View {
         .navigationTitle("Menu")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { doneToolbar }
-        .onAppear { receiveWhileLocked = session.backgroundDeliveryEnabled }
-        .overlay(alignment: .bottom) { copiedToast }
     }
   }
 
   private var menuList: some View {
     List {
       identityCardSection
-      fingerprintSection
-      bluetoothSection
-      relaySection
+      connectivitySection
       appearanceSection
-      privacySection
+      advancedSection
       activitySection
       linksSection
     }
   }
 
-  private var appearanceSection: some View {
-    Section("Appearance") {
-      Picker("Appearance", selection: $appearanceValue) {
-        ForEach(AppAppearance.allCases) { appearance in
-          Text(appearance.label).tag(appearance.rawValue)
-        }
-      }
-      .pickerStyle(.segmented)
-    }
-  }
-
-  private var privacySection: some View {
+  private var advancedSection: some View {
     Section {
-      Toggle(isOn: $receiveWhileLocked) {
-        Label("Receive while locked", systemImage: "bell.badge")
+      NavigationLink {
+        AdvancedSettingsView()
+      } label: {
+        Label("Advanced Settings", systemImage: "gearshape.2")
       }
-      .onChange(of: receiveWhileLocked) { _, enabled in
-        if !session.setBackgroundDeliveryEnabled(enabled) {
-          receiveWhileLocked = session.backgroundDeliveryEnabled  // revert on failure
-        }
-      }
-    } header: {
-      Text("Privacy")
-    } footer: {
-      Text(backgroundDeliveryFooter)
     }
   }
 
-  private var backgroundDeliveryFooter: String {
+  private var connectivitySection: some View {
+    Section {
+      NavigationLink {
+        RelaySettingsView()
+      } label: {
+        relayRow
+      }
+
+      HStack {
+        Label("Bluetooth status", systemImage: "dot.radiowaves.left.and.right")
+        Spacer()
+        statusIndicator
+      }
+      LabeledContent("Connected peers", value: "\(session.connectedPeerCount)")
+    } header: {
+      Text("Connectivity")
+    } footer: {
+      Text(relayFooter)
+    }
+  }
+
+  private var relayRow: some View {
+    HStack {
+      Label("Internet relays", systemImage: "antenna.radiowaves.left.and.right")
+      Spacer()
+      HStack(spacing: 6) {
+        Circle().fill(relayColor).frame(width: 8, height: 8)
+        Text(relayText).foregroundStyle(.secondary)
+      }
+    }
+  }
+
+  private var relayFooter: String {
     """
-    Notify you of new messages while your device is locked. This keeps your \
-    identity key readable in the background after the first unlock. Turn it off \
-    to make your keys readable only while unlocked, at the cost of background \
-    notifications — an unlikely attack vector that only matters if you lose your \
-    phone. Either way, message content is never previewed in a notification.
+    Relays reach contacts over the internet; Bluetooth handles nearby delivery. \
+    Relays are federated and open source, so you can host your own.
     """
+  }
+
+  private var statusIndicator: some View {
+    HStack(spacing: 6) {
+      Circle().fill(statusColor).frame(width: 8, height: 8)
+      Text(session.status.rawValue).foregroundStyle(.secondary)
+    }
   }
 
   private var identityCardSection: some View {
@@ -106,69 +118,15 @@ struct MenuView: View {
     .padding(.vertical, 4)
   }
 
-  private var fingerprintSection: some View {
-    Section("Identity") {
-      Button {
-        copyFingerprint()
-      } label: {
-        LabeledContent {
-          Text(identity.publicKey.shortFingerprint)
-            .font(.callout.monospaced())
-        } label: {
-          Text("Fingerprint")
-            .font(.callout.monospaced())
+  private var appearanceSection: some View {
+    Section("Appearance") {
+      Picker("Appearance", selection: $appearanceValue) {
+        ForEach(AppAppearance.allCases) { appearance in
+          Text(appearance.label).tag(appearance.rawValue)
         }
       }
-      .buttonStyle(.plain)
+      .pickerStyle(.segmented)
     }
-  }
-
-  private var bluetoothSection: some View {
-    Section("Bluetooth") {
-      HStack {
-        Label("Status", systemImage: "dot.radiowaves.left.and.right")
-        Spacer()
-        statusIndicator
-      }
-      LabeledContent("Connected peers", value: "\(session.connectedPeerCount)")
-    }
-  }
-
-  private var statusIndicator: some View {
-    HStack(spacing: 6) {
-      Circle().fill(statusColor).frame(width: 8, height: 8)
-      Text(session.status.rawValue).foregroundStyle(.secondary)
-    }
-  }
-
-  private var relaySection: some View {
-    Section {
-      NavigationLink {
-        RelaySettingsView()
-      } label: {
-        relayRow
-      }
-    } footer: {
-      Text(relayFooter)
-    }
-  }
-
-  private var relayRow: some View {
-    HStack {
-      Label("Internet relays", systemImage: "antenna.radiowaves.left.and.right")
-      Spacer()
-      HStack(spacing: 6) {
-        Circle().fill(relayColor).frame(width: 8, height: 8)
-        Text(relayText).foregroundStyle(.secondary)
-      }
-    }
-  }
-
-  private var relayFooter: String {
-    """
-    Reach contacts who are out of Bluetooth range. \
-    Relay servers are federated and open-sourced — we encourage you to host your own.
-    """
   }
 
   private var linksSection: some View {
@@ -204,16 +162,9 @@ struct MenuView: View {
     }
   }
 
-  @ViewBuilder
-  private var copiedToast: some View {
-    if showCopied {
-      CopiedToast()
-    }
-  }
-
 }
 
-// MARK: - Status indicators & actions
+// MARK: - Status indicators
 
 extension MenuView {
   private var statusColor: Color {
@@ -245,12 +196,4 @@ extension MenuView {
     }
   }
 
-  private func copyFingerprint() {
-    Clipboard.copy(identity.publicKey.fingerprint)
-    withAnimation { showCopied = true }
-    Task {
-      try? await Task.sleep(for: .seconds(1.5))
-      withAnimation { showCopied = false }
-    }
-  }
 }

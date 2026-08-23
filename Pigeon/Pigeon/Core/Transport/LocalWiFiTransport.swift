@@ -36,6 +36,7 @@ final class LocalWiFiTransport: NSObject, Transport {
   private(set) var status: TransportStatus = .idle
   private(set) var connectedPeerCount = 0
   private(set) var log: [String] = []
+  private var isEnabled: Bool { connectivityGate.isEnabled }
 
   var onMessage: ((_ message: Data, _ peerID: String) -> TransportMessageDisposition)?
   var onConnectivity: (() -> Void)?
@@ -51,8 +52,14 @@ final class LocalWiFiTransport: NSObject, Transport {
   nonisolated(unsafe) private let session: MCSession
   nonisolated(unsafe) private let advertiser: MCNearbyServiceAdvertiser
   nonisolated(unsafe) private let browser: MCNearbyServiceBrowser
+  nonisolated private let connectivityGate: TransportGate
 
-  override init() {
+  override convenience init() {
+    self.init(enabled: true)
+  }
+
+  init(enabled: Bool) {
+    connectivityGate = TransportGate(enabled: enabled)
     localName = "P-" + UUID().uuidString.prefix(8)
     let peerID = MCPeerID(displayName: localName)
     session = MCSession(peer: peerID, securityIdentity: nil, encryptionPreference: .required)
@@ -63,10 +70,12 @@ final class LocalWiFiTransport: NSObject, Transport {
     session.delegate = self
     advertiser.delegate = self
     browser.delegate = self
-    advertiser.startAdvertisingPeer()
-    browser.startBrowsingForPeers()
-    status = .scanning
-    note(.wifiReady)
+    if enabled {
+      advertiser.startAdvertisingPeer()
+      browser.startBrowsingForPeers()
+      status = .scanning
+      note(.wifiReady)
+    }
   }
 
   deinit {
@@ -79,6 +88,7 @@ final class LocalWiFiTransport: NSObject, Transport {
   /// so the `recipient` hint is ignored — the mesh addresses and deduplicates
   /// above this layer.
   func broadcast(_ message: Data, to _: Data?) {
+    guard isEnabled else { return }
     let peers = session.connectedPeers
     guard !peers.isEmpty else { return }
     do {
@@ -90,11 +100,28 @@ final class LocalWiFiTransport: NSObject, Transport {
   }
 
   func refreshConnections() {
+    guard isEnabled else { return }
     browser.stopBrowsingForPeers()
     browser.startBrowsingForPeers()
     advertiser.startAdvertisingPeer()
     status = .scanning
     note(.transportRefresh)
+  }
+
+  func setEnabled(_ enabled: Bool) {
+    guard isEnabled != enabled else { return }
+    connectivityGate.setEnabled(enabled)
+    if enabled {
+      advertiser.startAdvertisingPeer()
+      browser.startBrowsingForPeers()
+      status = .scanning
+    } else {
+      advertiser.stopAdvertisingPeer()
+      browser.stopBrowsingForPeers()
+      session.disconnect()
+      connectedPeerCount = 0
+      status = .idle
+    }
   }
 
   /// Deterministic tie-break so exactly one side of a pair sends the invitation
@@ -111,11 +138,13 @@ final class LocalWiFiTransport: NSObject, Transport {
   /// Delivers a reassembled inbound message on the main actor, tagging the sender
   /// id with a `wifi:` prefix so `TransportChannel` classifies the link.
   private func deliver(_ data: Data, from name: String) {
+    guard isEnabled else { return }
     note(.transportReceived)
     _ = onMessage?(data, "wifi:\(name)")
   }
 
   private func handleStateChange(connectedCount: Int, peer _: String, connected: Bool) {
+    guard isEnabled else { return }
     connectedPeerCount = connectedCount
     if connected {
       note(.peerConnected)
@@ -168,7 +197,9 @@ extension LocalWiFiTransport: MCNearbyServiceAdvertiserDelegate {
     withContext _: Data?, invitationHandler: @escaping (Bool, MCSession?) -> Void
   ) {
     // Accept any nearby Pigeon peer: the open local-link model (same as BLE).
-    invitationHandler(true, session)
+    if !connectivityGate.performIfEnabled({ invitationHandler(true, session) }) {
+      invitationHandler(false, nil)
+    }
   }
 }
 
@@ -183,7 +214,9 @@ extension LocalWiFiTransport: MCNearbyServiceBrowserDelegate {
   ) {
     // swiftlint:enable discouraged_optional_collection
     guard Self.shouldInvite(myName: localName, peerName: peerID.displayName) else { return }
-    browser.invitePeer(peerID, to: session, withContext: nil, timeout: 15)
+    connectivityGate.performIfEnabled {
+      browser.invitePeer(peerID, to: session, withContext: nil, timeout: 15)
+    }
   }
 
   nonisolated func browser(_: MCNearbyServiceBrowser, lostPeer _: MCPeerID) {}
