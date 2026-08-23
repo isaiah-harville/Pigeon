@@ -9,4 +9,10 @@ final class ChatInteractionTests: XCTestCase {
     XCTAssertFalse(ChatInteraction.shouldSwitchTransport(width: 0, height: -72))
     XCTAssertFalse(ChatInteraction.shouldSwitchTransport(width: 18, height: 0))
   }
+
+  func testPendingMessageRequestCannotConfigureChat() {
+    XCTAssertTrue(ChatInteraction.canConfigureChat(requestState: .none))
+    XCTAssertFalse(ChatInteraction.canConfigureChat(requestState: .incoming))
+    XCTAssertFalse(ChatInteraction.canConfigureChat(requestState: .outgoing))
+  }
 }

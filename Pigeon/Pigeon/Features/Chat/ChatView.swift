@@ -45,7 +45,9 @@ struct ChatView: View {
       ChatStatusBanner(contact: contact)
       messagesScroll
       composer
-      if session.hasRelay {
+      if session.hasRelay,
+        ChatInteraction.canConfigureChat(requestState: contact.requestState)
+      {
         TransportPill(contact: contact)
           .padding(.bottom, 6)
       }
@@ -135,9 +137,11 @@ extension ChatView {
         }
       }
     }
-    Section("Chat") {
-      Toggle(isOn: ephemeralBinding) {
-        Label("Ephemeral Chat", systemImage: "clock.arrow.circlepath")
+    if ChatInteraction.canConfigureChat(requestState: contact.requestState) {
+      Section("Chat") {
+        Toggle(isOn: ephemeralBinding) {
+          Label("Ephemeral Chat", systemImage: "clock.arrow.circlepath")
+        }
       }
     }
     Section("Contact") {

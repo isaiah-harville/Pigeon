@@ -254,7 +254,9 @@ extension SessionManager {
   /// Switches a chat between the relay (default) and Bluetooth, mirroring the
   /// change to the peer so both ends of the chat use the same link.
   func setChatUsesBluetooth(_ useBluetooth: Bool, for contact: Contact) {
-    guard contacts.first(where: { $0.id == contact.id })?.requestState == .none else { return }
+    guard let current = contacts.first(where: { $0.id == contact.id }),
+      current.requestState == .none
+    else { return }
     guard bluetoothChatIDs.contains(contact.id) != useBluetooth else { return }
     applyTransport(useBluetooth: useBluetooth, for: contact.id, announce: true)
     sendTransportState(to: contact)

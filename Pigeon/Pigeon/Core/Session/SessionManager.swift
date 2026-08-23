@@ -352,7 +352,9 @@ extension SessionManager {
   /// already-saved history is left on disk untouched. The change is mirrored
   /// to the peer so both sides of the chat go ephemeral together.
   func setEphemeral(_ on: Bool, for contact: Contact) {
-    guard contacts.first(where: { $0.id == contact.id })?.requestState == .none else { return }
+    guard let current = contacts.first(where: { $0.id == contact.id }),
+      current.requestState == .none
+    else { return }
     applyEphemeral(on, for: contact.id, announce: true)
     sendEphemeralState(to: contact)
   }

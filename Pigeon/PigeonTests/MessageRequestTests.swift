@@ -80,12 +80,21 @@ final class MessageRequestTests: XCTestCase {
       b.messages(with: aOnB).contains { $0.event == .relayRecommendation },
       "relay recommendations cannot be sent during a pending request")
 
+    a.setEphemeral(true, for: bOnA)
+    a.setChatUsesBluetooth(true, for: bOnA)
+    XCTAssertFalse(a.isEphemeral(bOnA), "pending requests cannot change chat persistence")
+    XCTAssertFalse(a.bluetoothChatIDs.contains(b.myID), "pending requests cannot change transport")
+
     b.acceptMessageRequest(from: aOnB)
     XCTAssertEqual(
       b.contacts.first { $0.id == a.myID }?.requestState, ContactRequestState.none)
     XCTAssertEqual(
       a.contacts.first { $0.id == b.myID }?.requestState, ContactRequestState.none)
     XCTAssertTrue(a.canSendMessage(to: bOnA))
+    a.setEphemeral(true, for: bOnA)
+    a.setChatUsesBluetooth(true, for: bOnA)
+    XCTAssertTrue(a.isEphemeral(bOnA), "accepted chats can enable ephemeral mode")
+    XCTAssertTrue(a.bluetoothChatIDs.contains(b.myID), "accepted chats can switch transport")
     a.shareRelay(sharedRelay, with: bOnA)
     XCTAssertEqual(
       b.messages(with: aOnB).last { $0.event == .relayRecommendation }?

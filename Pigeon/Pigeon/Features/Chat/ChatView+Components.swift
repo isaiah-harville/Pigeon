@@ -11,6 +11,10 @@ enum ChatInteraction {
   static func shouldSwitchTransport(width: CGFloat, height: CGFloat) -> Bool {
     abs(width) >= 24 && abs(width) > abs(height)
   }
+
+  static func canConfigureChat(requestState: ContactRequestState) -> Bool {
+    requestState == .none
+  }
 }
 
 /// Centered timeline chrome for day separators and low-importance system events.
