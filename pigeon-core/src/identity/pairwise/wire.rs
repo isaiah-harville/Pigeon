@@ -4,9 +4,10 @@ use prost::Message;
 use vodozemac::olm::OlmMessage;
 
 use crate::error::Error;
-use crate::identity::IdentityBundle;
-use crate::prekey::PrekeyBundle;
-use crate::session::Initiation;
+use crate::identity::root::IdentityBundle;
+
+use super::prekey::PrekeyBundle;
+use super::session::Initiation;
 
 #[allow(dead_code)]
 pub mod pb {

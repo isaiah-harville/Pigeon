@@ -20,6 +20,8 @@ pub enum Error {
     NotAPreKeyMessage,
     /// The OS entropy source failed while generating the identity key.
     Entropy,
+    /// Persisted pairwise state could not be serialized or decoded.
+    Serialization,
     /// Olm could not create the session (e.g. a stale/consumed one-time key).
     SessionCreation(SessionCreationError),
     /// Olm encryption failed.
@@ -36,6 +38,7 @@ impl fmt::Display for Error {
             Error::MalformedBundle => write!(f, "malformed bundle encoding"),
             Error::NotAPreKeyMessage => write!(f, "expected an Olm pre-key message"),
             Error::Entropy => write!(f, "OS entropy source failed"),
+            Error::Serialization => write!(f, "pairwise state serialization failed"),
             Error::SessionCreation(e) => write!(f, "session creation failed: {e}"),
             Error::Encryption(e) => write!(f, "encryption failed: {e}"),
             Error::Decryption(e) => write!(f, "decryption failed: {e}"),

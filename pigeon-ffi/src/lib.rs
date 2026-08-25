@@ -18,7 +18,6 @@ use pigeon_core::{
     decode_olm_message, encode_olm_message, Account, IdentityBundle, Initiation, PrekeyBundle,
     Session,
 };
-use vodozemac::olm::{AccountPickle, SessionPickle};
 
 uniffi::setup_scaffolding!();
 
@@ -79,6 +78,7 @@ impl From<pigeon_core::Error> for PigeonError {
             E::MalformedBundle => PigeonError::MalformedBundle,
             E::NotAPreKeyMessage => PigeonError::NotAPreKeyMessage,
             E::Entropy => PigeonError::Entropy,
+            E::Serialization => PigeonError::Serialization,
             E::SessionCreation(_) => PigeonError::SessionCreation,
             E::Encryption(_) => PigeonError::Encryption,
             E::Decryption(_) => PigeonError::Decryption,
@@ -208,10 +208,8 @@ impl FfiAccount {
     ) -> Result<Arc<Self>, PigeonError> {
         let seed = to_array32(&seed)?;
         let fallback = to_array32(&fallback_key)?;
-        let pickle: AccountPickle =
-            serde_json::from_slice(&olm_pickle).map_err(|_| PigeonError::Serialization)?;
         Ok(Arc::new(Self {
-            inner: Mutex::new(Account::import(seed, pickle, fallback)),
+            inner: Mutex::new(Account::import_pairwise_state(seed, &olm_pickle, fallback)?),
         }))
     }
 
@@ -296,8 +294,7 @@ impl FfiAccount {
     /// persist. Re-export after any operation that mutates the account
     /// (inbound establishment, prekey take/replenish/rotate).
     pub fn export_olm_pickle(&self) -> Result<Vec<u8>, PigeonError> {
-        serde_json::to_vec(&self.inner.lock().unwrap().export_olm_pickle())
-            .map_err(|_| PigeonError::Serialization)
+        Ok(self.inner.lock().unwrap().export_pairwise_state()?)
     }
 
     /// The current fallback public key (public; safe in the clear), needed by
@@ -331,9 +328,7 @@ impl FfiSession {
     #[uniffi::constructor]
     pub fn import(pickle: Vec<u8>, remote_identity_key: Vec<u8>) -> Result<Arc<Self>, PigeonError> {
         let remote = to_array32(&remote_identity_key)?;
-        let pickle: SessionPickle =
-            serde_json::from_slice(&pickle).map_err(|_| PigeonError::Serialization)?;
-        Ok(Arc::new(Self::new(Session::from_pickle(pickle, remote))))
+        Ok(Arc::new(Self::new(Session::import_state(&pickle, remote)?)))
     }
 
     /// The serialized Olm ratchet pickle (secret), for the host app to seal and
@@ -341,8 +336,7 @@ impl FfiSession {
     /// [`Self::encrypt`] / [`Self::decrypt`]) so the persisted state never lags
     /// the live ratchet (a lagging pickle would reuse message indices).
     pub fn export_pickle(&self) -> Result<Vec<u8>, PigeonError> {
-        serde_json::to_vec(&self.inner.lock().unwrap().pickle())
-            .map_err(|_| PigeonError::Serialization)
+        Ok(self.inner.lock().unwrap().export_state()?)
     }
 
     /// Encrypts `plaintext`, advancing the ratchet; returns the encoded Olm

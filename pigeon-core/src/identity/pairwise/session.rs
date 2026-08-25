@@ -10,10 +10,11 @@
 
 use vodozemac::olm::{OlmMessage, Session as OlmSession, SessionConfig, SessionPickle};
 
-use crate::account::Account;
 use crate::error::Error;
-use crate::identity::IdentityBundle;
-use crate::prekey::PrekeyBundle;
+use crate::identity::root::IdentityBundle;
+
+use super::account::Account;
+use super::prekey::PrekeyBundle;
 
 /// What an initiator sends ahead of (and including) its first message so the
 /// recipient can stand up the matching session: the initiator's identity bundle
@@ -128,26 +129,28 @@ impl Session {
         self.remote_identity_key
     }
 
-    /// The Olm ratchet pickle (secret), for the host app to seal and persist so
+    /// Opaque ratchet state (secret), for the host app to seal and persist so
     /// the session — and thus the conversation's forward-secret state — survives
     /// app relaunch instead of forcing a fresh handshake every cold start.
     ///
-    /// The peer's Ed25519 identity key is **not** in this pickle (Olm only knows
+    /// The peer's Ed25519 identity key is **not** in this state (Olm only knows
     /// the Curve25519 keys); persist it alongside and pass it back to
-    /// [`Session::from_pickle`]. The host app already holds it as the contact id.
-    pub fn pickle(&self) -> SessionPickle {
-        self.olm.pickle()
+    /// [`Session::import_state`]. The host app already holds it as the contact id.
+    pub fn export_state(&self) -> Result<Vec<u8>, Error> {
+        serde_json::to_vec(&self.olm.pickle()).map_err(|_| Error::Serialization)
     }
 
-    /// Restores a session from a persisted [`Session::pickle`] plus the peer's
+    /// Restores a session from persisted opaque state plus the peer's
     /// Ed25519 identity key (the contact id the host app keyed the session by).
     /// The binding was verified when the session was first established; restoring
     /// re-attaches that already-verified identity to the ratchet state.
-    pub fn from_pickle(pickle: SessionPickle, remote_identity_key: [u8; 32]) -> Self {
-        Self {
+    pub fn import_state(state: &[u8], remote_identity_key: [u8; 32]) -> Result<Self, Error> {
+        let pickle: SessionPickle =
+            serde_json::from_slice(state).map_err(|_| Error::Serialization)?;
+        Ok(Self {
             olm: OlmSession::from_pickle(pickle),
             remote_identity_key,
-        }
+        })
     }
 
     /// Olm's session id (stable, shared by both ends once converged).

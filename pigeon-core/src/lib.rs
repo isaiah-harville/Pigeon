@@ -38,19 +38,14 @@
 
 #![forbid(unsafe_code)]
 
-mod account;
 mod error;
 mod identity;
-mod prekey;
-mod session;
-mod wire;
 
-pub use account::Account;
 pub use error::Error;
-pub use identity::{IdentityBundle, IdentityKeypair};
-pub use prekey::PrekeyBundle;
-pub use session::{Initiation, Session};
-pub use wire::{decode_olm_message, encode_olm_message};
+pub use identity::{
+    Account, IdentityBundle, IdentityKeypair, Initiation, PrekeyBundle, Session,
+    decode_olm_message, encode_olm_message,
+};
 
 /// The Olm message type that crosses pigeon-core's API surface. Re-exported so
 /// callers need not depend on `vodozemac` directly.

@@ -14,6 +14,7 @@ publish = false
 # Olm Account/Session: audited Double Ratchet + async-first prekey establishment.
 vodozemac = "0.10"
 prost = "0.14"
+serde_json = "1"
 # The identity<->static binding: an Ed25519 identity key signs Olm's Curve25519
 # identity key. This is the one piece of protocol trust we keep; everything
 # below it (ratchet, session setup, message format) is vodozemac's.

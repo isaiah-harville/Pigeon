@@ -2093,6 +2093,7 @@ dependencies = [
  "prost",
  "prost-build",
  "protoc-bin-vendored",
+ "serde_json",
  "tls_codec",
  "vodozemac",
  "zeroize",
@@ -2104,9 +2105,7 @@ version = "0.1.0"
 dependencies = [
  "pigeon-core",
  "pigeon-mesh",
- "serde_json",
  "uniffi",
- "vodozemac",
 ]
 
 [[package]]

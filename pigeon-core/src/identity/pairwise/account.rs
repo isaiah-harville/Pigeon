@@ -4,8 +4,9 @@
 use vodozemac::olm::{Account as OlmAccount, AccountPickle};
 
 use crate::error::Error;
-use crate::identity::{IdentityBundle, IdentityKeypair};
-use crate::prekey::PrekeyBundle;
+use crate::identity::root::{IdentityBundle, IdentityKeypair};
+
+use super::prekey::PrekeyBundle;
 
 /// How many one-time keys [`Account::new`] generates up front, capped by Olm's
 /// maximum. A modest pool: prekeys can be replenished with
@@ -57,19 +58,21 @@ impl Account {
     }
 
     /// Reconstructs an account from its persisted parts: the identity seed, the
-    /// Olm pickle, and the current fallback public key (from
+    /// opaque pairwise state, and the current fallback public key (from
     /// [`Account::export_fallback_key`]). The host app stores the seed and Olm
-    /// pickle encrypted; the `identity_seed` is private and is wiped after use.
-    pub fn import(
+    /// state encrypted; the `identity_seed` is private and is wiped after use.
+    pub fn import_pairwise_state(
         identity_seed: [u8; 32],
-        olm_pickle: AccountPickle,
+        state: &[u8],
         fallback_key: [u8; 32],
-    ) -> Self {
-        Self {
+    ) -> Result<Self, Error> {
+        let olm_pickle: AccountPickle =
+            serde_json::from_slice(state).map_err(|_| Error::Serialization)?;
+        Ok(Self {
             olm: OlmAccount::from_pickle(olm_pickle),
             identity: IdentityKeypair::from_seed(identity_seed),
             fallback_key,
-        }
+        })
     }
 
     /// The 32-byte Ed25519 public identity key (the safety-number root).
@@ -136,15 +139,17 @@ impl Account {
     }
 
     /// The private identity seed, for the host app to persist securely (wiped on
-    /// drop). Pair with [`Account::export_olm_pickle`] / [`Account::export_fallback_key`].
+    /// drop). Pair with [`Account::export_pairwise_state`] and
+    /// [`Account::export_fallback_key`].
     pub fn export_identity_seed(&self) -> zeroize::Zeroizing<[u8; 32]> {
         self.identity.seed()
     }
 
-    /// The Olm account pickle, for the host app to persist (encrypted). Contains
-    /// secret key material.
-    pub fn export_olm_pickle(&self) -> AccountPickle {
-        self.olm.pickle()
+    /// Opaque serialized pairwise account state for the host app to seal and
+    /// persist. Contains secret key material. Its encoding is owned by core and
+    /// must never be interpreted by an FFI or application client.
+    pub fn export_pairwise_state(&self) -> Result<Vec<u8>, Error> {
+        serde_json::to_vec(&self.olm.pickle()).map_err(|_| Error::Serialization)
     }
 
     /// The current fallback public key, for the host app to persist (public,
