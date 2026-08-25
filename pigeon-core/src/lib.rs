@@ -38,13 +38,24 @@
 
 #![forbid(unsafe_code)]
 
+mod client;
 mod error;
 mod identity;
+mod storage;
+mod wire;
 
+pub use client::{AppEvent, ClientCommand, ClientOutput, OutboundItem, PigeonClient};
 pub use error::Error;
 pub use identity::{
-    Account, IdentityBundle, IdentityKeypair, Initiation, PrekeyBundle, Session,
-    decode_olm_message, encode_olm_message,
+    Account, IdentityBundle, IdentityError, IdentityKeypair, IdentityPurpose, Initiation,
+    PrekeyBundle, SecureIdentity, Session, decode_olm_message, encode_olm_message,
+};
+pub use storage::{MemoryStateStore, SealedCheckpoint, StateStore, StorageError};
+pub use wire::proto as wire_proto;
+pub use wire::{
+    MAX_CLIENT_COMMAND_BYTES, MAX_FUTURE_EPOCHS, MAX_GROUP_APPLICATION_BYTES, MAX_GROUP_MEMBERS,
+    MAX_MLS_OBJECT_BYTES, MAX_PENDING_OUTBOUND_ENTRIES, MAX_PROPOSAL_CANDIDATES,
+    decode_client_command,
 };
 
 /// The Olm message type that crosses pigeon-core's API surface. Re-exported so

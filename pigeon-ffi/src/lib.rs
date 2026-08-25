@@ -48,6 +48,14 @@ pub enum PigeonError {
     Decryption,
     /// Failed to (de)serialize a persisted Olm pickle (account or session).
     Serialization,
+    /// A command or inbound object exceeded a core resource limit.
+    ResourceLimit,
+    /// A versioned command or event is not supported by this core.
+    UnsupportedVersion,
+    /// Durable checkpoint replacement failed.
+    Persistence,
+    /// The platform secure-identity operation failed.
+    Identity,
 }
 
 impl std::fmt::Display for PigeonError {
@@ -62,6 +70,10 @@ impl std::fmt::Display for PigeonError {
             PigeonError::Encryption => "encryption failed",
             PigeonError::Decryption => "decryption failed",
             PigeonError::Serialization => "pickle (de)serialization failed",
+            PigeonError::ResourceLimit => "resource limit exceeded",
+            PigeonError::UnsupportedVersion => "unsupported protocol version",
+            PigeonError::Persistence => "checkpoint persistence failed",
+            PigeonError::Identity => "secure identity operation failed",
         };
         f.write_str(s)
     }
@@ -79,6 +91,10 @@ impl From<pigeon_core::Error> for PigeonError {
             E::NotAPreKeyMessage => PigeonError::NotAPreKeyMessage,
             E::Entropy => PigeonError::Entropy,
             E::Serialization => PigeonError::Serialization,
+            E::ResourceLimit(_) => PigeonError::ResourceLimit,
+            E::UnsupportedVersion { .. } => PigeonError::UnsupportedVersion,
+            E::Persistence(_) => PigeonError::Persistence,
+            E::Identity(_) => PigeonError::Identity,
             E::SessionCreation(_) => PigeonError::SessionCreation,
             E::Encryption(_) => PigeonError::Encryption,
             E::Decryption(_) => PigeonError::Decryption,

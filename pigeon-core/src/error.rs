@@ -2,6 +2,9 @@ use core::fmt;
 
 use vodozemac::olm::{DecryptionError, EncryptionError, SessionCreationError};
 
+use crate::identity::IdentityError;
+use crate::storage::StorageError;
+
 /// Everything pigeon-core can fail with. Authentication-style failures
 /// ([`Error::InvalidSignature`], [`Error::Decryption`]) are deliberately not
 /// papered over with retries or fallbacks — a failed binding or AEAD check is a
@@ -22,6 +25,14 @@ pub enum Error {
     Entropy,
     /// Persisted pairwise state could not be serialized or decoded.
     Serialization,
+    /// An input exceeded a named, pre-cryptographic resource limit.
+    ResourceLimit(&'static str),
+    /// A versioned cross-language object is not supported by this core.
+    UnsupportedVersion { kind: &'static str, version: u32 },
+    /// Durable checkpoint replacement failed.
+    Persistence(StorageError),
+    /// The platform secure-identity operation failed.
+    Identity(IdentityError),
     /// Olm could not create the session (e.g. a stale/consumed one-time key).
     SessionCreation(SessionCreationError),
     /// Olm encryption failed.
@@ -39,6 +50,12 @@ impl fmt::Display for Error {
             Error::NotAPreKeyMessage => write!(f, "expected an Olm pre-key message"),
             Error::Entropy => write!(f, "OS entropy source failed"),
             Error::Serialization => write!(f, "pairwise state serialization failed"),
+            Error::ResourceLimit(name) => write!(f, "resource limit exceeded: {name}"),
+            Error::UnsupportedVersion { kind, version } => {
+                write!(f, "unsupported {kind} version {version}")
+            }
+            Error::Persistence(error) => write!(f, "checkpoint persistence failed: {error}"),
+            Error::Identity(error) => write!(f, "secure identity failed: {error}"),
             Error::SessionCreation(e) => write!(f, "session creation failed: {e}"),
             Error::Encryption(e) => write!(f, "encryption failed: {e}"),
             Error::Decryption(e) => write!(f, "decryption failed: {e}"),
@@ -52,8 +69,22 @@ impl std::error::Error for Error {
             Error::SessionCreation(e) => Some(e),
             Error::Encryption(e) => Some(e),
             Error::Decryption(e) => Some(e),
+            Error::Persistence(error) => Some(error),
+            Error::Identity(error) => Some(error),
             _ => None,
         }
+    }
+}
+
+impl From<StorageError> for Error {
+    fn from(error: StorageError) -> Self {
+        Self::Persistence(error)
+    }
+}
+
+impl From<IdentityError> for Error {
+    fn from(error: IdentityError) -> Self {
+        Self::Identity(error)
     }
 }
 

@@ -5,14 +5,10 @@ use vodozemac::olm::OlmMessage;
 
 use crate::error::Error;
 use crate::identity::root::IdentityBundle;
+use crate::wire::proto as pb;
 
 use super::prekey::PrekeyBundle;
 use super::session::Initiation;
-
-#[allow(dead_code)]
-pub mod pb {
-    include!(concat!(env!("OUT_DIR"), "/pigeon.wire.v1.rs"));
-}
 
 impl IdentityBundle {
     /// Encodes this bundle as `pigeon.wire.v1.IdentityBundle`.
