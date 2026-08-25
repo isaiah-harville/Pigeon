@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package pigeon.wire.v1;
+
+enum EnvelopeType {
+  ENVELOPE_TYPE_UNSPECIFIED = 0;
+  ENVELOPE_TYPE_HANDSHAKE = 1;
+  ENVELOPE_TYPE_MESSAGE = 2;
+  ENVELOPE_TYPE_REHANDSHAKE_REQUEST = 3;
+  ENVELOPE_TYPE_ACK = 4;
+  ENVELOPE_TYPE_CONTROL = 5;
+  ENVELOPE_TYPE_X3DH_INIT = 6;
+}
+
+message SessionEnvelope {
+  uint32 version = 1;
+  EnvelopeType type = 2;
+  bytes sender = 3;
+  bytes recipient = 4;
+  bytes payload = 5;
+}

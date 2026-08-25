@@ -91,6 +91,10 @@ echo "==> Generating Swift protobuf bindings"
 protoc \
   --proto_path="$CRATE_DIR/../proto" \
   --swift_out="$PACKAGE_DIR/Sources/PigeonFFI/Generated" \
-  "$CRATE_DIR/../proto/pigeon/wire/v1/pigeon_wire.proto"
+  "$CRATE_DIR/../proto/pigeon/wire/v1/identity.proto" \
+  "$CRATE_DIR/../proto/pigeon/wire/v1/pairwise.proto" \
+  "$CRATE_DIR/../proto/pigeon/wire/v1/transport.proto" \
+  "$CRATE_DIR/../proto/pigeon/wire/v1/group.proto" \
+  "$CRATE_DIR/../proto/pigeon/wire/v1/client.proto"
 
 echo "==> Done: $PACKAGE_DIR/PigeonFFIBindings.xcframework"

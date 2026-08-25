@@ -1,0 +1,80 @@
+syntax = "proto3";
+
+package pigeon.wire.v1;
+
+enum GroupPolicyChangeKind {
+  GROUP_POLICY_CHANGE_KIND_UNSPECIFIED = 0;
+  GROUP_POLICY_CHANGE_KIND_MEMBER_ADDED = 1;
+  GROUP_POLICY_CHANGE_KIND_MEMBER_REMOVED = 2;
+  GROUP_POLICY_CHANGE_KIND_MEMBER_LEFT = 3;
+  GROUP_POLICY_CHANGE_KIND_ADMIN_PROMOTED = 4;
+  GROUP_POLICY_CHANGE_KIND_ADMIN_DEMOTED = 5;
+  GROUP_POLICY_CHANGE_KIND_NAME_CHANGED = 6;
+  GROUP_POLICY_CHANGE_KIND_MESH_CHANGED = 7;
+  GROUP_POLICY_CHANGE_KIND_RELAY_CHANGED = 8;
+  GROUP_POLICY_CHANGE_KIND_DISSOLVED = 9;
+}
+
+message GroupCreated {
+  bytes group_id = 1;
+  bytes owner_identity = 2;
+  string name = 3;
+  string relay_url = 4;
+  bool mesh_enabled = 5;
+  uint64 epoch = 6;
+  uint64 policy_revision = 7;
+}
+
+message GroupMessageReceived {
+  bytes group_id = 1;
+  string message_id = 2;
+  bytes sender_identity = 3;
+  bytes body = 4;
+  string reply_to_message_id = 5;
+  uint64 epoch = 6;
+}
+
+message GroupPolicyChanged {
+  GroupPolicyChangeKind kind = 1;
+  bytes group_id = 2;
+  bytes actor_identity = 3;
+  bytes subject_identity = 4;
+  uint64 epoch = 5;
+  uint64 policy_revision = 6;
+  string name = 7;
+  bool mesh_enabled = 8;
+  string relay_url = 9;
+}
+
+enum GroupDeliveryState {
+  GROUP_DELIVERY_STATE_UNSPECIFIED = 0;
+  GROUP_DELIVERY_STATE_PENDING = 1;
+  GROUP_DELIVERY_STATE_SENT = 2;
+  GROUP_DELIVERY_STATE_DELIVERED = 3;
+  GROUP_DELIVERY_STATE_BLOCKED = 4;
+}
+
+message GroupDeliveryChanged {
+  bytes group_id = 1;
+  string message_id = 2;
+  GroupDeliveryState state = 3;
+  uint64 epoch = 4;
+}
+
+message GroupSecurityWarning {
+  bytes group_id = 1;
+  uint32 code = 2;
+  bytes evidence_id = 3;
+  uint64 epoch = 4;
+}
+
+message StoredGroup {
+  bytes group_id = 1;
+  bytes owner_identity = 2;
+  string name = 3;
+  repeated bytes member_identities = 4;
+  string relay_url = 5;
+  bool mesh_enabled = 6;
+  uint64 epoch = 7;
+  uint64 policy_revision = 8;
+}

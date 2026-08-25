@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package pigeon.wire.v1;
+
+message IdentityBundle {
+  bytes identity_key = 1;
+  bytes curve_identity_key = 2;
+  bytes binding_signature = 3;
+}
+
+message PrekeyBundle {
+  IdentityBundle identity = 1;
+  bytes prekey = 2;
+  bytes prekey_signature = 3;
+  bool one_time = 4;
+}
+
+message MlsIdentityBinding {
+  uint32 version = 1;
+  uint32 ciphersuite = 2;
+  bytes root_public_key = 3;
+  bytes mls_public_key = 4;
+  bytes signature = 5;
+}
+
+message ReservedKeyPackage {
+  MlsIdentityBinding binding = 1;
+  bytes intended_consumer = 2;
+  bytes key_package = 3;
+  bytes package_hash = 4;
+  bytes reservation_signature = 5;
+}
+
+message ContactCard {
+  uint32 version = 1;
+  IdentityBundle identity = 2;
+  string name = 3;
+  repeated string relay_urls = 4;
+  bytes relay_signature = 5;
+  bytes prekey_bundle = 6;
+}

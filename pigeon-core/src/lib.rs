@@ -34,7 +34,7 @@
 //! 5. Both ends exchange traffic with [`Session::encrypt`] / [`Session::decrypt`].
 //!
 //! Wire types are encoded with the shared `pigeon.wire.v1` Protocol Buffer
-//! schema in `proto/pigeon/wire/v1/pigeon_wire.proto`.
+//! schemas in `proto/pigeon/wire/v1/`.
 
 #![forbid(unsafe_code)]
 
@@ -48,9 +48,12 @@ pub use client::{AppEvent, ClientCommand, ClientOutput, OutboundItem, PigeonClie
 pub use error::Error;
 pub use identity::{
     Account, IdentityBundle, IdentityError, IdentityKeypair, IdentityPurpose, Initiation,
-    PrekeyBundle, SecureIdentity, Session, decode_olm_message, encode_olm_message,
+    KeyPackagePool, MlsIdentityBinding, PrekeyBundle, ReservedKeyPackage, SecureIdentity, Session,
+    decode_olm_message, encode_olm_message,
 };
-pub use storage::{MemoryStateStore, SealedCheckpoint, StateStore, StorageError};
+pub use storage::{
+    MemoryStateStore, SealedCheckpoint, StateStore, StorageError, TransactionalOpenMlsStorage,
+};
 pub use wire::proto as wire_proto;
 pub use wire::{
     MAX_CLIENT_COMMAND_BYTES, MAX_FUTURE_EPOCHS, MAX_GROUP_APPLICATION_BYTES, MAX_GROUP_MEMBERS,

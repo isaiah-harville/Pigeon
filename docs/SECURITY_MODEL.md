@@ -183,7 +183,7 @@ the Olm account, so re-pickling or rotating Olm keys never churns safety numbers
 
 ### 5.4 Wire format
 All bundles and messages use the shared **`pigeon.wire.v1`** Protocol Buffer
-schema (`proto/pigeon/wire/v1/pigeon_wire.proto`), encoded identically by the
+schemas under `proto/pigeon/wire/v1/`, encoded identically by the
 Rust core and the Swift app. An Olm message crosses the wire as
 `pigeon.wire.v1.OlmMessage` (its type tag + ciphertext); first contact crosses as
 `pigeon.wire.v1.Initiation` (the initiator's identity bundle + the first Olm

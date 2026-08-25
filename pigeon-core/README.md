@@ -42,15 +42,14 @@ must complete from a stored bundle with no interactive round trip.
 
 | File          | Contents                                                        |
 | ------------- | --------------------------------------------------------------- |
-| `identity.rs` | `IdentityKeypair`, `IdentityBundle` — the Ed25519 → Curve25519 binding. |
-| `account.rs`  | `Account`: identity + Olm account + prekeys + persistence.      |
-| `prekey.rs`   | `PrekeyBundle` (signed prekey / one-time prekeys).              |
-| `session.rs`  | `Session`, `Initiation` — establishment and traffic.            |
-| `wire.rs`     | protobuf encode/decode for the `pigeon.wire.v1` schema.         |
-| `error.rs`    | `Error`.                                                        |
+| `identity/` | Root identity, MLS binding, and identity-bound pairwise Olm. |
+| `client/` | Transactional commands, events, and outbound work. |
+| `storage/` | Atomic app checkpoints and copy-on-write OpenMLS storage. |
+| `wire/` | Bounded protobuf encode/decode for `pigeon.wire.v1`. |
+| `error.rs` | `Error`. |
 
-Wire types use the shared Protocol Buffer schema at
-`proto/pigeon/wire/v1/pigeon_wire.proto`, so every client speaks one format.
+Wire types use the domain schemas under `proto/pigeon/wire/v1/`, so every client
+speaks one versioned format.
 The crate is `#![forbid(unsafe_code)]` and links no bindings — Swift reaches it
 through [`pigeon-ffi`](../pigeon-ffi).
 

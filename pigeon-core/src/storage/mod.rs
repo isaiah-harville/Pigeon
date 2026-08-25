@@ -1,10 +1,12 @@
 //! Atomic checkpoint storage boundary.
 
 mod memory;
+mod openmls;
 
 use core::fmt;
 
 pub use memory::MemoryStateStore;
+pub use openmls::TransactionalOpenMlsStorage;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SealedCheckpoint {

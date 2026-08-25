@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package pigeon.wire.v1;
+
+import "pigeon/wire/v1/group.proto";
+
+message ClientCommand {
+  uint32 version = 1;
+  string command_id = 2;
+  oneof body {
+    CreateGroup create_group = 10;
+    SendGroupMessage send_group_message = 11;
+    ApplyInbound apply_inbound = 12;
+    ChangeGroupPolicy change_group_policy = 13;
+  }
+}
+
+message CreateGroup {
+  string name = 1;
+  repeated bytes member_identities = 2;
+  string relay_url = 3;
+  bool mesh_enabled = 4;
+}
+
+message SendGroupMessage {
+  bytes group_id = 1;
+  string message_id = 2;
+  bytes body = 3;
+  string reply_to_message_id = 4;
+}
+
+message ApplyInbound {
+  OutboundKind kind = 1;
+  bytes payload = 2;
+}
+
+message ChangeGroupPolicy {
+  bytes group_id = 1;
+  GroupPolicyChangeKind kind = 2;
+  bytes subject_identity = 3;
+  string string_value = 4;
+  bool bool_value = 5;
+}
+
+message AppEvent {
+  uint32 version = 1;
+  string event_id = 2;
+  oneof body {
+    GroupCreated group_created = 20;
+    GroupMessageReceived group_message_received = 21;
+    GroupPolicyChanged group_policy_changed = 22;
+    GroupDeliveryChanged group_delivery_changed = 23;
+    GroupSecurityWarning group_security_warning = 24;
+  }
+}
+
+enum OutboundKind {
+  OUTBOUND_KIND_UNSPECIFIED = 0;
+  OUTBOUND_KIND_PAIRWISE = 1;
+  OUTBOUND_KIND_GROUP_MESSAGE = 2;
+  OUTBOUND_KIND_GROUP_COORDINATOR = 3;
+  OUTBOUND_KIND_KEY_PACKAGE_REQUEST = 4;
+  OUTBOUND_KIND_MESH = 5;
+}
+
+message OutboundItem {
+  string item_id = 1;
+  OutboundKind kind = 2;
+  string relay_url = 3;
+  bytes destination = 4;
+  bytes payload = 5;
+}
+
+message ClientOutput {
+  uint64 checkpoint_generation = 1;
+  repeated AppEvent events = 2;
+  repeated OutboundItem outbound = 3;
+}
+
+message ClientCheckpoint {
+  uint32 version = 1;
+  uint64 generation = 2;
+  repeated string applied_command_ids = 3;
+  repeated StoredGroup groups = 4;
+}
