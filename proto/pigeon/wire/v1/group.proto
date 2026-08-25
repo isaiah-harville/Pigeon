@@ -2,6 +2,21 @@ syntax = "proto3";
 
 package pigeon.wire.v1;
 
+message PigeonGroupPolicy {
+  uint32 protocol_version = 1;
+  uint32 policy_version = 2;
+  bytes group_id = 3;
+  bytes owner_identity = 4;
+  repeated bytes admin_identities = 5;
+  repeated bytes member_identities = 6;
+  string name = 7;
+  string relay_url = 8;
+  bytes coordination_id = 9;
+  bool mesh_enabled = 10;
+  uint64 revision = 11;
+  bool dissolved = 12;
+}
+
 enum GroupPolicyChangeKind {
   GROUP_POLICY_CHANGE_KIND_UNSPECIFIED = 0;
   GROUP_POLICY_CHANGE_KIND_MEMBER_ADDED = 1;

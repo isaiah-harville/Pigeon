@@ -16,6 +16,8 @@ vodozemac = "0.10"
 prost = "0.14"
 serde_json = "1"
 sha2 = "0.10"
+unicode-normalization = { version = "=0.1.25", default-features = false, features = ["std"] }
+unicode-general-category = "=1.1.0"
 # The identity<->static binding: an Ed25519 identity key signs Olm's Curve25519
 # identity key. This is the one piece of protocol trust we keep; everything
 # below it (ratchet, session setup, message format) is vodozemac's.

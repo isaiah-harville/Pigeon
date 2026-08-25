@@ -8,6 +8,7 @@ pub const MAX_MLS_OBJECT_BYTES: usize = 1024 * 1024;
 pub const MAX_GROUP_APPLICATION_BYTES: usize = 64 * 1024;
 pub const MAX_GROUP_MEMBERS: usize = 128;
 pub const MAX_GROUP_NAME_BYTES: usize = 256;
+pub const MAX_GROUP_NAME_SCALARS: usize = 64;
 pub const MAX_RELAY_URL_BYTES: usize = 2 * 1024;
 pub const MAX_POLICY_STRING_BYTES: usize = MAX_RELAY_URL_BYTES;
 pub const MAX_STABLE_ID_BYTES: usize = 128;
