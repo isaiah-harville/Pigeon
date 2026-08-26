@@ -31,7 +31,7 @@ pub const MAX_CIPHERTEXT_LEN: usize = 256 * 1024;
 /// an unacked envelope stays there until the client drains it.
 pub const SUBSCRIBER_CHANNEL_CAPACITY: usize = 256;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Config {
     /// How long an undelivered envelope is retained before expiry.
     pub ttl_secs: u64,
