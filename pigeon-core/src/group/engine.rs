@@ -2,14 +2,17 @@ use openmls::prelude::*;
 use openmls_traits::OpenMlsProvider;
 use tls_codec::{Deserialize, Serialize};
 
-use super::{GroupAction, GroupId, PendingMutation, PigeonGroupPolicy, PolicyEvent};
+use super::{
+    AuthenticatedGroupMessage, GroupAction, GroupApplication, GroupCiphertext, GroupId,
+    GroupMessageId, PendingMutation, PigeonGroupPolicy, PolicyEvent,
+};
 use crate::Error;
 use crate::identity::{
     CIPHERSUITE, MlsIdentityBinding, POLICY_EXTENSION_TYPE_ID, PlatformMlsSigner,
     ReservedKeyPackage, SecureIdentity,
 };
 use crate::storage::TransactionalOpenMlsStorage;
-use crate::wire::MAX_MLS_OBJECT_BYTES;
+use crate::wire::{MAX_FUTURE_EPOCHS, MAX_MLS_OBJECT_BYTES};
 
 #[derive(Clone, Debug)]
 pub struct GroupEngine {
@@ -20,6 +23,96 @@ pub struct GroupEngine {
 }
 
 impl GroupEngine {
+    pub(crate) fn restore(
+        storage: &TransactionalOpenMlsStorage,
+        policy: PigeonGroupPolicy,
+        expected_epoch: u64,
+    ) -> Result<Self, Error> {
+        let group = load_group(storage.provider(), policy.group_id())?;
+        verify_group_policy(&group, &policy)?;
+        if group.epoch().as_u64() != expected_epoch {
+            return Err(Error::InvalidSignature);
+        }
+        Ok(Self {
+            group_id: policy.group_id(),
+            policy,
+            epoch: expected_epoch,
+            pending: None,
+        })
+    }
+
+    pub fn encrypt_application<I: SecureIdentity>(
+        &mut self,
+        identity: &I,
+        storage: &mut TransactionalOpenMlsStorage,
+        application: GroupApplication,
+    ) -> Result<GroupCiphertext, Error> {
+        let sender = identity.ensure_public_key(crate::IdentityPurpose::Root)?;
+        if !self.policy.members().contains(&sender) || self.policy.dissolved() {
+            return Err(Error::InvalidSignature);
+        }
+        let mut message_id = [0_u8; 16];
+        getrandom::getrandom(&mut message_id).map_err(|_| Error::Entropy)?;
+        let message_id = GroupMessageId::from_bytes(message_id);
+        let plaintext = super::message::encode_content(
+            self.group_id,
+            self.epoch,
+            sender,
+            message_id,
+            application,
+        )?;
+        let provider = storage.provider();
+        let signer = PlatformMlsSigner(identity);
+        let mut group = load_group(provider, self.group_id)?;
+        let credential = group.credential().map_err(|_| Error::InvalidKey)?;
+        if binding_from_credential(credential)?.root_public_key() != sender {
+            return Err(Error::InvalidSignature);
+        }
+        let ciphertext = group
+            .create_message(provider, &signer, &plaintext)
+            .map_err(|_| Error::Mls("encrypt group application"))?
+            .tls_serialize_detached()
+            .map_err(|_| Error::Serialization)?;
+        Ok(GroupCiphertext::new(
+            self.group_id,
+            self.epoch,
+            message_id,
+            ciphertext,
+        ))
+    }
+
+    pub fn decrypt_application(
+        &mut self,
+        storage: &mut TransactionalOpenMlsStorage,
+        ciphertext: &GroupCiphertext,
+    ) -> Result<AuthenticatedGroupMessage, Error> {
+        if ciphertext.group_id() != self.group_id
+            || ciphertext.epoch() > self.epoch
+            || self.epoch.saturating_sub(ciphertext.epoch()) > MAX_FUTURE_EPOCHS as u64
+        {
+            return Err(Error::InvalidSignature);
+        }
+        if ciphertext.ciphertext().len() > MAX_MLS_OBJECT_BYTES {
+            return Err(Error::ResourceLimit("MLS application bytes"));
+        }
+        let provider = storage.provider();
+        let mut group = load_group(provider, self.group_id)?;
+        let message = MlsMessageIn::tls_deserialize_exact(ciphertext.ciphertext())
+            .map_err(|_| Error::Serialization)?;
+        let protocol_message = message
+            .try_into_protocol_message()
+            .map_err(|_| Error::Serialization)?;
+        let processed = group
+            .process_message(provider, protocol_message)
+            .map_err(|_| Error::Mls("decrypt group application"))?;
+        let sender = binding_from_credential(processed.credential())?.root_public_key();
+        let ProcessedMessageContent::ApplicationMessage(application) = processed.into_content()
+        else {
+            return Err(Error::Mls("group input was not an application message"));
+        };
+        super::message::decode_content(&application.into_bytes(), ciphertext, sender)
+    }
+
     pub fn create<I: SecureIdentity>(
         identity: &I,
         storage: &mut TransactionalOpenMlsStorage,
@@ -80,6 +173,7 @@ impl GroupEngine {
             .use_ratchet_tree_extension(true)
             .with_capabilities(policy_capabilities())
             .with_group_context_extensions(policy_extensions(&policy)?)
+            .max_past_epochs(MAX_FUTURE_EPOCHS)
             .build(provider, &signer, binding.credential_with_key())
             .map_err(|_| Error::Mls("create group"))?;
 
@@ -131,13 +225,12 @@ impl GroupEngine {
         let MlsMessageBodyIn::Welcome(welcome) = message.extract() else {
             return Err(Error::Serialization);
         };
-        let staged = StagedWelcome::new_from_welcome(
-            storage.provider(),
-            &MlsGroupJoinConfig::default(),
-            welcome,
-            None,
-        )
-        .map_err(|_| Error::Mls("stage Welcome"))?;
+        let join_config = MlsGroupJoinConfig::builder()
+            .max_past_epochs(MAX_FUTURE_EPOCHS)
+            .build();
+        let staged =
+            StagedWelcome::new_from_welcome(storage.provider(), &join_config, welcome, None)
+                .map_err(|_| Error::Mls("stage Welcome"))?;
         let policy = policy_from_extensions(staged.group_context().extensions())?;
         verify_staged_roster(&staged, &policy)?;
         let local_root = identity.ensure_public_key(crate::IdentityPurpose::Root)?;

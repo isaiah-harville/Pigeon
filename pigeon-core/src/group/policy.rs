@@ -161,6 +161,10 @@ impl PigeonGroupPolicy {
         self.mesh_enabled
     }
 
+    pub fn dissolved(&self) -> bool {
+        self.dissolved
+    }
+
     pub(crate) fn authenticate_candidate(
         &self,
         candidate: &Self,

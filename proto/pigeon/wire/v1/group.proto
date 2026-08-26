@@ -49,6 +49,15 @@ message GroupMessageReceived {
   uint64 epoch = 6;
 }
 
+message GroupReactionReceived {
+  bytes group_id = 1;
+  string message_id = 2;
+  bytes sender_identity = 3;
+  string target_message_id = 4;
+  string reaction = 5;
+  uint64 epoch = 6;
+}
+
 message GroupPolicyChanged {
   GroupPolicyChangeKind kind = 1;
   bytes group_id = 2;
@@ -63,10 +72,12 @@ message GroupPolicyChanged {
 
 enum GroupDeliveryState {
   GROUP_DELIVERY_STATE_UNSPECIFIED = 0;
-  GROUP_DELIVERY_STATE_PENDING = 1;
+  GROUP_DELIVERY_STATE_SENDING = 1;
   GROUP_DELIVERY_STATE_SENT = 2;
-  GROUP_DELIVERY_STATE_DELIVERED = 3;
-  GROUP_DELIVERY_STATE_BLOCKED = 4;
+  GROUP_DELIVERY_STATE_DELIVERED_TO = 3;
+  GROUP_DELIVERY_STATE_DELIVERED = 4;
+  GROUP_DELIVERY_STATE_FAILED = 5;
+  GROUP_DELIVERY_STATE_EXPIRED = 6;
 }
 
 message GroupDeliveryChanged {
@@ -74,6 +85,8 @@ message GroupDeliveryChanged {
   string message_id = 2;
   GroupDeliveryState state = 3;
   uint64 epoch = 4;
+  uint32 delivered_count = 5;
+  uint32 intended_count = 6;
 }
 
 message GroupSecurityWarning {
@@ -93,4 +106,48 @@ message StoredGroup {
   uint64 epoch = 7;
   uint64 policy_revision = 8;
   bytes policy = 9;
+}
+
+message GroupApplicationCiphertext {
+  uint32 version = 1;
+  bytes group_id = 2;
+  uint64 epoch = 3;
+  bytes message_id = 4;
+  bytes ciphertext = 5;
+}
+
+message GroupEpochFetch {
+  uint32 version = 1;
+  bytes group_id = 2;
+  uint64 from_epoch = 3;
+  uint64 through_epoch = 4;
+}
+
+message GroupApplicationContent {
+  uint32 version = 1;
+  bytes group_id = 2;
+  uint64 epoch = 3;
+  bytes sender_identity = 4;
+  bytes message_id = 5;
+  int64 sender_timestamp_ms = 6;
+  oneof body {
+    GroupText text = 10;
+    GroupReaction reaction = 11;
+    GroupAcknowledgement acknowledgement = 12;
+  }
+}
+
+message GroupText {
+  bytes body = 1;
+  bytes reply_to_message_id = 2;
+}
+
+message GroupReaction {
+  bytes target_message_id = 1;
+  string reaction = 2;
+}
+
+message GroupAcknowledgement {
+  bytes original_sender_identity = 1;
+  bytes message_id = 2;
 }

@@ -27,6 +27,7 @@ message SendGroupMessage {
   string message_id = 2;
   bytes body = 3;
   string reply_to_message_id = 4;
+  int64 sender_timestamp_ms = 5;
 }
 
 message ApplyInbound {
@@ -52,6 +53,7 @@ message AppEvent {
     GroupPolicyChanged group_policy_changed = 22;
     GroupDeliveryChanged group_delivery_changed = 23;
     GroupSecurityWarning group_security_warning = 24;
+    GroupReactionReceived group_reaction_received = 25;
   }
 }
 
@@ -63,6 +65,7 @@ enum OutboundKind {
   OUTBOUND_KIND_KEY_PACKAGE_REQUEST = 4;
   OUTBOUND_KIND_MESH = 5;
   OUTBOUND_KIND_KEY_PACKAGE = 6;
+  OUTBOUND_KIND_GROUP_WELCOME = 7;
 }
 
 message OutboundItem {
@@ -87,6 +90,9 @@ message ClientCheckpoint {
   bytes openmls_checkpoint = 5;
   repeated PendingGroupCreation pending_group_creations = 6;
   repeated bytes consumed_key_package_hashes = 7;
+  repeated ProcessedGroupMessage processed_group_messages = 8;
+  repeated StoredDeliveryLedger delivery_ledgers = 9;
+  repeated BufferedGroupMessage buffered_group_messages = 10;
 }
 
 message PendingGroupCreation {
@@ -97,4 +103,27 @@ message PendingGroupCreation {
   bool mesh_enabled = 5;
   repeated bytes reserved_key_packages = 6;
   repeated string key_package_request_ids = 7;
+}
+
+message ProcessedGroupMessage {
+  bytes group_id = 1;
+  bytes message_id = 2;
+}
+
+message StoredDeliveryLedger {
+  bytes group_id = 1;
+  bytes message_id = 2;
+  uint64 epoch = 3;
+  bytes original_sender_identity = 4;
+  repeated bytes intended_identities = 5;
+  repeated bytes acknowledged_identities = 6;
+  bool sent = 7;
+  GroupDeliveryState terminal_state = 8;
+}
+
+message BufferedGroupMessage {
+  bytes group_id = 1;
+  uint64 epoch = 2;
+  bytes message_id = 3;
+  bytes ciphertext = 4;
 }

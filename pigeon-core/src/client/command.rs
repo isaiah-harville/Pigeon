@@ -1,6 +1,7 @@
 use prost::Message;
 
 use crate::Error;
+use crate::group::GroupId;
 use crate::wire::{self, PROTOCOL_VERSION, proto};
 
 #[derive(Clone, Debug)]
@@ -58,6 +59,75 @@ impl ClientCommand {
                     kind: proto::OutboundKind::KeyPackage as i32,
                     payload: package,
                     request_id: request_id.into(),
+                },
+            )),
+        };
+        wire::validate_client_command(&inner)?;
+        Ok(Self { inner })
+    }
+
+    pub fn send_group_text(
+        command_id: impl Into<String>,
+        group_id: GroupId,
+        body: Vec<u8>,
+        reply_to_message_id: impl Into<String>,
+    ) -> Result<Self, Error> {
+        Self::send_group_text_at(command_id, group_id, body, reply_to_message_id, 0)
+    }
+
+    pub fn send_group_text_at(
+        command_id: impl Into<String>,
+        group_id: GroupId,
+        body: Vec<u8>,
+        reply_to_message_id: impl Into<String>,
+        sender_timestamp_ms: i64,
+    ) -> Result<Self, Error> {
+        let command_id = command_id.into();
+        let inner = proto::ClientCommand {
+            version: PROTOCOL_VERSION,
+            command_id: command_id.clone(),
+            body: Some(proto::client_command::Body::SendGroupMessage(
+                proto::SendGroupMessage {
+                    group_id: group_id.as_bytes().to_vec(),
+                    message_id: command_id,
+                    body,
+                    reply_to_message_id: reply_to_message_id.into(),
+                    sender_timestamp_ms,
+                },
+            )),
+        };
+        wire::validate_client_command(&inner)?;
+        Ok(Self { inner })
+    }
+
+    pub fn apply_group_welcome(
+        command_id: impl Into<String>,
+        welcome: Vec<u8>,
+    ) -> Result<Self, Error> {
+        Self::apply_group_input(command_id, proto::OutboundKind::GroupWelcome, welcome)
+    }
+
+    pub fn apply_group_message(
+        command_id: impl Into<String>,
+        ciphertext: Vec<u8>,
+    ) -> Result<Self, Error> {
+        Self::apply_group_input(command_id, proto::OutboundKind::GroupMessage, ciphertext)
+    }
+
+    fn apply_group_input(
+        command_id: impl Into<String>,
+        kind: proto::OutboundKind,
+        payload: Vec<u8>,
+    ) -> Result<Self, Error> {
+        let command_id = command_id.into();
+        let inner = proto::ClientCommand {
+            version: PROTOCOL_VERSION,
+            command_id: command_id.clone(),
+            body: Some(proto::client_command::Body::ApplyInbound(
+                proto::ApplyInbound {
+                    kind: kind as i32,
+                    payload,
+                    request_id: command_id,
                 },
             )),
         };

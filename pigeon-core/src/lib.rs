@@ -48,8 +48,10 @@ mod wire;
 pub use client::{AppEvent, ClientCommand, ClientOutput, OutboundItem, PigeonClient};
 pub use error::Error;
 pub use group::{
-    Actor, GroupAction, GroupEngine, GroupId, PendingMutation, PigeonGroupPolicy, PolicyError,
-    PolicyEvent, PolicyEventKind, validate_transition,
+    Actor, AuthenticatedGroupMessage, BufferDisposition, DeliveryLedger, EpochBuffer, GroupAction,
+    GroupApplication, GroupCiphertext, GroupDeliveryState, GroupEngine, GroupId, GroupMessageId,
+    PendingMutation, PigeonGroupPolicy, PolicyError, PolicyEvent, PolicyEventKind,
+    validate_transition,
 };
 pub use identity::{
     Account, IdentityBundle, IdentityError, IdentityKeypair, IdentityPurpose, Initiation,
@@ -61,9 +63,9 @@ pub use storage::{
 };
 pub use wire::proto as wire_proto;
 pub use wire::{
-    MAX_CLIENT_COMMAND_BYTES, MAX_FUTURE_EPOCHS, MAX_GROUP_APPLICATION_BYTES, MAX_GROUP_MEMBERS,
-    MAX_MLS_OBJECT_BYTES, MAX_PENDING_OUTBOUND_ENTRIES, MAX_PROPOSAL_CANDIDATES,
-    decode_client_command,
+    MAX_CLIENT_COMMAND_BYTES, MAX_FUTURE_EPOCH_BUFFER_BYTES, MAX_FUTURE_EPOCHS,
+    MAX_GROUP_APPLICATION_BYTES, MAX_GROUP_MEMBERS, MAX_MLS_OBJECT_BYTES,
+    MAX_PENDING_OUTBOUND_ENTRIES, MAX_PROPOSAL_CANDIDATES, decode_client_command,
 };
 
 /// The Olm message type that crosses pigeon-core's API surface. Re-exported so

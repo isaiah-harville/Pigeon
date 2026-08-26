@@ -76,9 +76,15 @@ pub(crate) fn validate_client_command(command: &proto::ClientCommand) -> Result<
                 MAX_STABLE_ID_BYTES,
                 "inbound request id",
             )?;
+            let kind =
+                proto::OutboundKind::try_from(inbound.kind).map_err(|_| Error::MalformedBundle)?;
             if inbound.request_id.is_empty()
-                || proto::OutboundKind::try_from(inbound.kind)
-                    != Ok(proto::OutboundKind::KeyPackage)
+                || !matches!(
+                    kind,
+                    proto::OutboundKind::KeyPackage
+                        | proto::OutboundKind::GroupWelcome
+                        | proto::OutboundKind::GroupMessage
+                )
             {
                 return Err(Error::MalformedBundle);
             }
