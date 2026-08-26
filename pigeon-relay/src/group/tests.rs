@@ -1,17 +1,16 @@
-use crate::group_protocol::{
+use super::protocol::{
     challenge_transcript, gate_group_message, registration_transcript, verify_challenge,
     verify_registration, CapabilityWire, GroupClientMsg, GroupProtocolGate, GroupServerMsg,
 };
-use crate::group_store::{
-    CapabilityRegistration, GroupCapability, GroupRegistration, GroupStore, GroupStoreConfig,
-    GroupStoreError,
+use super::store::{
+    CapabilityRegistration, Config, GroupCapability, GroupRegistration, Store, StoreError,
 };
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
 
-fn config() -> GroupStoreConfig {
-    GroupStoreConfig {
+fn config() -> Config {
+    Config {
         ttl_secs: 60,
         max_groups: 4,
         max_capabilities_per_group: 128,
@@ -38,7 +37,7 @@ fn registration(readers: usize) -> GroupRegistration {
 
 #[test]
 fn group_one_opaque_entry_waits_for_every_active_reader() {
-    let mut store = GroupStore::bounded(config());
+    let mut store = Store::bounded(config());
     let group = store.register(registration(3)).unwrap();
     let receipt = store
         .append(&group.writer(0), b"opaque ciphertext".to_vec(), 1)
@@ -54,7 +53,7 @@ fn group_one_opaque_entry_waits_for_every_active_reader() {
 
 #[test]
 fn group_duplicate_append_is_stored_once() {
-    let mut store = GroupStore::bounded(config());
+    let mut store = Store::bounded(config());
     let group = store.register(registration(3)).unwrap();
     let first = store
         .append(&group.writer(0), b"same ciphertext".to_vec(), 1)
@@ -69,7 +68,7 @@ fn group_duplicate_append_is_stored_once() {
 
 #[test]
 fn group_capability_and_cursor_checks_fail_closed() {
-    let mut store = GroupStore::bounded(config());
+    let mut store = Store::bounded(config());
     let group = store.register(registration(3)).unwrap();
     let receipt = store
         .append(&group.writer(0), b"ciphertext".to_vec(), 1)
@@ -78,19 +77,19 @@ fn group_capability_and_cursor_checks_fail_closed() {
 
     assert_eq!(
         store.advance(&group.reader(0), receipt.sequence),
-        Err(GroupStoreError::StaleCursor)
+        Err(StoreError::StaleCursor)
     );
     let mut forged = group.reader(0);
     forged.public_key[0] ^= 1;
-    assert_eq!(store.fetch(&forged, 0), Err(GroupStoreError::Unauthorized));
+    assert_eq!(store.fetch(&forged, 0), Err(StoreError::Unauthorized));
 }
 
 #[test]
 fn group_rejects_the_129th_capability() {
-    let mut store = GroupStore::bounded(config());
+    let mut store = Store::bounded(config());
     assert_eq!(
         store.register(registration(129)),
-        Err(GroupStoreError::CapabilityLimit)
+        Err(StoreError::CapabilityLimit)
     );
 }
 
@@ -99,13 +98,13 @@ fn group_slow_reader_remains_bounded_by_explicit_quotas_and_ttl() {
     let mut limits = config();
     limits.max_entries_per_group = 2;
     limits.max_total_bytes = 8;
-    let mut store = GroupStore::bounded(limits);
+    let mut store = Store::bounded(limits);
     let group = store.register(registration(2)).unwrap();
     store.append(&group.writer(0), vec![1; 4], 1).unwrap();
     store.append(&group.writer(0), vec![2; 4], 2).unwrap();
     assert_eq!(
         store.append(&group.writer(0), vec![3; 4], 3),
-        Err(GroupStoreError::AtCapacity)
+        Err(StoreError::AtCapacity)
     );
 
     store.expire(62);
@@ -147,7 +146,7 @@ fn group_registration_and_challenge_require_valid_capability_signatures() {
     let forged = B64.encode(reader.sign(&transcript).to_bytes());
     assert_eq!(
         verify_registration(&hex::encode([7; 32]), &wires, &forged),
-        Err(GroupStoreError::Unauthorized)
+        Err(StoreError::Unauthorized)
     );
 
     let capability = GroupCapability {
@@ -215,7 +214,7 @@ fn group_wake_and_error_frames_disclose_no_group_metadata() {
 
 #[test]
 fn group_control_capability_rotates_and_revokes_without_resetting_entries() {
-    let mut store = GroupStore::bounded(config());
+    let mut store = Store::bounded(config());
     let group = store.register(registration(3)).unwrap();
     store
         .append(&group.writer(0), b"ciphertext".to_vec(), 1)
@@ -231,7 +230,7 @@ fn group_control_capability_rotates_and_revokes_without_resetting_entries() {
         .unwrap();
     assert_eq!(
         store.fetch(&group.reader(1), 0),
-        Err(GroupStoreError::Unauthorized)
+        Err(StoreError::Unauthorized)
     );
     let replacement = GroupCapability {
         coordination_id: *group.id(),
@@ -241,7 +240,7 @@ fn group_control_capability_rotates_and_revokes_without_resetting_entries() {
     store.revoke_capability(&group.writer(0), [3; 32]).unwrap();
     assert_eq!(
         store.fetch(&group.reader(2), 0),
-        Err(GroupStoreError::Unauthorized)
+        Err(StoreError::Unauthorized)
     );
     assert_eq!(store.entry_count(group.id()), 1);
 }

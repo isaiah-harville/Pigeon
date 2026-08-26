@@ -1,9 +1,9 @@
 // Tests for the blind-mailbox invariants, exercised without a socket.
-// Declared from `main.rs` as `#[cfg(test)] mod tests;` so it can reach the
+// Declared beside the mailbox service so it can reach the
 // crate-private mailbox operations.
 
 use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use base64::engine::general_purpose::STANDARD as B64;
@@ -11,23 +11,29 @@ use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
 use tokio::sync::mpsc;
 
-use crate::coordinator_store::{CoordinatorConfig, CoordinatorStore};
-use crate::group_store::{GroupStore, GroupStoreConfig};
-use crate::mailbox::{
-    ack, expire_mailboxes, flush_queue, publish, register_push, register_subscriber,
-    remove_subscriber, switch_subscription, verify_ownership,
-};
-use crate::protocol::{
+use super::protocol::{
     gate_protocol_message, select_protocol, ClientMsg, ProtocolGate, ServerMsg,
     PROTOCOL_MAX_VERSION, PROTOCOL_MIN_VERSION,
 };
+use crate::mailbox::{
+    ack as mailbox_ack, flush_queue as mailbox_flush_queue, publish as mailbox_publish,
+    register_push as mailbox_register_push, register_subscriber as mailbox_register_subscriber,
+    remove_subscriber as mailbox_remove_subscriber,
+    switch_subscription as mailbox_switch_subscription, verify_ownership, Service,
+};
 use crate::push::PushRegistry;
-use crate::state::{
-    is_valid_address, AppState, Config, Store, MAX_CIPHERTEXT_LEN, PUBKEY_LEN,
-    SUBSCRIBER_CHANNEL_CAPACITY,
+use crate::{
+    app::SUBSCRIBER_CHANNEL_CAPACITY,
+    mailbox::store::{is_valid_address, Config, MAX_CIPHERTEXT_LEN, PUBKEY_LEN},
 };
 
-fn state(ttl_secs: u64, max_queue: usize) -> AppState {
+struct TestState {
+    mailbox: Service,
+    message_ids: AtomicU64,
+    push: Arc<PushRegistry>,
+}
+
+fn state(ttl_secs: u64, max_queue: usize) -> TestState {
     bounded_state(ttl_secs, max_queue, usize::MAX, usize::MAX)
 }
 
@@ -37,39 +43,73 @@ fn bounded_state(
     max_queue: usize,
     max_mailboxes: usize,
     max_total_bytes: usize,
-) -> AppState {
-    AppState {
-        mailboxes: Arc::new(Mutex::new(Store::default())),
-        cfg: Config {
+) -> TestState {
+    TestState {
+        mailbox: Service::new(Config {
             ttl_secs,
             max_queue,
             max_mailboxes,
             max_total_bytes,
-        },
-        counter: Arc::new(AtomicU64::new(1)),
+        }),
+        message_ids: AtomicU64::new(1),
         // No gateway: deposits never attempt a push in these tests.
         push: Arc::new(PushRegistry::new(None, Duration::from_secs(30))),
-        groups: Arc::new(Mutex::new(GroupStore::bounded(GroupStoreConfig {
-            ttl_secs,
-            max_groups: 16,
-            max_capabilities_per_group: 128,
-            max_entry_bytes: MAX_CIPHERTEXT_LEN,
-            max_entries_per_group: max_queue,
-            max_total_bytes,
-            max_fetch_batch_bytes: MAX_CIPHERTEXT_LEN,
-        }))),
-        group_subscribers: Arc::new(Mutex::new(std::collections::HashMap::new())),
-        coordinator: Arc::new(Mutex::new(CoordinatorStore::new(
-            CoordinatorConfig {
-                max_candidates_per_epoch: 256,
-                max_candidate_bytes: MAX_CIPHERTEXT_LEN,
-                max_total_bytes,
-                max_fetch_batch_bytes: MAX_CIPHERTEXT_LEN,
-                ttl_secs,
-            },
-            SigningKey::from_bytes(&[99; 32]),
-        ))),
     }
+}
+
+fn publish(state: &TestState, tx: &mpsc::Sender<ServerMsg>, recipient: String, ciphertext: String) {
+    mailbox_publish(
+        &state.mailbox,
+        &state.message_ids,
+        &state.push,
+        tx,
+        recipient,
+        ciphertext,
+    );
+}
+
+fn register_push(
+    state: &TestState,
+    tx: &mpsc::Sender<ServerMsg>,
+    mailbox: Option<&str>,
+    token: String,
+) {
+    mailbox_register_push(&state.push, tx, mailbox, token);
+}
+
+fn register_subscriber(
+    state: &TestState,
+    mailbox: &str,
+    connection_id: u64,
+    tx: mpsc::Sender<ServerMsg>,
+) {
+    mailbox_register_subscriber(&state.mailbox, mailbox, connection_id, tx);
+}
+
+fn switch_subscription(
+    state: &TestState,
+    previous: Option<&str>,
+    mailbox: &str,
+    connection_id: u64,
+    tx: mpsc::Sender<ServerMsg>,
+) {
+    mailbox_switch_subscription(&state.mailbox, previous, mailbox, connection_id, tx);
+}
+
+fn flush_queue(state: &TestState, mailbox: &str, tx: &mpsc::Sender<ServerMsg>) {
+    mailbox_flush_queue(&state.mailbox, mailbox, tx);
+}
+
+fn ack(state: &TestState, mailbox: &str, id: &str) {
+    mailbox_ack(&state.mailbox, mailbox, id);
+}
+
+fn remove_subscriber(state: &TestState, mailbox: &str, connection_id: u64) {
+    mailbox_remove_subscriber(&state.mailbox, mailbox, connection_id);
+}
+
+fn expire_mailboxes(state: &TestState, cutoff: u64) {
+    state.mailbox.expire(cutoff);
 }
 
 fn channel() -> (mpsc::Sender<ServerMsg>, mpsc::Receiver<ServerMsg>) {
@@ -178,26 +218,28 @@ fn addr(byte: u8) -> String {
     hex::encode([byte; PUBKEY_LEN])
 }
 
-fn queue_len(state: &AppState, mailbox: &str) -> usize {
+fn queue_len(state: &TestState, mailbox: &str) -> usize {
     state
-        .mailboxes
+        .mailbox
+        .store
         .lock()
         .unwrap()
         .get(mailbox)
         .map_or(0, |m| m.queue.len())
 }
 
-fn total_bytes(state: &AppState) -> usize {
-    state.mailboxes.lock().unwrap().total_bytes()
+fn total_bytes(state: &TestState) -> usize {
+    state.mailbox.store.lock().unwrap().total_bytes()
 }
 
-fn mailbox_count(state: &AppState) -> usize {
-    state.mailboxes.lock().unwrap().len()
+fn mailbox_count(state: &TestState) -> usize {
+    state.mailbox.store.lock().unwrap().len()
 }
 
-fn subscriber_count(state: &AppState, mailbox: &str) -> usize {
+fn subscriber_count(state: &TestState, mailbox: &str) -> usize {
     state
-        .mailboxes
+        .mailbox
+        .store
         .lock()
         .unwrap()
         .get(mailbox)
@@ -218,7 +260,7 @@ fn publish_rejects_invalid_recipient() {
     let (tx, mut rx) = channel();
     publish(&st, &tx, "nothex".into(), "Y2lwaGVy".into());
     assert!(matches!(rx.try_recv().unwrap(), ServerMsg::Error { .. }));
-    assert_eq!(st.mailboxes.lock().unwrap().len(), 0);
+    assert_eq!(st.mailbox.store.lock().unwrap().len(), 0);
 }
 
 #[test]
@@ -306,7 +348,7 @@ fn expire_drops_old_envelopes_and_reclaims_empty_mailboxes() {
     let (tx, _rx) = channel();
     publish(&st, &tx, addr(1), "b25l".into());
     // A cutoff just past the deposit's timestamp retires it.
-    expire_mailboxes(&st, crate::state::now() + 1);
+    expire_mailboxes(&st, crate::clock::now() + 1);
     assert_eq!(mailbox_count(&st), 0);
     assert_eq!(total_bytes(&st), 0);
 }
@@ -441,7 +483,7 @@ fn byte_accounting_tracks_deposits_acks_and_expiry() {
     ack(&st, &addr(1), &first);
     assert_eq!(total_bytes(&st), 8);
 
-    expire_mailboxes(&st, crate::state::now() + 1);
+    expire_mailboxes(&st, crate::clock::now() + 1);
     assert_eq!(total_bytes(&st), 0);
 }
 
@@ -491,8 +533,15 @@ fn a_disconnected_subscriber_is_dropped() {
 }
 
 /// The id of the oldest envelope in a mailbox.
-fn state_first_id(state: &AppState, mailbox: &str) -> String {
-    state.mailboxes.lock().unwrap().get(mailbox).unwrap().queue[0]
+fn state_first_id(state: &TestState, mailbox: &str) -> String {
+    state
+        .mailbox
+        .store
+        .lock()
+        .unwrap()
+        .get(mailbox)
+        .unwrap()
+        .queue[0]
         .id
         .clone()
 }

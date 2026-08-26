@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Pigeon contributors.
 
-//! Version-two JSON protocol for the isolated opaque group service.
+//! Version-two JSON protocol for the isolated opaque group-message service.
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
-use crate::coordinator_store::{CoordinatorCandidate, CoordinatorReceipt};
-use crate::group_store::{
-    CapabilityRegistration, GroupCapability, GroupRegistration, GroupStoreError,
-};
+use crate::coordinator::protocol::{CandidateWire, ReceiptWire};
+use crate::group::store::{CapabilityRegistration, GroupCapability, GroupRegistration, StoreError};
 
 pub const GROUP_PROTOCOL_VERSION: u32 = 2;
 pub const MAX_GROUP_FRAME_BYTES: usize = 2 * 1024 * 1024;
@@ -107,10 +105,10 @@ pub enum GroupServerMsg {
         public_key: String,
     },
     CoordinatorReceipt {
-        receipt: CoordinatorReceiptWire,
+        receipt: ReceiptWire,
     },
     CoordinatorCandidates {
-        candidates: Vec<CoordinatorCandidateWire>,
+        candidates: Vec<CandidateWire>,
     },
 }
 
@@ -119,46 +117,6 @@ pub struct GroupEntryWire {
     pub sequence: u64,
     pub ciphertext: String,
     pub timestamp: u64,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct CoordinatorReceiptWire {
-    pub coordination_id: String,
-    pub sequence: u64,
-    pub prior_receipt_hash: String,
-    pub claimed_base_epoch: u64,
-    pub entry_hash: String,
-    pub signature: String,
-}
-
-impl From<CoordinatorReceipt> for CoordinatorReceiptWire {
-    fn from(receipt: CoordinatorReceipt) -> Self {
-        Self {
-            coordination_id: hex::encode(receipt.coordination_id),
-            sequence: receipt.sequence,
-            prior_receipt_hash: hex::encode(receipt.prior_receipt_hash),
-            claimed_base_epoch: receipt.claimed_base_epoch,
-            entry_hash: hex::encode(receipt.entry_hash),
-            signature: B64.encode(receipt.signature),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct CoordinatorCandidateWire {
-    pub receipt: CoordinatorReceiptWire,
-    pub candidate: String,
-    pub timestamp: u64,
-}
-
-impl From<CoordinatorCandidate> for CoordinatorCandidateWire {
-    fn from(candidate: CoordinatorCandidate) -> Self {
-        Self {
-            receipt: candidate.receipt.into(),
-            candidate: B64.encode(candidate.candidate),
-            timestamp: candidate.timestamp,
-        }
-    }
 }
 
 pub enum GroupProtocolGate {
@@ -201,7 +159,7 @@ pub fn verify_registration(
     coordination_id: &str,
     capabilities: &[CapabilityWire],
     signature: &str,
-) -> Result<GroupRegistration, GroupStoreError> {
+) -> Result<GroupRegistration, StoreError> {
     let coordination_id = decode_fixed(coordination_id)?;
     let capabilities = capabilities
         .iter()
@@ -210,13 +168,13 @@ pub fn verify_registration(
     let controller = capabilities
         .iter()
         .find(|capability| capability.can_control)
-        .ok_or(GroupStoreError::InvalidRegistration)?;
+        .ok_or(StoreError::InvalidRegistration)?;
     let signature = decode_signature(signature)?;
     let transcript = registration_transcript(coordination_id, &capabilities);
     VerifyingKey::from_bytes(&controller.public_key)
-        .map_err(|_| GroupStoreError::InvalidRegistration)?
+        .map_err(|_| StoreError::InvalidRegistration)?
         .verify_strict(&transcript, &signature)
-        .map_err(|_| GroupStoreError::Unauthorized)?;
+        .map_err(|_| StoreError::Unauthorized)?;
     Ok(GroupRegistration {
         coordination_id,
         capabilities,
@@ -263,9 +221,9 @@ pub fn challenge_transcript(capability: &GroupCapability, nonce: &[u8; 32]) -> V
 
 pub fn decode_capability(
     capability: &CapabilityWire,
-) -> Result<CapabilityRegistration, GroupStoreError> {
+) -> Result<CapabilityRegistration, StoreError> {
     let public_key = decode_fixed(&capability.public_key)?;
-    VerifyingKey::from_bytes(&public_key).map_err(|_| GroupStoreError::InvalidRegistration)?;
+    VerifyingKey::from_bytes(&public_key).map_err(|_| StoreError::InvalidRegistration)?;
     Ok(CapabilityRegistration {
         public_key,
         can_append: capability.can_append,
@@ -277,28 +235,28 @@ pub fn decode_capability(
 pub fn decode_group_capability(
     coordination_id: &str,
     public_key: &str,
-) -> Result<GroupCapability, GroupStoreError> {
+) -> Result<GroupCapability, StoreError> {
     Ok(GroupCapability {
         coordination_id: decode_fixed(coordination_id)?,
         public_key: decode_fixed(public_key)?,
     })
 }
 
-pub fn decode_public_key(encoded: &str) -> Result<[u8; 32], GroupStoreError> {
+pub fn decode_public_key(encoded: &str) -> Result<[u8; 32], StoreError> {
     decode_fixed(encoded)
 }
 
-fn decode_fixed(encoded: &str) -> Result<[u8; 32], GroupStoreError> {
-    let bytes = hex::decode(encoded).map_err(|_| GroupStoreError::InvalidRegistration)?;
+fn decode_fixed(encoded: &str) -> Result<[u8; 32], StoreError> {
+    let bytes = hex::decode(encoded).map_err(|_| StoreError::InvalidRegistration)?;
     bytes
         .as_slice()
         .try_into()
-        .map_err(|_| GroupStoreError::InvalidRegistration)
+        .map_err(|_| StoreError::InvalidRegistration)
 }
 
-fn decode_signature(encoded: &str) -> Result<Signature, GroupStoreError> {
+fn decode_signature(encoded: &str) -> Result<Signature, StoreError> {
     let bytes = B64
         .decode(encoded)
-        .map_err(|_| GroupStoreError::InvalidRegistration)?;
-    Signature::from_slice(&bytes).map_err(|_| GroupStoreError::InvalidRegistration)
+        .map_err(|_| StoreError::InvalidRegistration)?;
+    Signature::from_slice(&bytes).map_err(|_| StoreError::InvalidRegistration)
 }

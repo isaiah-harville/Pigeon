@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Pigeon contributors.
 
-//! Per-socket handling for the isolated opaque group service.
+//! Per-socket handling for the isolated opaque group-message service.
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::State;
+use axum::extract::{FromRef, State};
 use axum::response::IntoResponse;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
@@ -14,22 +15,47 @@ use futures_util::{SinkExt, StreamExt};
 use rand::RngCore;
 use tokio::sync::mpsc;
 
-use crate::group_protocol::{
+use super::protocol::{
     decode_capability, decode_group_capability, decode_public_key, gate_group_message,
-    verify_challenge, verify_registration, CoordinatorCandidateWire, GroupClientMsg,
-    GroupEntryWire, GroupProtocolGate, GroupServerMsg, MAX_GROUP_FRAME_BYTES,
+    verify_challenge, verify_registration, GroupClientMsg, GroupEntryWire, GroupProtocolGate,
+    GroupServerMsg, MAX_GROUP_FRAME_BYTES,
 };
-use crate::group_store::GroupCapability;
-use crate::push;
-use crate::state::{now, AppState, GroupSubscriber, SUBSCRIBER_CHANNEL_CAPACITY};
+use super::store::GroupCapability;
+use super::{Service, Subscriber};
+use crate::app::{AppState, SUBSCRIBER_CHANNEL_CAPACITY};
+use crate::clock::now;
+use crate::coordinator::{self, protocol::CandidateWire};
+use crate::push::{self, PushRegistry};
 
-pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
+#[derive(Clone)]
+pub struct ConnectionState {
+    service: Service,
+    coordinator: coordinator::Service,
+    push: Arc<PushRegistry>,
+    connection_ids: Arc<AtomicU64>,
+}
+
+impl FromRef<AppState> for ConnectionState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            service: state.group.clone(),
+            coordinator: state.coordinator.clone(),
+            push: state.push.clone(),
+            connection_ids: state.connection_ids.clone(),
+        }
+    }
+}
+
+pub async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<ConnectionState>,
+) -> impl IntoResponse {
     ws.max_message_size(MAX_GROUP_FRAME_BYTES)
         .on_upgrade(move |socket| handle_socket(socket, state))
 }
 
-async fn handle_socket(socket: WebSocket, state: AppState) {
-    let connection_id = state.counter.fetch_add(1, Ordering::Relaxed);
+async fn handle_socket(socket: WebSocket, state: ConnectionState) {
+    let connection_id = state.connection_ids.fetch_add(1, Ordering::Relaxed);
     let (mut socket_tx, mut socket_rx) = socket.split();
     let (tx, mut rx) = mpsc::channel::<GroupServerMsg>(SUBSCRIBER_CHANNEL_CAPACITY);
     let writer = tokio::spawn(async move {
@@ -71,7 +97,9 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 signature,
             } => {
                 let result = verify_registration(&coordination_id, &capabilities, &signature)
-                    .and_then(|registration| state.groups.lock().unwrap().register(registration));
+                    .and_then(|registration| {
+                        state.service.store.lock().unwrap().register(registration)
+                    });
                 reply(
                     &tx,
                     if result.is_ok() {
@@ -86,9 +114,14 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 capability_key,
             } => {
                 let capability = decode_group_capability(&coordination_id, &capability_key);
-                let authorized = capability
-                    .as_ref()
-                    .is_ok_and(|capability| state.groups.lock().unwrap().is_authorized(capability));
+                let authorized = capability.as_ref().is_ok_and(|capability| {
+                    state
+                        .service
+                        .store
+                        .lock()
+                        .unwrap()
+                        .is_authorized(capability)
+                });
                 if !authorized {
                     reply(&tx, generic_error());
                     continue;
@@ -113,14 +146,15 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     continue;
                 }
                 remove_subscriber(&state, authenticated.as_ref(), connection_id);
-                if state.groups.lock().unwrap().can_read(&capability) {
+                if state.service.store.lock().unwrap().can_read(&capability) {
                     state
-                        .group_subscribers
+                        .service
+                        .subscribers
                         .lock()
                         .unwrap()
                         .entry(capability.coordination_id)
                         .or_default()
-                        .push(GroupSubscriber {
+                        .push(Subscriber {
                             connection_id,
                             tx: tx.clone(),
                         });
@@ -138,7 +172,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     .map_err(|_| ())
                     .and_then(|ciphertext| {
                         state
-                            .groups
+                            .service
+                            .store
                             .lock()
                             .unwrap()
                             .append(capability, ciphertext, now())
@@ -148,7 +183,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     Ok(receipt) => {
                         wake_readers(&state, capability.coordination_id);
                         for reader_key in state
-                            .groups
+                            .service
+                            .store
                             .lock()
                             .unwrap()
                             .reader_keys(&capability.coordination_id)
@@ -173,7 +209,13 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     reply(&tx, generic_error());
                     continue;
                 };
-                let response = match state.groups.lock().unwrap().fetch(capability, after_cursor) {
+                let response = match state
+                    .service
+                    .store
+                    .lock()
+                    .unwrap()
+                    .fetch(capability, after_cursor)
+                {
                     Ok(entries) => GroupServerMsg::Entries {
                         entries: entries
                             .into_iter()
@@ -191,7 +233,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             GroupClientMsg::Advance { sequence } => {
                 let result = authenticated.as_ref().map_or(Err(()), |capability| {
                     state
-                        .groups
+                        .service
+                        .store
                         .lock()
                         .unwrap()
                         .advance(capability, sequence)
@@ -207,7 +250,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     let old = decode_public_key(&old_public_key).map_err(|_| ())?;
                     let replacement = decode_capability(&replacement).map_err(|_| ())?;
                     state
-                        .groups
+                        .service
+                        .store
                         .lock()
                         .unwrap()
                         .rotate_capability(controller, old, replacement)
@@ -219,7 +263,8 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 let result = authenticated.as_ref().map_or(Err(()), |controller| {
                     let key = decode_public_key(&public_key).map_err(|_| ())?;
                     state
-                        .groups
+                        .service
+                        .store
                         .lock()
                         .unwrap()
                         .revoke_capability(controller, key)
@@ -229,7 +274,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             }
             GroupClientMsg::RegisterPush { token } => {
                 let result = authenticated.as_ref().is_some_and(|capability| {
-                    state.groups.lock().unwrap().can_read(capability)
+                    state.service.store.lock().unwrap().can_read(capability)
                         && state.push.enabled()
                         && push::is_valid_token(&token)
                         && state.push.register(
@@ -258,7 +303,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 }
             }
             GroupClientMsg::CoordinatorKey => {
-                let public_key = state.coordinator.lock().unwrap().verifying_key();
+                let public_key = state.coordinator.store.lock().unwrap().verifying_key();
                 reply(
                     &tx,
                     GroupServerMsg::CoordinatorKey {
@@ -274,13 +319,14 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     reply(&tx, generic_error());
                     continue;
                 };
-                if !state.groups.lock().unwrap().can_append(capability) {
+                if !state.service.store.lock().unwrap().can_append(capability) {
                     reply(&tx, generic_error());
                     continue;
                 }
                 let result = B64.decode(candidate).map_err(|_| ()).and_then(|candidate| {
                     state
                         .coordinator
+                        .store
                         .lock()
                         .unwrap()
                         .submit(
@@ -309,17 +355,18 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     reply(&tx, generic_error());
                     continue;
                 };
-                if !state.groups.lock().unwrap().can_read(capability) {
+                if !state.service.store.lock().unwrap().can_read(capability) {
                     reply(&tx, generic_error());
                     continue;
                 }
                 let candidates = state
                     .coordinator
+                    .store
                     .lock()
                     .unwrap()
                     .fetch(capability.coordination_id, after_sequence)
                     .into_iter()
-                    .map(CoordinatorCandidateWire::from)
+                    .map(CandidateWire::from)
                     .collect();
                 reply(&tx, GroupServerMsg::CoordinatorCandidates { candidates });
             }
@@ -334,9 +381,10 @@ fn reply(tx: &mpsc::Sender<GroupServerMsg>, message: GroupServerMsg) {
     let _ = tx.try_send(message);
 }
 
-fn wake_readers(state: &AppState, coordination_id: [u8; 32]) {
+fn wake_readers(state: &ConnectionState, coordination_id: [u8; 32]) {
     if let Some(subscribers) = state
-        .group_subscribers
+        .service
+        .subscribers
         .lock()
         .unwrap()
         .get_mut(&coordination_id)
@@ -347,11 +395,15 @@ fn wake_readers(state: &AppState, coordination_id: [u8; 32]) {
     }
 }
 
-fn remove_subscriber(state: &AppState, capability: Option<&GroupCapability>, connection_id: u64) {
+fn remove_subscriber(
+    state: &ConnectionState,
+    capability: Option<&GroupCapability>,
+    connection_id: u64,
+) {
     let Some(capability) = capability else {
         return;
     };
-    let mut groups = state.group_subscribers.lock().unwrap();
+    let mut groups = state.service.subscribers.lock().unwrap();
     if let Some(subscribers) = groups.get_mut(&capability.coordination_id) {
         subscribers.retain(|subscriber| subscriber.connection_id != connection_id);
         if subscribers.is_empty() {

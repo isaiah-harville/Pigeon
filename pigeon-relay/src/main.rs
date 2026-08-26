@@ -11,15 +11,10 @@
 mod app;
 mod clock;
 mod config;
-mod connection;
-mod coordinator_store;
-mod group_connection;
-mod group_protocol;
-mod group_store;
+mod coordinator;
+mod group;
 mod mailbox;
-mod protocol;
 mod push;
-mod state;
 
 #[tokio::main]
 async fn main() {
@@ -38,10 +33,3 @@ async fn main() {
         .await
         .expect("server error");
 }
-
-#[cfg(test)]
-mod coordinator_tests;
-#[cfg(test)]
-mod group_tests;
-#[cfg(test)]
-mod tests;

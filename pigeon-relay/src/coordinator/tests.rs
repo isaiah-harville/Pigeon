@@ -1,10 +1,10 @@
 use ed25519_dalek::SigningKey;
 
-use crate::coordinator_store::{CoordinatorConfig, CoordinatorError, CoordinatorStore};
+use super::store::{Config, Store, StoreError};
 
-fn store() -> CoordinatorStore {
-    CoordinatorStore::new(
-        CoordinatorConfig {
+fn store() -> Store {
+    Store::new(
+        Config {
             max_candidates_per_epoch: 3,
             max_candidate_bytes: 1024,
             max_total_bytes: 4096,
@@ -47,11 +47,11 @@ fn coordinator_bounds_candidates_per_epoch_and_bytes() {
     }
     assert_eq!(
         store.submit([3; 32], 9, vec![9; 4], 1),
-        Err(CoordinatorError::EpochCapacity)
+        Err(StoreError::EpochCapacity)
     );
     assert_eq!(
         store.submit([4; 32], 1, vec![0; 1025], 1),
-        Err(CoordinatorError::OversizedCandidate)
+        Err(StoreError::OversizedCandidate)
     );
 }
 

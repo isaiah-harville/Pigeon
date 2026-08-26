@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Pigeon contributors.
 
-//! The wire protocol: JSON frames exchanged over the WebSocket at `/ws`.
+//! Mailbox JSON frames exchanged over the WebSocket at `/ws`.
 //! Addresses are hex Ed25519 public keys; ciphertext blobs are base64 and the
 //! relay never decodes them.
 

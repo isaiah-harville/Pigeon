@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 pub const COORDINATOR_RECEIPT_DOMAIN: &[u8] = b"pigeon.relay.coordinator.receipt.v1";
 
 #[derive(Clone, Debug)]
-pub struct CoordinatorConfig {
+pub struct Config {
     pub max_candidates_per_epoch: usize,
     pub max_candidate_bytes: usize,
     pub max_total_bytes: usize,
@@ -20,7 +20,7 @@ pub struct CoordinatorConfig {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CoordinatorError {
+pub enum StoreError {
     AtCapacity,
     EpochCapacity,
     OversizedCandidate,
@@ -79,15 +79,15 @@ struct CoordinatorLog {
 }
 
 #[derive(Debug)]
-pub struct CoordinatorStore {
-    config: CoordinatorConfig,
+pub struct Store {
+    config: Config,
     signer: SigningKey,
     logs: HashMap<[u8; 32], CoordinatorLog>,
     total_bytes: usize,
 }
 
-impl CoordinatorStore {
-    pub fn new(config: CoordinatorConfig, signer: SigningKey) -> Self {
+impl Store {
+    pub fn new(config: Config, signer: SigningKey) -> Self {
         Self {
             config,
             signer,
@@ -106,9 +106,9 @@ impl CoordinatorStore {
         claimed_base_epoch: u64,
         candidate: Vec<u8>,
         now: u64,
-    ) -> Result<CoordinatorReceipt, CoordinatorError> {
+    ) -> Result<CoordinatorReceipt, StoreError> {
         if candidate.is_empty() || candidate.len() > self.config.max_candidate_bytes {
-            return Err(CoordinatorError::OversizedCandidate);
+            return Err(StoreError::OversizedCandidate);
         }
         self.expire_at(now);
         let log = self
@@ -132,16 +132,16 @@ impl CoordinatorStore {
             .count()
             >= self.config.max_candidates_per_epoch
         {
-            return Err(CoordinatorError::EpochCapacity);
+            return Err(StoreError::EpochCapacity);
         }
         if self.total_bytes.saturating_add(candidate.len()) > self.config.max_total_bytes {
-            return Err(CoordinatorError::AtCapacity);
+            return Err(StoreError::AtCapacity);
         }
         let sequence = log.next_sequence;
         log.next_sequence = log
             .next_sequence
             .checked_add(1)
-            .ok_or(CoordinatorError::AtCapacity)?;
+            .ok_or(StoreError::AtCapacity)?;
         let entry_hash: [u8; 32] = Sha256::digest(&candidate).into();
         let transcript = receipt_transcript(
             coordination_id,

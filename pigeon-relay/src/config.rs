@@ -4,9 +4,9 @@
 use std::fmt;
 use std::time::Duration;
 
-use crate::coordinator_store::CoordinatorConfig;
-use crate::group_store::GroupStoreConfig;
-use crate::state::Config as MailboxConfig;
+use crate::coordinator::store::Config as CoordinatorConfig;
+use crate::group::store::Config as GroupConfig;
+use crate::mailbox::store::Config as MailboxConfig;
 
 const DEFAULT_TTL_SECS: u64 = 30 * 24 * 3600;
 
@@ -14,7 +14,7 @@ const DEFAULT_TTL_SECS: u64 = 30 * 24 * 3600;
 pub struct RelayConfig {
     pub bind_addr: String,
     pub mailbox: MailboxConfig,
-    pub group: GroupStoreConfig,
+    pub group: GroupConfig,
     pub coordinator: CoordinatorConfig,
     pub apns_min_interval: Duration,
     pub coordinator_signing_seed: Option<[u8; 32]>,
@@ -87,7 +87,7 @@ impl RelayConfig {
                 512 * 1024 * 1024,
             )?,
         };
-        let group = GroupStoreConfig {
+        let group = GroupConfig {
             ttl_secs: parse_u64(&mut lookup, "PIGEON_GROUP_TTL_SECS", DEFAULT_TTL_SECS)?,
             max_groups: parse_usize(&mut lookup, "PIGEON_GROUP_MAX_GROUPS", 10_000)?,
             max_capabilities_per_group: parse_usize(
@@ -254,5 +254,16 @@ mod tests {
         })
         .unwrap_err();
         assert_eq!(error.variable(), "PIGEON_GROUP_MAX_GROUPS");
+    }
+
+    #[test]
+    fn coordinator_seed_is_redacted_from_debug_output() {
+        let config = RelayConfig::from_lookup(|key| {
+            (key == "PIGEON_COORDINATOR_SIGNING_SEED_HEX").then(|| "11".repeat(32))
+        })
+        .unwrap();
+        let debug = format!("{config:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains(&"11".repeat(32)));
     }
 }

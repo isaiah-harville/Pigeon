@@ -1,29 +1,59 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Pigeon contributors.
 
-//! Mailbox operations: deposit, queued/live delivery, acknowledgement, push-token
-//! registration, ownership verification, and expiry. These are the pure mutations
-//! over [`AppState`]; the connection loop in [`crate::connection`] drives them.
+//! Identity-addressed mailbox operations: deposit, queued/live delivery, acknowledgement, push-token
+//! registration, ownership verification, and expiry. The sibling connection
+//! loop supplies shared message IDs and the optional push registry explicitly.
 
-use std::sync::atomic::Ordering;
+pub(crate) mod connection;
+pub(crate) mod protocol;
+pub(crate) mod store;
+
+#[cfg(test)]
+mod tests;
+
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use ed25519_dalek::{Signature, VerifyingKey};
 use tokio::sync::mpsc;
 
-use crate::protocol::ServerMsg;
-use crate::push;
-use crate::state::{
-    is_valid_address, now, AppState, Deposit, StoredEnvelope, Subscriber, MAX_CIPHERTEXT_LEN,
+use self::protocol::ServerMsg;
+use self::store::{
+    is_valid_address, Config, Deposit, Store, StoredEnvelope, Subscriber, MAX_CIPHERTEXT_LEN,
     PUBKEY_LEN,
 };
+use crate::clock::now;
+use crate::push::{self, PushRegistry};
+
+#[derive(Clone)]
+pub struct Service {
+    pub(crate) store: Arc<Mutex<Store>>,
+    pub(crate) config: Config,
+}
+
+impl Service {
+    pub fn new(config: Config) -> Self {
+        Self {
+            store: Arc::new(Mutex::new(Store::default())),
+            config,
+        }
+    }
+
+    pub fn expire(&self, cutoff: u64) {
+        self.store.lock().unwrap().expire(cutoff);
+    }
+}
 
 /// Raw length of an Ed25519 signature, in bytes.
 const SIG_LEN: usize = 64;
 
 pub fn publish(
-    state: &AppState,
+    service: &Service,
+    message_ids: &AtomicU64,
+    push_registry: &Arc<PushRegistry>,
     tx: &mpsc::Sender<ServerMsg>,
     recipient: String,
     ciphertext: String,
@@ -41,7 +71,7 @@ pub fn publish(
         return;
     }
 
-    let id = format!("{:016x}", state.counter.fetch_add(1, Ordering::Relaxed));
+    let id = format!("{:016x}", message_ids.fetch_add(1, Ordering::Relaxed));
     let envelope = StoredEnvelope {
         id: id.clone(),
         ciphertext,
@@ -54,8 +84,8 @@ pub fn publish(
         ts: envelope.ts,
     };
 
-    let mut store = state.mailboxes.lock().unwrap();
-    if store.deposit(&recipient, envelope, &state.cfg) == Deposit::AtCapacity {
+    let mut store = service.store.lock().unwrap();
+    if store.deposit(&recipient, envelope, &service.config) == Deposit::AtCapacity {
         drop(store);
         let _ = tx.try_send(ServerMsg::Error {
             message: "relay at capacity".into(),
@@ -84,7 +114,7 @@ pub fn publish(
     // Wake any suspended/terminated device registered for this mailbox. No-op
     // unless push is configured and the coalescing window has elapsed; runs off
     // the connection task so it never blocks the deposit.
-    push::notify_deposit(state.push.clone(), recipient);
+    push::notify_deposit(push_registry.clone(), recipient);
 
     let _ = tx.try_send(ServerMsg::Published { id });
 }
@@ -93,7 +123,7 @@ pub fn publish(
 /// unauthenticated connections (so only the mailbox's key holder can attach a
 /// token) and relays that have no push gateway configured.
 pub fn register_push(
-    state: &AppState,
+    push_registry: &PushRegistry,
     tx: &mpsc::Sender<ServerMsg>,
     authed_mailbox: Option<&str>,
     token: String,
@@ -104,7 +134,7 @@ pub fn register_push(
         });
         return;
     };
-    if !state.push.enabled() {
+    if !push_registry.enabled() {
         let _ = tx.try_send(ServerMsg::Error {
             message: "push not supported".into(),
         });
@@ -116,7 +146,7 @@ pub fn register_push(
         });
         return;
     }
-    if !state.push.register(mailbox, token) {
+    if !push_registry.register(mailbox, token) {
         let _ = tx.try_send(ServerMsg::Error {
             message: "push registry full".into(),
         });
@@ -135,7 +165,7 @@ pub fn register_push(
 /// notice its channel is dead — and until then that mailbox keeps being treated
 /// as having a live reader.
 pub fn switch_subscription(
-    state: &AppState,
+    service: &Service,
     previous: Option<&str>,
     mailbox: &str,
     conn_id: u64,
@@ -143,26 +173,26 @@ pub fn switch_subscription(
 ) {
     if let Some(previous) = previous {
         if previous != mailbox {
-            remove_subscriber(state, previous, conn_id);
+            remove_subscriber(service, previous, conn_id);
         }
     }
-    register_subscriber(state, mailbox, conn_id, tx);
+    register_subscriber(service, mailbox, conn_id, tx);
 }
 
 pub fn register_subscriber(
-    state: &AppState,
+    service: &Service,
     mailbox: &str,
     conn_id: u64,
     tx: mpsc::Sender<ServerMsg>,
 ) {
-    let mut store = state.mailboxes.lock().unwrap();
+    let mut store = service.store.lock().unwrap();
     let subscribers = store.subscribers_mut(mailbox);
     subscribers.retain(|s| s.conn_id != conn_id);
     subscribers.push(Subscriber { conn_id, tx });
 }
 
-pub fn flush_queue(state: &AppState, mailbox: &str, tx: &mpsc::Sender<ServerMsg>) {
-    let store = state.mailboxes.lock().unwrap();
+pub fn flush_queue(service: &Service, mailbox: &str, tx: &mpsc::Sender<ServerMsg>) {
+    let store = service.store.lock().unwrap();
     if let Some(entry) = store.get(mailbox) {
         for envelope in &entry.queue {
             let _ = tx.try_send(ServerMsg::Envelope {
@@ -174,13 +204,13 @@ pub fn flush_queue(state: &AppState, mailbox: &str, tx: &mpsc::Sender<ServerMsg>
     }
 }
 
-pub fn ack(state: &AppState, mailbox: &str, id: &str) {
-    state.mailboxes.lock().unwrap().ack(mailbox, id);
+pub fn ack(service: &Service, mailbox: &str, id: &str) {
+    service.store.lock().unwrap().ack(mailbox, id);
 }
 
-pub fn remove_subscriber(state: &AppState, mailbox: &str, conn_id: u64) {
-    state
-        .mailboxes
+pub fn remove_subscriber(service: &Service, mailbox: &str, conn_id: u64) {
+    service
+        .store
         .lock()
         .unwrap()
         .remove_subscriber(mailbox, conn_id);
@@ -209,10 +239,4 @@ pub fn verify_ownership(mailbox_hex: &str, nonce: &[u8], signature_b64: &str) ->
     let signature = Signature::from_bytes(&sig_arr);
 
     verifying_key.verify_strict(nonce, &signature).is_ok()
-}
-
-/// Drops envelopes older than `cutoff` and reclaims mailboxes with no queue and
-/// no live subscribers. Bounds memory; envelopes are ephemeral by design.
-pub fn expire_mailboxes(state: &AppState, cutoff: u64) {
-    state.mailboxes.lock().unwrap().expire(cutoff);
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Pigeon contributors.
 
-//! Opt-in APNs wake-up gateway for the **official** Pigeon relay.
+//! Opt-in APNs wake-up gateway shared by mailbox and group delivery.
 //!
 //! Relay delivery is otherwise WebSocket-pull only: to receive, a recipient's
 //! app must be running and holding an authenticated subscription to its mailbox.

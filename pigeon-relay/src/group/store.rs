@@ -9,7 +9,7 @@ pub const GROUP_ID_BYTES: usize = 32;
 pub const CAPABILITY_KEY_BYTES: usize = 32;
 
 #[derive(Clone, Debug)]
-pub struct GroupStoreConfig {
+pub struct Config {
     pub ttl_secs: u64,
     pub max_groups: usize,
     pub max_capabilities_per_group: usize,
@@ -83,7 +83,7 @@ pub struct GroupEntry {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GroupStoreError {
+pub enum StoreError {
     AlreadyRegistered,
     AtCapacity,
     CapabilityLimit,
@@ -134,14 +134,14 @@ impl StoredGroup {
 }
 
 #[derive(Debug)]
-pub struct GroupStore {
-    config: GroupStoreConfig,
+pub struct Store {
+    config: Config,
     groups: HashMap<[u8; GROUP_ID_BYTES], StoredGroup>,
     total_bytes: usize,
 }
 
-impl GroupStore {
-    pub fn bounded(config: GroupStoreConfig) -> Self {
+impl Store {
+    pub fn bounded(config: Config) -> Self {
         Self {
             config,
             groups: HashMap::new(),
@@ -152,17 +152,17 @@ impl GroupStore {
     pub fn register(
         &mut self,
         registration: GroupRegistration,
-    ) -> Result<RegisteredGroup, GroupStoreError> {
+    ) -> Result<RegisteredGroup, StoreError> {
         if self.groups.contains_key(&registration.coordination_id) {
-            return Err(GroupStoreError::AlreadyRegistered);
+            return Err(StoreError::AlreadyRegistered);
         }
         if self.groups.len() >= self.config.max_groups {
-            return Err(GroupStoreError::AtCapacity);
+            return Err(StoreError::AtCapacity);
         }
         if registration.capabilities.is_empty()
             || registration.capabilities.len() > self.config.max_capabilities_per_group
         {
-            return Err(GroupStoreError::CapabilityLimit);
+            return Err(StoreError::CapabilityLimit);
         }
         let unique: HashSet<_> = registration
             .capabilities
@@ -188,7 +188,7 @@ impl GroupStore {
                 !capability.can_append && !capability.can_read && !capability.can_control
             })
         {
-            return Err(GroupStoreError::InvalidRegistration);
+            return Err(StoreError::InvalidRegistration);
         }
         let capabilities = registration
             .capabilities
@@ -224,21 +224,21 @@ impl GroupStore {
         capability: &GroupCapability,
         ciphertext: Vec<u8>,
         now: u64,
-    ) -> Result<AppendReceipt, GroupStoreError> {
+    ) -> Result<AppendReceipt, StoreError> {
         if ciphertext.is_empty() || ciphertext.len() > self.config.max_entry_bytes {
-            return Err(GroupStoreError::OversizedEntry);
+            return Err(StoreError::OversizedEntry);
         }
         self.expire(now.saturating_sub(self.config.ttl_secs));
         let group = self
             .groups
             .get_mut(&capability.coordination_id)
-            .ok_or(GroupStoreError::Unauthorized)?;
+            .ok_or(StoreError::Unauthorized)?;
         let authorized = group
             .capabilities
             .get(&capability.public_key)
             .is_some_and(|state| state.can_append);
         if !authorized {
-            return Err(GroupStoreError::Unauthorized);
+            return Err(StoreError::Unauthorized);
         }
         if let Some(existing) = group
             .entries
@@ -252,13 +252,13 @@ impl GroupStore {
         if group.entries.len() >= self.config.max_entries_per_group
             || self.total_bytes.saturating_add(ciphertext.len()) > self.config.max_total_bytes
         {
-            return Err(GroupStoreError::AtCapacity);
+            return Err(StoreError::AtCapacity);
         }
         let sequence = group.next_sequence;
         group.next_sequence = group
             .next_sequence
             .checked_add(1)
-            .ok_or(GroupStoreError::AtCapacity)?;
+            .ok_or(StoreError::AtCapacity)?;
         self.total_bytes += ciphertext.len();
         group.entries.push_back(GroupEntry {
             sequence,
@@ -272,18 +272,18 @@ impl GroupStore {
         &self,
         capability: &GroupCapability,
         after_cursor: u64,
-    ) -> Result<Vec<GroupEntry>, GroupStoreError> {
+    ) -> Result<Vec<GroupEntry>, StoreError> {
         let group = self
             .groups
             .get(&capability.coordination_id)
-            .ok_or(GroupStoreError::Unauthorized)?;
+            .ok_or(StoreError::Unauthorized)?;
         let reader = group
             .capabilities
             .get(&capability.public_key)
             .filter(|state| state.can_read)
-            .ok_or(GroupStoreError::Unauthorized)?;
+            .ok_or(StoreError::Unauthorized)?;
         if after_cursor < reader.cursor {
-            return Err(GroupStoreError::StaleCursor);
+            return Err(StoreError::StaleCursor);
         }
         let mut bytes: usize = 0;
         Ok(group
@@ -307,19 +307,19 @@ impl GroupStore {
         &mut self,
         capability: &GroupCapability,
         sequence: u64,
-    ) -> Result<(), GroupStoreError> {
+    ) -> Result<(), StoreError> {
         let group = self
             .groups
             .get_mut(&capability.coordination_id)
-            .ok_or(GroupStoreError::Unauthorized)?;
+            .ok_or(StoreError::Unauthorized)?;
         let last_sequence = group.next_sequence.saturating_sub(1);
         let reader = group
             .capabilities
             .get_mut(&capability.public_key)
             .filter(|state| state.can_read)
-            .ok_or(GroupStoreError::Unauthorized)?;
+            .ok_or(StoreError::Unauthorized)?;
         if sequence <= reader.cursor || sequence > last_sequence {
-            return Err(GroupStoreError::StaleCursor);
+            return Err(StoreError::StaleCursor);
         }
         reader.cursor = sequence;
         self.total_bytes = self.total_bytes.saturating_sub(group.collect_garbage());
@@ -331,26 +331,26 @@ impl GroupStore {
         controller: &GroupCapability,
         old_public_key: [u8; CAPABILITY_KEY_BYTES],
         replacement: CapabilityRegistration,
-    ) -> Result<(), GroupStoreError> {
+    ) -> Result<(), StoreError> {
         let group = self
             .groups
             .get_mut(&controller.coordination_id)
-            .ok_or(GroupStoreError::Unauthorized)?;
+            .ok_or(StoreError::Unauthorized)?;
         if !group
             .capabilities
             .get(&controller.public_key)
             .is_some_and(|capability| capability.can_control)
             || group.capabilities.contains_key(&replacement.public_key)
         {
-            return Err(GroupStoreError::Unauthorized);
+            return Err(StoreError::Unauthorized);
         }
         let old = group
             .capabilities
             .remove(&old_public_key)
-            .ok_or(GroupStoreError::Unauthorized)?;
+            .ok_or(StoreError::Unauthorized)?;
         if old.can_control != replacement.can_control {
             group.capabilities.insert(old_public_key, old);
-            return Err(GroupStoreError::InvalidRegistration);
+            return Err(StoreError::InvalidRegistration);
         }
         group.capabilities.insert(
             replacement.public_key,
@@ -369,22 +369,22 @@ impl GroupStore {
         &mut self,
         controller: &GroupCapability,
         public_key: [u8; CAPABILITY_KEY_BYTES],
-    ) -> Result<(), GroupStoreError> {
+    ) -> Result<(), StoreError> {
         let group = self
             .groups
             .get_mut(&controller.coordination_id)
-            .ok_or(GroupStoreError::Unauthorized)?;
+            .ok_or(StoreError::Unauthorized)?;
         if !group
             .capabilities
             .get(&controller.public_key)
             .is_some_and(|capability| capability.can_control)
         {
-            return Err(GroupStoreError::Unauthorized);
+            return Err(StoreError::Unauthorized);
         }
         let removed = group
             .capabilities
             .get(&public_key)
-            .ok_or(GroupStoreError::Unauthorized)?;
+            .ok_or(StoreError::Unauthorized)?;
         if removed.can_control
             || (removed.can_read
                 && group
@@ -394,7 +394,7 @@ impl GroupStore {
                     .count()
                     == 1)
         {
-            return Err(GroupStoreError::InvalidRegistration);
+            return Err(StoreError::InvalidRegistration);
         }
         group.capabilities.remove(&public_key);
         self.total_bytes = self.total_bytes.saturating_sub(group.collect_garbage());
