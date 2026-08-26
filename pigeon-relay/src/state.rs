@@ -12,6 +12,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::mpsc;
 
+use crate::group_protocol::GroupServerMsg;
+use crate::group_store::GroupStore;
 use crate::protocol::ServerMsg;
 use crate::push::PushRegistry;
 
@@ -212,6 +214,14 @@ pub struct AppState {
     /// Opt-in APNs wake-up registry. Inert (refuses registration, never pushes)
     /// unless an APNs gateway is configured — i.e. only the official relay.
     pub push: Arc<PushRegistry>,
+    /// Opaque group traffic is isolated from personal mailbox storage.
+    pub groups: Arc<Mutex<GroupStore>>,
+    pub group_subscribers: Arc<Mutex<HashMap<[u8; 32], Vec<GroupSubscriber>>>>,
+}
+
+pub struct GroupSubscriber {
+    pub connection_id: u64,
+    pub tx: mpsc::Sender<GroupServerMsg>,
 }
 
 pub fn now() -> u64 {

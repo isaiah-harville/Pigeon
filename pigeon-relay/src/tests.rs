@@ -11,6 +11,7 @@ use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
 use tokio::sync::mpsc;
 
+use crate::group_store::{GroupStore, GroupStoreConfig};
 use crate::mailbox::{
     ack, expire_mailboxes, flush_queue, publish, register_push, register_subscriber,
     remove_subscriber, switch_subscription, verify_ownership,
@@ -47,6 +48,16 @@ fn bounded_state(
         counter: Arc::new(AtomicU64::new(1)),
         // No gateway: deposits never attempt a push in these tests.
         push: Arc::new(PushRegistry::new(None, Duration::from_secs(30))),
+        groups: Arc::new(Mutex::new(GroupStore::bounded(GroupStoreConfig {
+            ttl_secs,
+            max_groups: 16,
+            max_capabilities_per_group: 128,
+            max_entry_bytes: MAX_CIPHERTEXT_LEN,
+            max_entries_per_group: max_queue,
+            max_total_bytes,
+            max_fetch_batch_bytes: MAX_CIPHERTEXT_LEN,
+        }))),
+        group_subscribers: Arc::new(Mutex::new(std::collections::HashMap::new())),
     }
 }
 

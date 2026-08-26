@@ -32,11 +32,15 @@ use axum::routing::get;
 use axum::Router;
 
 mod connection;
+mod group_connection;
+mod group_protocol;
+mod group_store;
 mod mailbox;
 mod protocol;
 mod push;
 mod state;
 
+use group_store::{GroupStore, GroupStoreConfig};
 use push::PushRegistry;
 use state::{now, AppState, Config, Store};
 
@@ -47,6 +51,7 @@ async fn expiry_loop(state: AppState) {
     loop {
         ticker.tick().await;
         mailbox::expire_mailboxes(&state, now().saturating_sub(state.cfg.ttl_secs));
+        state.groups.lock().unwrap().expire_at(now());
     }
 }
 
@@ -82,6 +87,17 @@ async fn main() {
         cfg,
         counter: Arc::new(AtomicU64::new(1)),
         push,
+        groups: Arc::new(Mutex::new(GroupStore::bounded(GroupStoreConfig {
+            ttl_secs: env_u64("PIGEON_GROUP_TTL_SECS", 30 * 24 * 3600),
+            max_groups: env_u64("PIGEON_GROUP_MAX_GROUPS", 10_000) as usize,
+            max_capabilities_per_group: env_u64("PIGEON_GROUP_MAX_CAPABILITIES", 128) as usize,
+            max_entry_bytes: env_u64("PIGEON_GROUP_MAX_ENTRY_BYTES", 1024 * 1024) as usize,
+            max_entries_per_group: env_u64("PIGEON_GROUP_MAX_ENTRIES", 10_000) as usize,
+            max_total_bytes: env_u64("PIGEON_GROUP_MAX_TOTAL_BYTES", 512 * 1024 * 1024) as usize,
+            max_fetch_batch_bytes: env_u64("PIGEON_GROUP_MAX_FETCH_BYTES", 4 * 1024 * 1024)
+                as usize,
+        }))),
+        group_subscribers: Arc::new(Mutex::new(std::collections::HashMap::new())),
     };
 
     tokio::spawn(expiry_loop(state.clone()));
@@ -93,6 +109,7 @@ async fn main() {
         )
         .route("/healthz", get(|| async { "ok" }))
         .route("/ws", get(connection::ws_handler))
+        .route("/group/ws", get(group_connection::ws_handler))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -103,5 +120,7 @@ async fn main() {
     axum::serve(listener, app).await.expect("server error");
 }
 
+#[cfg(test)]
+mod group_tests;
 #[cfg(test)]
 mod tests;
