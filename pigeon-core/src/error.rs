@@ -2,6 +2,7 @@ use core::fmt;
 
 use vodozemac::olm::{DecryptionError, EncryptionError, SessionCreationError};
 
+use crate::group::PolicyError;
 use crate::identity::IdentityError;
 use crate::storage::StorageError;
 
@@ -33,6 +34,10 @@ pub enum Error {
     Persistence(StorageError),
     /// The platform secure-identity operation failed.
     Identity(IdentityError),
+    /// Authenticated group policy rejected a requested or received transition.
+    GroupPolicy(PolicyError),
+    /// OpenMLS rejected an operation or persisted group state.
+    Mls(&'static str),
     /// Olm could not create the session (e.g. a stale/consumed one-time key).
     SessionCreation(SessionCreationError),
     /// Olm encryption failed.
@@ -56,6 +61,8 @@ impl fmt::Display for Error {
             }
             Error::Persistence(error) => write!(f, "checkpoint persistence failed: {error}"),
             Error::Identity(error) => write!(f, "secure identity failed: {error}"),
+            Error::GroupPolicy(error) => write!(f, "{error}"),
+            Error::Mls(operation) => write!(f, "MLS operation failed: {operation}"),
             Error::SessionCreation(e) => write!(f, "session creation failed: {e}"),
             Error::Encryption(e) => write!(f, "encryption failed: {e}"),
             Error::Decryption(e) => write!(f, "decryption failed: {e}"),
@@ -71,6 +78,7 @@ impl std::error::Error for Error {
             Error::Decryption(e) => Some(e),
             Error::Persistence(error) => Some(error),
             Error::Identity(error) => Some(error),
+            Error::GroupPolicy(error) => Some(error),
             _ => None,
         }
     }
@@ -85,6 +93,12 @@ impl From<StorageError> for Error {
 impl From<IdentityError> for Error {
     fn from(error: IdentityError) -> Self {
         Self::Identity(error)
+    }
+}
+
+impl From<PolicyError> for Error {
+    fn from(error: PolicyError) -> Self {
+        Self::GroupPolicy(error)
     }
 }
 

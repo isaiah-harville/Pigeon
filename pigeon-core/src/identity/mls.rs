@@ -15,9 +15,11 @@ const BINDING_DOMAIN: &[u8] = b"pigeon.identity.mls.v1";
 const RESERVATION_DOMAIN: &[u8] = b"pigeon.mls.key-package.consumer.v1";
 const BINDING_VERSION: u32 = 1;
 const CIPHERSUITE_ID: u16 = 0x0001;
-const CIPHERSUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
+pub(crate) const CIPHERSUITE: Ciphersuite =
+    Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
+pub(crate) const POLICY_EXTENSION_TYPE_ID: u16 = 0xf001;
 
-struct PlatformMlsSigner<'a, I: SecureIdentity>(&'a I);
+pub(crate) struct PlatformMlsSigner<'a, I: SecureIdentity>(pub(crate) &'a I);
 
 impl<I: SecureIdentity> OpenMlsSigner for PlatformMlsSigner<'_, I> {
     fn sign(&self, payload: &[u8]) -> Result<Vec<u8>, SignerError> {
@@ -79,6 +81,34 @@ impl MlsIdentityBinding {
         self.mls_public_key
     }
 
+    pub(crate) fn credential_with_key(&self) -> CredentialWithKey {
+        CredentialWithKey {
+            credential: BasicCredential::new(self.encode()).into(),
+            signature_key: self.mls_public_key.to_vec().into(),
+        }
+    }
+
+    pub(crate) fn decode_credential(bytes: &[u8]) -> Result<Self, Error> {
+        const ENCODED_BYTES: usize = 4 + 2 + 32 + 32 + 64;
+        if bytes.len() != ENCODED_BYTES {
+            return Err(Error::InvalidKey);
+        }
+        let version = u32::from_be_bytes(bytes[0..4].try_into().map_err(|_| Error::InvalidKey)?);
+        let ciphersuite =
+            u16::from_be_bytes(bytes[4..6].try_into().map_err(|_| Error::InvalidKey)?);
+        let binding = Self {
+            version,
+            ciphersuite,
+            root_public_key: bytes[6..38].try_into().map_err(|_| Error::InvalidKey)?,
+            mls_public_key: bytes[38..70].try_into().map_err(|_| Error::InvalidKey)?,
+            signature: bytes[70..134]
+                .try_into()
+                .map_err(|_| Error::InvalidSignature)?,
+        };
+        binding.verify()?;
+        Ok(binding)
+    }
+
     fn encode(&self) -> Vec<u8> {
         let mut output = Vec::with_capacity(4 + 2 + 32 + 32 + 64);
         output.extend_from_slice(&self.version.to_be_bytes());
@@ -131,11 +161,14 @@ impl ReservedKeyPackage {
     ) -> Result<Self, Error> {
         let binding = MlsIdentityBinding::create(identity)?;
         let signer = PlatformMlsSigner(identity);
-        let credential = CredentialWithKey {
-            credential: BasicCredential::new(binding.encode()).into(),
-            signature_key: binding.mls_public_key.to_vec().into(),
-        };
+        let credential = binding.credential_with_key();
         let key_package = KeyPackage::builder()
+            .leaf_node_capabilities(
+                Capabilities::builder()
+                    .extensions(vec![ExtensionType::Unknown(POLICY_EXTENSION_TYPE_ID)])
+                    .credentials(vec![CredentialType::Basic])
+                    .build(),
+            )
             .build(CIPHERSUITE, storage.provider(), &signer, credential)
             .map_err(|_| Error::InvalidKey)?;
         let tls_bytes = key_package
@@ -192,6 +225,23 @@ impl ReservedKeyPackage {
 
     pub fn tls_bytes(&self) -> &[u8] {
         &self.tls_bytes
+    }
+
+    pub(crate) fn issuer(&self) -> [u8; 32] {
+        self.binding.root_public_key
+    }
+
+    pub(crate) fn package_hash(&self) -> [u8; 32] {
+        self.package_hash
+    }
+
+    pub(crate) fn validated_key_package(&self) -> Result<KeyPackage, Error> {
+        let package = KeyPackageIn::tls_deserialize_exact(&self.tls_bytes)
+            .map_err(|_| Error::Serialization)?;
+        let provider = openmls_rust_crypto::OpenMlsRustCrypto::default();
+        package
+            .validate(provider.crypto(), ProtocolVersion::Mls10)
+            .map_err(|_| Error::InvalidSignature)
     }
 
     pub fn encode(&self) -> Vec<u8> {

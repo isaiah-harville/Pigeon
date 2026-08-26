@@ -48,8 +48,8 @@ mod wire;
 pub use client::{AppEvent, ClientCommand, ClientOutput, OutboundItem, PigeonClient};
 pub use error::Error;
 pub use group::{
-    Actor, GroupAction, GroupId, PigeonGroupPolicy, PolicyError, PolicyEvent, PolicyEventKind,
-    validate_transition,
+    Actor, GroupAction, GroupEngine, GroupId, PendingMutation, PigeonGroupPolicy, PolicyError,
+    PolicyEvent, PolicyEventKind, validate_transition,
 };
 pub use identity::{
     Account, IdentityBundle, IdentityError, IdentityKeypair, IdentityPurpose, Initiation,

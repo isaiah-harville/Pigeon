@@ -92,4 +92,5 @@ message StoredGroup {
   bool mesh_enabled = 6;
   uint64 epoch = 7;
   uint64 policy_revision = 8;
+  bytes policy = 9;
 }

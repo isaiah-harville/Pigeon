@@ -32,6 +32,7 @@ message SendGroupMessage {
 message ApplyInbound {
   OutboundKind kind = 1;
   bytes payload = 2;
+  string request_id = 3;
 }
 
 message ChangeGroupPolicy {
@@ -61,6 +62,7 @@ enum OutboundKind {
   OUTBOUND_KIND_GROUP_COORDINATOR = 3;
   OUTBOUND_KIND_KEY_PACKAGE_REQUEST = 4;
   OUTBOUND_KIND_MESH = 5;
+  OUTBOUND_KIND_KEY_PACKAGE = 6;
 }
 
 message OutboundItem {
@@ -82,4 +84,17 @@ message ClientCheckpoint {
   uint64 generation = 2;
   repeated string applied_command_ids = 3;
   repeated StoredGroup groups = 4;
+  bytes openmls_checkpoint = 5;
+  repeated PendingGroupCreation pending_group_creations = 6;
+  repeated bytes consumed_key_package_hashes = 7;
+}
+
+message PendingGroupCreation {
+  string command_id = 1;
+  string name = 2;
+  repeated bytes member_identities = 3;
+  string relay_url = 4;
+  bool mesh_enabled = 5;
+  repeated bytes reserved_key_packages = 6;
+  repeated string key_package_request_ids = 7;
 }

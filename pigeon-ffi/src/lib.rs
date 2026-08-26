@@ -56,6 +56,10 @@ pub enum PigeonError {
     Persistence,
     /// The platform secure-identity operation failed.
     Identity,
+    /// Authenticated group policy rejected the requested transition.
+    GroupPolicy,
+    /// MLS rejected a group operation or persisted state.
+    Mls,
 }
 
 impl std::fmt::Display for PigeonError {
@@ -74,6 +78,8 @@ impl std::fmt::Display for PigeonError {
             PigeonError::UnsupportedVersion => "unsupported protocol version",
             PigeonError::Persistence => "checkpoint persistence failed",
             PigeonError::Identity => "secure identity operation failed",
+            PigeonError::GroupPolicy => "group policy rejected the transition",
+            PigeonError::Mls => "MLS operation failed",
         };
         f.write_str(s)
     }
@@ -98,6 +104,8 @@ impl From<pigeon_core::Error> for PigeonError {
             E::SessionCreation(_) => PigeonError::SessionCreation,
             E::Encryption(_) => PigeonError::Encryption,
             E::Decryption(_) => PigeonError::Decryption,
+            E::GroupPolicy(_) => PigeonError::GroupPolicy,
+            E::Mls(_) => PigeonError::Mls,
         }
     }
 }

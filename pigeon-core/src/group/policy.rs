@@ -60,6 +60,26 @@ impl PigeonGroupPolicy {
         relay_url: impl Into<String>,
         coordination_id: [u8; 32],
     ) -> Result<Self, PolicyError> {
+        Self::new_with_mesh(
+            group_id,
+            owner,
+            additional_members,
+            name,
+            relay_url,
+            coordination_id,
+            false,
+        )
+    }
+
+    pub(crate) fn new_with_mesh(
+        group_id: GroupId,
+        owner: [u8; 32],
+        additional_members: Vec<[u8; 32]>,
+        name: impl Into<String>,
+        relay_url: impl Into<String>,
+        coordination_id: [u8; 32],
+        mesh_enabled: bool,
+    ) -> Result<Self, PolicyError> {
         let mut members = additional_members;
         members.push(owner);
         members.sort_unstable();
@@ -73,7 +93,7 @@ impl PigeonGroupPolicy {
             name: name.into(),
             relay_url: relay_url.into(),
             coordination_id,
-            mesh_enabled: false,
+            mesh_enabled,
             revision: 0,
             dissolved: false,
         };
@@ -115,6 +135,101 @@ impl PigeonGroupPolicy {
 
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    pub fn group_id(&self) -> GroupId {
+        self.group_id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn owner(&self) -> [u8; 32] {
+        self.owner
+    }
+
+    pub fn relay_url(&self) -> &str {
+        &self.relay_url
+    }
+
+    pub fn coordination_id(&self) -> [u8; 32] {
+        self.coordination_id
+    }
+
+    pub fn mesh_enabled(&self) -> bool {
+        self.mesh_enabled
+    }
+
+    pub(crate) fn authenticate_candidate(
+        &self,
+        candidate: &Self,
+        actor: [u8; 32],
+    ) -> Result<PolicyEvent, PolicyError> {
+        let added_members = difference(&candidate.members, &self.members);
+        let removed_members = difference(&self.members, &candidate.members);
+        let added_admins = difference(&candidate.admins, &self.admins);
+        let removed_admins = difference(&self.admins, &candidate.admins);
+        let action = if added_members.len() == 1 && removed_members.is_empty() {
+            GroupAction::Add {
+                actor,
+                subject: added_members[0],
+            }
+        } else if removed_members.len() == 1 && added_members.is_empty() {
+            GroupAction::Remove {
+                actor,
+                subject: removed_members[0],
+            }
+        } else if added_admins.len() == 1 && removed_admins.is_empty() {
+            GroupAction::Promote {
+                actor,
+                subject: added_admins[0],
+            }
+        } else if removed_admins.len() == 1 && added_admins.is_empty() {
+            GroupAction::Demote {
+                actor,
+                subject: removed_admins[0],
+            }
+        } else if self.name != candidate.name {
+            GroupAction::Rename {
+                actor,
+                name: candidate.name.clone(),
+            }
+        } else if self.mesh_enabled != candidate.mesh_enabled {
+            GroupAction::SetMesh {
+                actor,
+                enabled: candidate.mesh_enabled,
+            }
+        } else if self.relay_url != candidate.relay_url {
+            GroupAction::SetRelay {
+                actor,
+                relay_url: candidate.relay_url.clone(),
+            }
+        } else if !self.dissolved && candidate.dissolved {
+            GroupAction::Dissolve { actor }
+        } else {
+            return Err(PolicyError::UnexpectedTransition);
+        };
+        validate_transition(self, candidate, &action)
+    }
+
+    pub(crate) fn authenticate_action(
+        &self,
+        candidate: &Self,
+        action: &GroupAction,
+    ) -> Result<PolicyEvent, PolicyError> {
+        validate_transition(self, candidate, action)
+    }
+
+    pub(crate) fn can_leave(&self, actor: [u8; 32]) -> Result<(), PolicyError> {
+        let committer = self
+            .members
+            .iter()
+            .copied()
+            .find(|member| *member != actor)
+            .ok_or(PolicyError::InvalidRoster)?;
+        self.apply(&GroupAction::Leave { actor, committer })
+            .map(|_| ())
     }
 
     pub fn members(&self) -> &[[u8; 32]] {
@@ -360,6 +475,13 @@ fn remove_identity(identities: &mut Vec<[u8; 32]>, identity: &[u8; 32]) {
     if let Ok(index) = identities.binary_search(identity) {
         identities.remove(index);
     }
+}
+
+fn difference(left: &[[u8; 32]], right: &[[u8; 32]]) -> Vec<[u8; 32]> {
+    left.iter()
+        .filter(|identity| right.binary_search(identity).is_err())
+        .copied()
+        .collect()
 }
 
 fn identities(values: Vec<Vec<u8>>) -> Result<Vec<[u8; 32]>, PolicyError> {

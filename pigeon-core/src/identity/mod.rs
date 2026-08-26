@@ -10,6 +10,7 @@ mod pairwise;
 mod root;
 
 pub use boundary::{IdentityError, IdentityPurpose, SecureIdentity};
+pub(crate) use mls::{CIPHERSUITE, POLICY_EXTENSION_TYPE_ID, PlatformMlsSigner};
 pub use mls::{KeyPackagePool, MlsIdentityBinding, ReservedKeyPackage};
 pub use pairwise::{
     Account, Initiation, PrekeyBundle, Session, decode_olm_message, encode_olm_message,

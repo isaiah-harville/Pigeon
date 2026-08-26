@@ -71,6 +71,17 @@ pub(crate) fn validate_client_command(command: &proto::ClientCommand) -> Result<
                 MAX_MLS_OBJECT_BYTES,
                 "inbound object bytes",
             )?;
+            check_bytes(
+                inbound.request_id.len(),
+                MAX_STABLE_ID_BYTES,
+                "inbound request id",
+            )?;
+            if inbound.request_id.is_empty()
+                || proto::OutboundKind::try_from(inbound.kind)
+                    != Ok(proto::OutboundKind::KeyPackage)
+            {
+                return Err(Error::MalformedBundle);
+            }
         }
         proto::client_command::Body::ChangeGroupPolicy(change) => {
             check_exact_group_id(&change.group_id)?;

@@ -45,6 +45,26 @@ impl ClientCommand {
         self.inner.encode_to_vec()
     }
 
+    pub fn apply_key_package(
+        command_id: impl Into<String>,
+        request_id: impl Into<String>,
+        package: Vec<u8>,
+    ) -> Result<Self, Error> {
+        let inner = proto::ClientCommand {
+            version: PROTOCOL_VERSION,
+            command_id: command_id.into(),
+            body: Some(proto::client_command::Body::ApplyInbound(
+                proto::ApplyInbound {
+                    kind: proto::OutboundKind::KeyPackage as i32,
+                    payload: package,
+                    request_id: request_id.into(),
+                },
+            )),
+        };
+        wire::validate_client_command(&inner)?;
+        Ok(Self { inner })
+    }
+
     pub fn command_id(&self) -> &str {
         &self.inner.command_id
     }
