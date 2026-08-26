@@ -16,8 +16,8 @@ use tokio::sync::mpsc;
 
 use crate::group_protocol::{
     decode_capability, decode_group_capability, decode_public_key, gate_group_message,
-    verify_challenge, verify_registration, GroupClientMsg, GroupEntryWire, GroupProtocolGate,
-    GroupServerMsg, MAX_GROUP_FRAME_BYTES,
+    verify_challenge, verify_registration, CoordinatorCandidateWire, GroupClientMsg,
+    GroupEntryWire, GroupProtocolGate, GroupServerMsg, MAX_GROUP_FRAME_BYTES,
 };
 use crate::group_store::GroupCapability;
 use crate::push;
@@ -256,6 +256,72 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 } else {
                     reply(&tx, generic_error());
                 }
+            }
+            GroupClientMsg::CoordinatorKey => {
+                let public_key = state.coordinator.lock().unwrap().verifying_key();
+                reply(
+                    &tx,
+                    GroupServerMsg::CoordinatorKey {
+                        public_key: hex::encode(public_key.to_bytes()),
+                    },
+                );
+            }
+            GroupClientMsg::CoordinatorSubmit {
+                claimed_base_epoch,
+                candidate,
+            } => {
+                let Some(capability) = authenticated.as_ref() else {
+                    reply(&tx, generic_error());
+                    continue;
+                };
+                if !state.groups.lock().unwrap().can_append(capability) {
+                    reply(&tx, generic_error());
+                    continue;
+                }
+                let result = B64.decode(candidate).map_err(|_| ()).and_then(|candidate| {
+                    state
+                        .coordinator
+                        .lock()
+                        .unwrap()
+                        .submit(
+                            capability.coordination_id,
+                            claimed_base_epoch,
+                            candidate,
+                            now(),
+                        )
+                        .map_err(|_| ())
+                });
+                match result {
+                    Ok(receipt) => {
+                        wake_readers(&state, capability.coordination_id);
+                        reply(
+                            &tx,
+                            GroupServerMsg::CoordinatorReceipt {
+                                receipt: receipt.into(),
+                            },
+                        );
+                    }
+                    Err(()) => reply(&tx, generic_error()),
+                }
+            }
+            GroupClientMsg::CoordinatorFetch { after_sequence } => {
+                let Some(capability) = authenticated.as_ref() else {
+                    reply(&tx, generic_error());
+                    continue;
+                };
+                if !state.groups.lock().unwrap().can_read(capability) {
+                    reply(&tx, generic_error());
+                    continue;
+                }
+                let candidates = state
+                    .coordinator
+                    .lock()
+                    .unwrap()
+                    .fetch(capability.coordination_id, after_sequence)
+                    .into_iter()
+                    .map(CoordinatorCandidateWire::from)
+                    .collect();
+                reply(&tx, GroupServerMsg::CoordinatorCandidates { candidates });
             }
             GroupClientMsg::Hello { .. } => unreachable!("hello handled by protocol gate"),
         }

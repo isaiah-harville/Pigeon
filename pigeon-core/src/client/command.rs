@@ -21,6 +21,7 @@ impl ClientCommand {
         name: impl Into<String>,
         member_identities: Vec<[u8; 32]>,
         relay_url: impl Into<String>,
+        coordinator_public_key: [u8; 32],
         mesh_enabled: bool,
     ) -> Result<Self, Error> {
         let inner = proto::ClientCommand {
@@ -35,6 +36,7 @@ impl ClientCommand {
                         .collect(),
                     relay_url: relay_url.into(),
                     mesh_enabled,
+                    coordinator_public_key: coordinator_public_key.to_vec(),
                 },
             )),
         };

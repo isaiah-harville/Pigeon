@@ -45,6 +45,9 @@ pub(crate) fn validate_client_command(command: &proto::ClientCommand) -> Result<
                 "group members",
             )?;
             check_bytes(create.relay_url.len(), MAX_RELAY_URL_BYTES, "relay url")?;
+            if create.coordinator_public_key.len() != IDENTITY_KEY_BYTES {
+                return Err(Error::InvalidKey);
+            }
             for identity in &create.member_identities {
                 if identity.len() != IDENTITY_KEY_BYTES {
                     return Err(Error::InvalidKey);

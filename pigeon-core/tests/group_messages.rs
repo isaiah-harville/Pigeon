@@ -1,8 +1,8 @@
 use ed25519_dalek::{Signer, SigningKey};
 use pigeon_core::{
-    BufferDisposition, DeliveryLedger, GroupAction, GroupApplication, GroupDeliveryState,
-    GroupEngine, IdentityError, IdentityPurpose, ReservedKeyPackage, SecureIdentity,
-    TransactionalOpenMlsStorage,
+    BufferDisposition, CoordinatorBinding, DeliveryLedger, GroupAction, GroupApplication,
+    GroupDeliveryState, GroupEngine, IdentityError, IdentityPurpose, ReservedKeyPackage,
+    SecureIdentity, TransactionalOpenMlsStorage,
 };
 use prost::Message;
 
@@ -63,7 +63,7 @@ fn joiner_reads_join_epoch_but_not_prejoin_ciphertext() {
         &mut alice_storage,
         "Birds",
         "https://relay.example",
-        [7; 32],
+        CoordinatorBinding::new([7; 32], TestIdentity::new(60).root_public()),
         vec![bob_package, carol_package],
     )
     .unwrap();
@@ -162,7 +162,7 @@ fn removed_member_cannot_read_the_next_epoch() {
         &mut alice_storage,
         "Birds",
         "https://relay.example",
-        [8; 32],
+        CoordinatorBinding::new([8; 32], TestIdentity::new(60).root_public()),
         packages,
     )
     .unwrap();
@@ -225,7 +225,7 @@ fn ciphertext_hints_are_checked_against_authenticated_content() {
         &mut alice_storage,
         "Birds",
         "https://relay.example",
-        [9; 32],
+        CoordinatorBinding::new([9; 32], TestIdentity::new(60).root_public()),
         vec![bob_package, carol_package],
     )
     .unwrap();
@@ -267,7 +267,7 @@ fn processed_secret_tree_state_survives_checkpoint_reload() {
         &mut alice_storage,
         "Birds",
         "https://relay.example",
-        [10; 32],
+        CoordinatorBinding::new([10; 32], TestIdentity::new(60).root_public()),
         vec![bob_package, carol_package],
     )
     .unwrap();

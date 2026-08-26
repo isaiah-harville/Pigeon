@@ -118,6 +118,7 @@ fn failed_send_checkpoint_releases_no_ciphertext_and_retry_is_durable() {
                 "Birds",
                 vec![bob.root_public(), carol.root_public()],
                 "https://relay.example",
+                TestIdentity::new(60).root_public(),
                 false,
             )
             .unwrap(),
@@ -190,6 +191,7 @@ fn relay_and_mesh_copies_emit_one_received_event_and_one_acknowledgement() {
                 "Mesh Birds",
                 vec![bob.root_public(), carol.root_public()],
                 "https://relay.example",
+                TestIdentity::new(60).root_public(),
                 true,
             )
             .unwrap(),

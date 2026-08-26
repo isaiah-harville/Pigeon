@@ -20,6 +20,7 @@ message CreateGroup {
   repeated bytes member_identities = 2;
   string relay_url = 3;
   bool mesh_enabled = 4;
+  bytes coordinator_public_key = 5;
 }
 
 message SendGroupMessage {
@@ -103,6 +104,7 @@ message PendingGroupCreation {
   bool mesh_enabled = 5;
   repeated bytes reserved_key_packages = 6;
   repeated string key_package_request_ids = 7;
+  bytes coordinator_public_key = 8;
 }
 
 message ProcessedGroupMessage {

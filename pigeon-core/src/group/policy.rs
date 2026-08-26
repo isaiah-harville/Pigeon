@@ -1,10 +1,11 @@
 use core::fmt;
 
+use ed25519_dalek::VerifyingKey;
 use prost::Message;
 use unicode_general_category::{GeneralCategory, get_general_category};
 use unicode_normalization::UnicodeNormalization;
 
-use super::{GroupAction, GroupId, PolicyEvent, PolicyEventKind};
+use super::{CoordinatorBinding, GroupAction, GroupId, PolicyEvent, PolicyEventKind};
 use crate::wire::{
     MAX_GROUP_MEMBERS, MAX_GROUP_NAME_BYTES, MAX_GROUP_NAME_SCALARS, MAX_MLS_OBJECT_BYTES, proto,
 };
@@ -24,6 +25,7 @@ pub struct PigeonGroupPolicy {
     name: String,
     relay_url: String,
     coordination_id: [u8; 32],
+    coordinator_public_key: [u8; 32],
     mesh_enabled: bool,
     revision: u64,
     dissolved: bool,
@@ -58,7 +60,7 @@ impl PigeonGroupPolicy {
         additional_members: Vec<[u8; 32]>,
         name: impl Into<String>,
         relay_url: impl Into<String>,
-        coordination_id: [u8; 32],
+        coordinator: CoordinatorBinding,
     ) -> Result<Self, PolicyError> {
         Self::new_with_mesh(
             group_id,
@@ -66,7 +68,7 @@ impl PigeonGroupPolicy {
             additional_members,
             name,
             relay_url,
-            coordination_id,
+            coordinator,
             false,
         )
     }
@@ -77,7 +79,7 @@ impl PigeonGroupPolicy {
         additional_members: Vec<[u8; 32]>,
         name: impl Into<String>,
         relay_url: impl Into<String>,
-        coordination_id: [u8; 32],
+        coordinator: CoordinatorBinding,
         mesh_enabled: bool,
     ) -> Result<Self, PolicyError> {
         let mut members = additional_members;
@@ -92,7 +94,8 @@ impl PigeonGroupPolicy {
             members,
             name: name.into(),
             relay_url: relay_url.into(),
-            coordination_id,
+            coordination_id: coordinator.coordination_id,
+            coordinator_public_key: coordinator.public_key,
             mesh_enabled,
             revision: 0,
             dissolved: false,
@@ -125,6 +128,7 @@ impl PigeonGroupPolicy {
             name: encoded.name,
             relay_url: encoded.relay_url,
             coordination_id: to_identity(&encoded.coordination_id)?,
+            coordinator_public_key: to_identity(&encoded.coordinator_public_key)?,
             mesh_enabled: encoded.mesh_enabled,
             revision: encoded.revision,
             dissolved: encoded.dissolved,
@@ -155,6 +159,10 @@ impl PigeonGroupPolicy {
 
     pub fn coordination_id(&self) -> [u8; 32] {
         self.coordination_id
+    }
+
+    pub fn coordinator_public_key(&self) -> [u8; 32] {
+        self.coordinator_public_key
     }
 
     pub fn mesh_enabled(&self) -> bool {
@@ -262,6 +270,7 @@ impl PigeonGroupPolicy {
             mesh_enabled: self.mesh_enabled,
             revision: self.revision,
             dissolved: self.dissolved,
+            coordinator_public_key: self.coordinator_public_key.to_vec(),
         }
     }
 
@@ -281,6 +290,11 @@ impl PigeonGroupPolicy {
         }
         validate_name(&self.name)?;
         validate_relay(&self.relay_url)?;
+        if self.coordinator_public_key == [0; 32]
+            || VerifyingKey::from_bytes(&self.coordinator_public_key).is_err()
+        {
+            return Err(PolicyError::InvalidRelay);
+        }
         Ok(())
     }
 

@@ -15,6 +15,7 @@ message PigeonGroupPolicy {
   bool mesh_enabled = 10;
   uint64 revision = 11;
   bool dissolved = 12;
+  bytes coordinator_public_key = 13;
 }
 
 enum GroupPolicyChangeKind {
@@ -121,6 +122,21 @@ message GroupEpochFetch {
   bytes group_id = 2;
   uint64 from_epoch = 3;
   uint64 through_epoch = 4;
+}
+
+message CoordinatorReceipt {
+  uint32 version = 1;
+  bytes coordination_id = 2;
+  uint64 sequence = 3;
+  bytes prior_receipt_hash = 4;
+  uint64 claimed_base_epoch = 5;
+  bytes entry_hash = 6;
+  bytes signature = 7;
+}
+
+message CoordinatorCandidate {
+  CoordinatorReceipt receipt = 1;
+  bytes candidate = 2;
 }
 
 message GroupApplicationContent {

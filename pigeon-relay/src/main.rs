@@ -32,6 +32,7 @@ use axum::routing::get;
 use axum::Router;
 
 mod connection;
+mod coordinator_store;
 mod group_connection;
 mod group_protocol;
 mod group_store;
@@ -40,6 +41,7 @@ mod protocol;
 mod push;
 mod state;
 
+use coordinator_store::{CoordinatorConfig, CoordinatorStore};
 use group_store::{GroupStore, GroupStoreConfig};
 use push::PushRegistry;
 use state::{now, AppState, Config, Store};
@@ -52,6 +54,7 @@ async fn expiry_loop(state: AppState) {
         ticker.tick().await;
         mailbox::expire_mailboxes(&state, now().saturating_sub(state.cfg.ttl_secs));
         state.groups.lock().unwrap().expire_at(now());
+        state.coordinator.lock().unwrap().expire_at(now());
     }
 }
 
@@ -60,6 +63,27 @@ fn env_u64(key: &str, default: u64) -> u64 {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
+}
+
+fn coordinator_signer() -> ed25519_dalek::SigningKey {
+    if let Ok(encoded) = std::env::var("PIGEON_COORDINATOR_SIGNING_SEED_HEX") {
+        let bytes = hex::decode(encoded).expect("invalid coordinator signing seed");
+        let seed: [u8; 32] = bytes
+            .try_into()
+            .expect("invalid coordinator signing seed length");
+        return ed25519_dalek::SigningKey::from_bytes(&seed);
+    }
+    #[cfg(not(debug_assertions))]
+    panic!("PIGEON_COORDINATOR_SIGNING_SEED_HEX is required in release builds");
+
+    #[cfg(debug_assertions)]
+    {
+        // Development-only ephemeral key. Release deployments must pin a stable
+        // seed so clients do not observe an unexplained coordinator identity reset.
+        let mut seed = [0_u8; 32];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut seed);
+        ed25519_dalek::SigningKey::from_bytes(&seed)
+    }
 }
 
 #[tokio::main]
@@ -81,6 +105,7 @@ async fn main() {
     }
     let push_min_interval = Duration::from_secs(env_u64("PIGEON_APNS_MIN_INTERVAL_SECS", 30));
     let push = Arc::new(PushRegistry::new(gateway, push_min_interval));
+    let coordinator_signer = coordinator_signer();
 
     let state = AppState {
         mailboxes: Arc::new(Mutex::new(Store::default())),
@@ -98,6 +123,21 @@ async fn main() {
                 as usize,
         }))),
         group_subscribers: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        coordinator: Arc::new(Mutex::new(CoordinatorStore::new(
+            CoordinatorConfig {
+                max_candidates_per_epoch: env_u64("PIGEON_COORDINATOR_MAX_PER_EPOCH", 256) as usize,
+                max_candidate_bytes: env_u64("PIGEON_COORDINATOR_MAX_CANDIDATE_BYTES", 1024 * 1024)
+                    as usize,
+                max_total_bytes: env_u64("PIGEON_COORDINATOR_MAX_TOTAL_BYTES", 256 * 1024 * 1024)
+                    as usize,
+                max_fetch_batch_bytes: env_u64(
+                    "PIGEON_COORDINATOR_MAX_FETCH_BYTES",
+                    4 * 1024 * 1024,
+                ) as usize,
+                ttl_secs: env_u64("PIGEON_COORDINATOR_TTL_SECS", 30 * 24 * 3600),
+            },
+            coordinator_signer,
+        ))),
     };
 
     tokio::spawn(expiry_loop(state.clone()));
@@ -120,6 +160,8 @@ async fn main() {
     axum::serve(listener, app).await.expect("server error");
 }
 
+#[cfg(test)]
+mod coordinator_tests;
 #[cfg(test)]
 mod group_tests;
 #[cfg(test)]

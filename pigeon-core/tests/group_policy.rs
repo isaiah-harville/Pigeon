@@ -1,10 +1,17 @@
-use pigeon_core::{GroupAction, GroupId, PigeonGroupPolicy, PolicyError, validate_transition};
+use ed25519_dalek::SigningKey;
+use pigeon_core::{
+    CoordinatorBinding, GroupAction, GroupId, PigeonGroupPolicy, PolicyError, validate_transition,
+};
 use sha2::{Digest, Sha256};
 
 const OWNER: [u8; 32] = [1; 32];
 const ADMIN: [u8; 32] = [2; 32];
 const MEMBER: [u8; 32] = [3; 32];
 const DAVE: [u8; 32] = [4; 32];
+
+fn coordinator_key() -> [u8; 32] {
+    SigningKey::from_bytes(&[60; 32]).verifying_key().to_bytes()
+}
 
 fn policy() -> PigeonGroupPolicy {
     let mut policy = PigeonGroupPolicy::new(
@@ -13,7 +20,7 @@ fn policy() -> PigeonGroupPolicy {
         vec![ADMIN, MEMBER],
         "Friends",
         "https://relay.example",
-        [8; 32],
+        CoordinatorBinding::new([8; 32], coordinator_key()),
     )
     .unwrap();
     policy = policy
@@ -137,7 +144,7 @@ fn roster_bounds_and_duplicates_are_rejected() {
             vec![OWNER, MEMBER],
             "Friends",
             "https://relay.example",
-            [8; 32],
+            CoordinatorBinding::new([8; 32], coordinator_key()),
         )
         .is_err()
     );
@@ -149,7 +156,7 @@ fn roster_bounds_and_duplicates_are_rejected() {
         members,
         "Friends",
         "https://relay.example",
-        [8; 32],
+        CoordinatorBinding::new([8; 32], coordinator_key()),
     )
     .unwrap();
     assert_eq!(at_cap.members().len(), 128);
@@ -164,6 +171,22 @@ fn roster_bounds_and_duplicates_are_rejected() {
 }
 
 #[test]
+fn coordinator_signing_key_is_required_and_authenticated() {
+    assert_eq!(
+        PigeonGroupPolicy::new(
+            GroupId::from_bytes([9; 32]),
+            OWNER,
+            vec![ADMIN, MEMBER],
+            "Friends",
+            "https://relay.example",
+            CoordinatorBinding::new([8; 32], [0; 32]),
+        ),
+        Err(PolicyError::InvalidRelay)
+    );
+    assert_eq!(policy().coordinator_public_key(), coordinator_key());
+}
+
+#[test]
 fn deterministic_policy_vectors_are_stable() {
     let initial = PigeonGroupPolicy::new(
         GroupId::from_bytes([9; 32]),
@@ -171,7 +194,7 @@ fn deterministic_policy_vectors_are_stable() {
         vec![ADMIN, MEMBER],
         "Friends",
         "https://relay.example",
-        [8; 32],
+        CoordinatorBinding::new([8; 32], coordinator_key()),
     )
     .unwrap();
     let renamed = initial
@@ -201,9 +224,9 @@ fn deterministic_policy_vectors_are_stable() {
     assert_eq!(
         hashes,
         [
-            "7c385d09154df78c3492594b2c41af6dc919a6c36b2a51948e7b2e04ea6891f5",
-            "da8a8ef8ee973fe758c0b27bd83db7e3b777aa44a785e695fd95fe2fac5fd5e1",
-            "a435b3f3a66d4789e4e74eda44cb9eb85498c6883b6193869c410f681a6928c3",
+            "1deedfcb74a9b858ae31523b1cc1c65b234c7bf91562a5fd688fdbc77be9b412",
+            "eaa63b560701be7aced4efc04048f49767aef5e8365839a2a73d3b2d05e46957",
+            "ba1e5be5f7c3d0e0299a25b89629c65dcedafd14ee08e2f16d3fb8a254c89b20",
         ]
     );
 }

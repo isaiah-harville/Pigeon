@@ -12,6 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::mpsc;
 
+use crate::coordinator_store::CoordinatorStore;
 use crate::group_protocol::GroupServerMsg;
 use crate::group_store::GroupStore;
 use crate::protocol::ServerMsg;
@@ -217,6 +218,7 @@ pub struct AppState {
     /// Opaque group traffic is isolated from personal mailbox storage.
     pub groups: Arc<Mutex<GroupStore>>,
     pub group_subscribers: Arc<Mutex<HashMap<[u8; 32], Vec<GroupSubscriber>>>>,
+    pub coordinator: Arc<Mutex<CoordinatorStore>>,
 }
 
 pub struct GroupSubscriber {

@@ -48,10 +48,11 @@ mod wire;
 pub use client::{AppEvent, ClientCommand, ClientOutput, OutboundItem, PigeonClient};
 pub use error::Error;
 pub use group::{
-    Actor, AuthenticatedGroupMessage, BufferDisposition, DeliveryLedger, EpochBuffer, GroupAction,
-    GroupApplication, GroupCiphertext, GroupDeliveryState, GroupEngine, GroupId, GroupMessageId,
-    PendingMutation, PigeonGroupPolicy, PolicyError, PolicyEvent, PolicyEventKind,
-    validate_transition,
+    Actor, AuthenticatedGroupMessage, BufferDisposition, CanonicalCandidate, CoordinatorBinding,
+    CoordinatorChain, CoordinatorChainError, CoordinatorReceipt, DeliveryLedger, EpochBuffer,
+    GroupAction, GroupApplication, GroupCiphertext, GroupDeliveryState, GroupEngine, GroupId,
+    GroupMessageId, PendingMutation, PigeonGroupPolicy, PolicyError, PolicyEvent, PolicyEventKind,
+    coordinator_receipt_transcript, select_canonical_candidate, validate_transition,
 };
 pub use identity::{
     Account, IdentityBundle, IdentityError, IdentityKeypair, IdentityPurpose, Initiation,

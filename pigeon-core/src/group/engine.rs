@@ -3,8 +3,8 @@ use openmls_traits::OpenMlsProvider;
 use tls_codec::{Deserialize, Serialize};
 
 use super::{
-    AuthenticatedGroupMessage, GroupAction, GroupApplication, GroupCiphertext, GroupId,
-    GroupMessageId, PendingMutation, PigeonGroupPolicy, PolicyEvent,
+    AuthenticatedGroupMessage, CoordinatorBinding, GroupAction, GroupApplication, GroupCiphertext,
+    GroupId, GroupMessageId, PendingMutation, PigeonGroupPolicy, PolicyEvent,
 };
 use crate::Error;
 use crate::identity::{
@@ -118,7 +118,7 @@ impl GroupEngine {
         storage: &mut TransactionalOpenMlsStorage,
         name: impl Into<String>,
         relay_url: impl Into<String>,
-        coordination_id: [u8; 32],
+        coordinator: CoordinatorBinding,
         packages: Vec<ReservedKeyPackage>,
     ) -> Result<(Self, Vec<u8>), Error> {
         let (engine, _, welcome) = Self::create_with_mesh(
@@ -126,7 +126,7 @@ impl GroupEngine {
             storage,
             name,
             relay_url,
-            coordination_id,
+            coordinator,
             packages,
             false,
         )?;
@@ -138,7 +138,7 @@ impl GroupEngine {
         storage: &mut TransactionalOpenMlsStorage,
         name: impl Into<String>,
         relay_url: impl Into<String>,
-        coordination_id: [u8; 32],
+        coordinator: CoordinatorBinding,
         packages: Vec<ReservedKeyPackage>,
         mesh_enabled: bool,
     ) -> Result<(Self, Vec<u8>, Vec<u8>), Error> {
@@ -160,7 +160,7 @@ impl GroupEngine {
             member_ids,
             name,
             relay_url,
-            coordination_id,
+            coordinator,
             mesh_enabled,
         )?;
         let binding = MlsIdentityBinding::create(identity)?;

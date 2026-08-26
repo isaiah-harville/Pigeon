@@ -415,6 +415,13 @@ impl GroupStore {
             .is_some_and(|capability| capability.can_read)
     }
 
+    pub fn can_append(&self, capability: &GroupCapability) -> bool {
+        self.groups
+            .get(&capability.coordination_id)
+            .and_then(|group| group.capabilities.get(&capability.public_key))
+            .is_some_and(|capability| capability.can_append)
+    }
+
     pub fn reader_keys(
         &self,
         coordination_id: &[u8; GROUP_ID_BYTES],

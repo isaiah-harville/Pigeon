@@ -11,6 +11,7 @@ use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
 use tokio::sync::mpsc;
 
+use crate::coordinator_store::{CoordinatorConfig, CoordinatorStore};
 use crate::group_store::{GroupStore, GroupStoreConfig};
 use crate::mailbox::{
     ack, expire_mailboxes, flush_queue, publish, register_push, register_subscriber,
@@ -58,6 +59,16 @@ fn bounded_state(
             max_fetch_batch_bytes: MAX_CIPHERTEXT_LEN,
         }))),
         group_subscribers: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        coordinator: Arc::new(Mutex::new(CoordinatorStore::new(
+            CoordinatorConfig {
+                max_candidates_per_epoch: 256,
+                max_candidate_bytes: MAX_CIPHERTEXT_LEN,
+                max_total_bytes,
+                max_fetch_batch_bytes: MAX_CIPHERTEXT_LEN,
+                ttl_secs,
+            },
+            SigningKey::from_bytes(&[99; 32]),
+        ))),
     }
 }
 

@@ -8,6 +8,7 @@ use base64::Engine;
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
+use crate::coordinator_store::{CoordinatorCandidate, CoordinatorReceipt};
 use crate::group_store::{
     CapabilityRegistration, GroupCapability, GroupRegistration, GroupStoreError,
 };
@@ -66,6 +67,14 @@ pub enum GroupClientMsg {
     UnregisterPush {
         token: String,
     },
+    CoordinatorKey,
+    CoordinatorSubmit {
+        claimed_base_epoch: u64,
+        candidate: String,
+    },
+    CoordinatorFetch {
+        after_sequence: u64,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -94,6 +103,15 @@ pub enum GroupServerMsg {
     Error {
         message: String,
     },
+    CoordinatorKey {
+        public_key: String,
+    },
+    CoordinatorReceipt {
+        receipt: CoordinatorReceiptWire,
+    },
+    CoordinatorCandidates {
+        candidates: Vec<CoordinatorCandidateWire>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -101,6 +119,46 @@ pub struct GroupEntryWire {
     pub sequence: u64,
     pub ciphertext: String,
     pub timestamp: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CoordinatorReceiptWire {
+    pub coordination_id: String,
+    pub sequence: u64,
+    pub prior_receipt_hash: String,
+    pub claimed_base_epoch: u64,
+    pub entry_hash: String,
+    pub signature: String,
+}
+
+impl From<CoordinatorReceipt> for CoordinatorReceiptWire {
+    fn from(receipt: CoordinatorReceipt) -> Self {
+        Self {
+            coordination_id: hex::encode(receipt.coordination_id),
+            sequence: receipt.sequence,
+            prior_receipt_hash: hex::encode(receipt.prior_receipt_hash),
+            claimed_base_epoch: receipt.claimed_base_epoch,
+            entry_hash: hex::encode(receipt.entry_hash),
+            signature: B64.encode(receipt.signature),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CoordinatorCandidateWire {
+    pub receipt: CoordinatorReceiptWire,
+    pub candidate: String,
+    pub timestamp: u64,
+}
+
+impl From<CoordinatorCandidate> for CoordinatorCandidateWire {
+    fn from(candidate: CoordinatorCandidate) -> Self {
+        Self {
+            receipt: candidate.receipt.into(),
+            candidate: B64.encode(candidate.candidate),
+            timestamp: candidate.timestamp,
+        }
+    }
 }
 
 pub enum GroupProtocolGate {

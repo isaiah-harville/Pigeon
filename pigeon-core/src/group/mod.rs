@@ -2,6 +2,7 @@
 
 mod action;
 mod buffer;
+mod coordinator;
 mod delivery;
 mod engine;
 mod id;
@@ -11,6 +12,10 @@ mod policy;
 
 pub use action::{Actor, GroupAction, PolicyEvent, PolicyEventKind};
 pub use buffer::{BufferDisposition, EpochBuffer};
+pub use coordinator::{
+    CanonicalCandidate, CoordinatorBinding, CoordinatorChain, CoordinatorChainError,
+    CoordinatorReceipt, coordinator_receipt_transcript, select_canonical_candidate,
+};
 pub use delivery::{DeliveryLedger, GroupDeliveryState};
 pub use engine::GroupEngine;
 pub use id::GroupId;

@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 
 use crate::Error;
 use crate::client::{AppEvent, ClientCommand, ClientOutput, OutboundItem};
-use crate::group::{GroupApplication, GroupEngine, GroupId, PigeonGroupPolicy};
+use crate::group::{CoordinatorBinding, GroupApplication, GroupEngine, GroupId, PigeonGroupPolicy};
 use crate::identity::{IdentityPurpose, ReservedKeyPackage, SecureIdentity};
 use crate::storage::TransactionalOpenMlsStorage;
 use crate::storage::{SealedCheckpoint, StateStore, StorageError};
@@ -125,7 +125,14 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             members,
             create.name.clone(),
             create.relay_url.clone(),
-            [0; 32],
+            CoordinatorBinding::new(
+                [0; 32],
+                create
+                    .coordinator_public_key
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| Error::InvalidKey)?,
+            ),
         )?;
         let request_ids: Vec<_> = (0..create.member_identities.len())
             .map(|index| format!("{command_id}:key-package:{index}"))
@@ -140,6 +147,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 mesh_enabled: create.mesh_enabled,
                 reserved_key_packages: vec![Vec::new(); create.member_identities.len()],
                 key_package_request_ids: request_ids.clone(),
+                coordinator_public_key: create.coordinator_public_key.clone(),
             });
         output.outbound.extend(
             create
@@ -256,7 +264,14 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             &mut mls_storage,
             draft.name,
             draft.relay_url,
-            coordination_id,
+            CoordinatorBinding::new(
+                coordination_id,
+                draft
+                    .coordinator_public_key
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| Error::InvalidKey)?,
+            ),
             packages,
             draft.mesh_enabled,
         )?;

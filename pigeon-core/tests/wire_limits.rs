@@ -24,6 +24,10 @@ fn excessive_repeated_members_are_rejected_after_bounded_decode() {
                 member_identities: vec![vec![7u8; 32]; MAX_GROUP_MEMBERS + 1],
                 relay_url: "https://relay.example".into(),
                 mesh_enabled: false,
+                coordinator_public_key: ed25519_dalek::SigningKey::from_bytes(&[60; 32])
+                    .verifying_key()
+                    .to_bytes()
+                    .to_vec(),
             },
         )),
     };

@@ -1,7 +1,7 @@
 use ed25519_dalek::{Signer, SigningKey};
 use pigeon_core::{
-    GroupAction, GroupEngine, IdentityError, IdentityPurpose, PolicyEventKind, ReservedKeyPackage,
-    SecureIdentity, TransactionalOpenMlsStorage,
+    CoordinatorBinding, GroupAction, GroupEngine, IdentityError, IdentityPurpose, PolicyEventKind,
+    ReservedKeyPackage, SecureIdentity, TransactionalOpenMlsStorage,
 };
 
 struct TestIdentity {
@@ -59,7 +59,7 @@ fn three_members_join_and_merge_an_owner_rename() {
         &mut alice_storage,
         "Bird Watchers",
         "https://relay.example",
-        [9; 32],
+        CoordinatorBinding::new([9; 32], TestIdentity::new(60).root_public()),
         vec![bob_package, carol_package],
     )
     .unwrap();
@@ -134,7 +134,7 @@ fn membership_and_admin_changes_share_one_authenticated_commit() {
         &mut alice_storage,
         "Four Birds",
         "https://relay.example",
-        [19; 32],
+        CoordinatorBinding::new([19; 32], TestIdentity::new(60).root_public()),
         vec![bob_package, carol_package],
     )
     .unwrap();
@@ -277,7 +277,7 @@ fn ordinary_member_leave_requires_their_signed_proposal_and_another_committer() 
         &mut alice_storage,
         "Leaving Birds",
         "https://relay.example",
-        [29; 32],
+        CoordinatorBinding::new([29; 32], TestIdentity::new(60).root_public()),
         vec![bob_package, carol_package],
     )
     .unwrap();
@@ -381,7 +381,7 @@ fn owner_settings_and_dissolution_are_canonical_mls_epochs() {
         &mut alice_storage,
         "Settings Birds",
         "https://relay.example",
-        [39; 32],
+        CoordinatorBinding::new([39; 32], TestIdentity::new(60).root_public()),
         vec![bob_package, carol_package],
     )
     .unwrap();
@@ -454,7 +454,7 @@ fn group_creation_accepts_the_three_and_128_member_boundaries() {
             &mut owner_storage,
             format!("{member_count} Birds"),
             "https://relay.example",
-            [49; 32],
+            CoordinatorBinding::new([49; 32], TestIdentity::new(60).root_public()),
             packages,
         )
         .unwrap();

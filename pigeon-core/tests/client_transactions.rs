@@ -52,6 +52,7 @@ fn create_group() -> ClientCommand {
             TestIdentity::new(3).root_public(),
         ],
         "https://relay.example",
+        TestIdentity::new(60).root_public(),
         false,
     )
     .unwrap()
@@ -169,6 +170,7 @@ fn one_reserved_key_package_cannot_fill_two_group_drafts() {
                     TestIdentity::new(3).root_public(),
                 ],
                 "https://relay.example",
+                TestIdentity::new(60).root_public(),
                 false,
             )
             .unwrap(),
