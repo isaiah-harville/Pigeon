@@ -8,6 +8,27 @@ use super::store::{
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
+use pigeon_core::{
+    GroupId, GroupRelayRegistration, IdentityError, IdentityPurpose, SecureIdentity,
+};
+
+struct CoreIdentity(SigningKey);
+
+impl SecureIdentity for CoreIdentity {
+    fn ensure_public_key(&self, purpose: IdentityPurpose) -> Result<[u8; 32], IdentityError> {
+        match purpose {
+            IdentityPurpose::GroupCapability(_) => Ok(self.0.verifying_key().to_bytes()),
+            _ => Err(IdentityError::Unavailable),
+        }
+    }
+
+    fn sign(&self, purpose: IdentityPurpose, message: &[u8]) -> Result<[u8; 64], IdentityError> {
+        match purpose {
+            IdentityPurpose::GroupCapability(_) => Ok(self.0.sign(message).to_bytes()),
+            _ => Err(IdentityError::Unavailable),
+        }
+    }
+}
 
 fn config() -> Config {
     Config {
@@ -165,6 +186,38 @@ fn group_registration_and_challenge_require_valid_capability_signatures() {
         &[9; 32],
         &challenge_signature
     ));
+}
+
+#[test]
+fn relay_accepts_the_registration_emitted_by_core() {
+    let owner = CoreIdentity(SigningKey::from_bytes(&[71; 32]));
+    let registration = GroupRelayRegistration::create(
+        &owner,
+        GroupId::from_bytes([72; 32]),
+        [73; 32],
+        [
+            SigningKey::from_bytes(&[74; 32]).verifying_key().to_bytes(),
+            SigningKey::from_bytes(&[75; 32]).verifying_key().to_bytes(),
+        ],
+    )
+    .unwrap();
+    let capabilities = registration
+        .capabilities()
+        .iter()
+        .map(|capability| CapabilityWire {
+            public_key: hex::encode(capability.public_key()),
+            can_append: capability.can_append(),
+            can_read: capability.can_read(),
+            can_control: capability.can_control(),
+        })
+        .collect::<Vec<_>>();
+
+    assert!(verify_registration(
+        &hex::encode(registration.coordination_id()),
+        &capabilities,
+        &B64.encode(registration.signature()),
+    )
+    .is_ok());
 }
 
 #[test]

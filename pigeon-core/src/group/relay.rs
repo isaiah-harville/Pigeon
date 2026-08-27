@@ -43,7 +43,7 @@ pub struct GroupRelayRegistration {
 }
 
 impl GroupRelayRegistration {
-    pub(crate) fn create(
+    pub fn create(
         identity: &impl SecureIdentity,
         group_id: GroupId,
         coordination_id: [u8; 32],
@@ -101,6 +101,10 @@ impl GroupRelayRegistration {
 
     pub fn capabilities(&self) -> &[GroupRelayCapability] {
         &self.capabilities
+    }
+
+    pub fn signature(&self) -> [u8; 64] {
+        self.signature
     }
 
     pub fn encode(&self) -> Vec<u8> {

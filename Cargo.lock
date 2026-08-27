@@ -2128,6 +2128,7 @@ dependencies = [
  "futures-util",
  "hex",
  "jsonwebtoken",
+ "pigeon-core",
  "rand 0.8.8",
  "reqwest",
  "serde",
