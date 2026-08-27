@@ -50,6 +50,15 @@ message GroupJoinMaterial {
   GroupMemberKeys member_keys = 5;
 }
 
+message GroupJoinRequest {
+  uint32 version = 1;
+  bytes group_id = 2;
+  bytes coordination_id = 3;
+  bytes creator_identity = 4;
+  string relay_url = 5;
+  bytes signature = 6;
+}
+
 message ContactCard {
   uint32 version = 1;
   IdentityBundle identity = 2;

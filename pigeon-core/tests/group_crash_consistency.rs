@@ -2,9 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use ed25519_dalek::{Signer, SigningKey};
 use pigeon_core::{
-    ClientCommand, Error, GroupCiphertext, GroupId, IdentityError, IdentityPurpose, PigeonClient,
-    ReservedKeyPackage, SealedCheckpoint, SecureIdentity, StateStore, StorageError,
-    TransactionalOpenMlsStorage, wire_proto,
+    ClientCommand, Error, GroupCiphertext, GroupId, GroupJoinMaterial, GroupJoinRequest,
+    IdentityError, IdentityPurpose, PigeonClient, SealedCheckpoint, SecureIdentity, StateStore,
+    StorageError, TransactionalOpenMlsStorage, wire_proto,
 };
 use prost::Message;
 use sha2::{Digest, Sha256};
@@ -12,6 +12,8 @@ use sha2::{Digest, Sha256};
 struct TestIdentity {
     root: SigningKey,
     mls: SigningKey,
+    capability: SigningKey,
+    recovery: SigningKey,
 }
 
 impl TestIdentity {
@@ -19,6 +21,8 @@ impl TestIdentity {
         Self {
             root: SigningKey::from_bytes(&[byte; 32]),
             mls: SigningKey::from_bytes(&[byte.wrapping_add(64); 32]),
+            capability: SigningKey::from_bytes(&[byte.wrapping_add(96); 32]),
+            recovery: SigningKey::from_bytes(&[byte.wrapping_add(128); 32]),
         }
     }
 
@@ -32,6 +36,8 @@ impl SecureIdentity for TestIdentity {
         Ok(match purpose {
             IdentityPurpose::Root => self.root.verifying_key().to_bytes(),
             IdentityPurpose::Mls => self.mls.verifying_key().to_bytes(),
+            IdentityPurpose::GroupCapability(_) => self.capability.verifying_key().to_bytes(),
+            IdentityPurpose::GroupRecovery(_) => self.recovery.verifying_key().to_bytes(),
             _ => return Err(IdentityError::Unavailable),
         })
     }
@@ -40,6 +46,8 @@ impl SecureIdentity for TestIdentity {
         let key = match purpose {
             IdentityPurpose::Root => &self.root,
             IdentityPurpose::Mls => &self.mls,
+            IdentityPurpose::GroupCapability(_) => &self.capability,
+            IdentityPurpose::GroupRecovery(_) => &self.recovery,
             _ => return Err(IdentityError::Unavailable),
         };
         Ok(key.sign(message).to_bytes())
@@ -98,6 +106,24 @@ impl StateStore for SwitchableStore {
     }
 }
 
+fn issue_join_material(
+    item: &pigeon_core::OutboundItem,
+    member: &TestIdentity,
+    storage: &mut TransactionalOpenMlsStorage,
+) -> GroupJoinMaterial {
+    let item = wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap();
+    let request = GroupJoinRequest::decode(&item.payload).unwrap();
+    assert_eq!(item.destination, member.root_public());
+    GroupJoinMaterial::issue(
+        member,
+        request.creator_identity(),
+        request.group_id(),
+        request.coordination_id(),
+        storage,
+    )
+    .unwrap()
+}
+
 #[test]
 fn failed_send_checkpoint_releases_no_ciphertext_and_retry_is_durable() {
     let owner = TestIdentity::new(1);
@@ -105,13 +131,9 @@ fn failed_send_checkpoint_releases_no_ciphertext_and_retry_is_durable() {
     let carol = TestIdentity::new(3);
     let mut bob_storage = TransactionalOpenMlsStorage::new();
     let mut carol_storage = TransactionalOpenMlsStorage::new();
-    let bob_package =
-        ReservedKeyPackage::issue(&bob, owner.root_public(), &mut bob_storage).unwrap();
-    let carol_package =
-        ReservedKeyPackage::issue(&carol, owner.root_public(), &mut carol_storage).unwrap();
     let store = SwitchableStore::default();
     let mut client = PigeonClient::new(store.clone(), owner).unwrap();
-    client
+    let pending = client
         .execute(
             ClientCommand::create_group(
                 "create",
@@ -124,22 +146,24 @@ fn failed_send_checkpoint_releases_no_ciphertext_and_retry_is_durable() {
             .unwrap(),
         )
         .unwrap();
+    let bob_material = issue_join_material(&pending.outbound[0], &bob, &mut bob_storage);
+    let carol_material = issue_join_material(&pending.outbound[1], &carol, &mut carol_storage);
     client
         .execute(
-            ClientCommand::apply_key_package(
+            ClientCommand::apply_group_join_material(
                 "bob-package",
-                "create:key-package:0",
-                bob_package.encode(),
+                "create:join:0",
+                bob_material.encode(),
             )
             .unwrap(),
         )
         .unwrap();
     let created = client
         .execute(
-            ClientCommand::apply_key_package(
+            ClientCommand::apply_group_join_material(
                 "carol-package",
-                "create:key-package:1",
-                carol_package.encode(),
+                "create:join:1",
+                carol_material.encode(),
             )
             .unwrap(),
         )
@@ -180,11 +204,8 @@ fn relay_and_mesh_copies_emit_one_received_event_and_one_acknowledgement() {
     let carol = TestIdentity::new(13);
     let mut bob_mls = TransactionalOpenMlsStorage::new();
     let mut carol_mls = TransactionalOpenMlsStorage::new();
-    let bob_package = ReservedKeyPackage::issue(&bob, owner.root_public(), &mut bob_mls).unwrap();
-    let carol_package =
-        ReservedKeyPackage::issue(&carol, owner.root_public(), &mut carol_mls).unwrap();
     let mut owner_client = PigeonClient::new(SwitchableStore::default(), owner).unwrap();
-    owner_client
+    let pending = owner_client
         .execute(
             ClientCommand::create_group(
                 "create-mesh",
@@ -197,22 +218,24 @@ fn relay_and_mesh_copies_emit_one_received_event_and_one_acknowledgement() {
             .unwrap(),
         )
         .unwrap();
+    let bob_material = issue_join_material(&pending.outbound[0], &bob, &mut bob_mls);
+    let carol_material = issue_join_material(&pending.outbound[1], &carol, &mut carol_mls);
     owner_client
         .execute(
-            ClientCommand::apply_key_package(
+            ClientCommand::apply_group_join_material(
                 "mesh-bob-package",
-                "create-mesh:key-package:0",
-                bob_package.encode(),
+                "create-mesh:join:0",
+                bob_material.encode(),
             )
             .unwrap(),
         )
         .unwrap();
     let created = owner_client
         .execute(
-            ClientCommand::apply_key_package(
+            ClientCommand::apply_group_join_material(
                 "mesh-carol-package",
-                "create-mesh:key-package:1",
-                carol_package.encode(),
+                "create-mesh:join:1",
+                carol_material.encode(),
             )
             .unwrap(),
         )

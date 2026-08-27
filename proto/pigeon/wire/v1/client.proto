@@ -63,9 +63,9 @@ enum OutboundKind {
   OUTBOUND_KIND_PAIRWISE = 1;
   OUTBOUND_KIND_GROUP_MESSAGE = 2;
   OUTBOUND_KIND_GROUP_COORDINATOR = 3;
-  OUTBOUND_KIND_KEY_PACKAGE_REQUEST = 4;
+  OUTBOUND_KIND_GROUP_JOIN_REQUEST = 4;
   OUTBOUND_KIND_MESH = 5;
-  OUTBOUND_KIND_KEY_PACKAGE = 6;
+  OUTBOUND_KIND_GROUP_JOIN_MATERIAL = 6;
   OUTBOUND_KIND_GROUP_WELCOME = 7;
 }
 
@@ -102,9 +102,11 @@ message PendingGroupCreation {
   repeated bytes member_identities = 3;
   string relay_url = 4;
   bool mesh_enabled = 5;
-  repeated bytes reserved_key_packages = 6;
-  repeated string key_package_request_ids = 7;
+  repeated bytes join_materials = 6;
+  repeated string join_request_ids = 7;
   bytes coordinator_public_key = 8;
+  bytes group_id = 9;
+  bytes coordination_id = 10;
 }
 
 message ProcessedGroupMessage {

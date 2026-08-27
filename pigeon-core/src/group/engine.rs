@@ -22,6 +22,14 @@ pub struct GroupEngine {
     pending: Option<PendingMutation>,
 }
 
+pub(crate) struct GroupCreationConfig {
+    pub group_id: GroupId,
+    pub name: String,
+    pub relay_url: String,
+    pub coordinator: CoordinatorBinding,
+    pub mesh_enabled: bool,
+}
+
 impl GroupEngine {
     pub(crate) fn restore(
         storage: &TransactionalOpenMlsStorage,
@@ -121,26 +129,28 @@ impl GroupEngine {
         coordinator: CoordinatorBinding,
         packages: Vec<ReservedKeyPackage>,
     ) -> Result<(Self, Vec<u8>), Error> {
-        let (engine, _, welcome) = Self::create_with_mesh(
+        let mut id = [0_u8; 32];
+        getrandom::getrandom(&mut id).map_err(|_| Error::Entropy)?;
+        let (engine, _, welcome) = Self::create_configured(
             identity,
             storage,
-            name,
-            relay_url,
-            coordinator,
+            GroupCreationConfig {
+                group_id: GroupId::from_bytes(id),
+                name: name.into(),
+                relay_url: relay_url.into(),
+                coordinator,
+                mesh_enabled: false,
+            },
             packages,
-            false,
         )?;
         Ok((engine, welcome))
     }
 
-    pub(crate) fn create_with_mesh<I: SecureIdentity>(
+    pub(crate) fn create_configured<I: SecureIdentity>(
         identity: &I,
         storage: &mut TransactionalOpenMlsStorage,
-        name: impl Into<String>,
-        relay_url: impl Into<String>,
-        coordinator: CoordinatorBinding,
+        config: GroupCreationConfig,
         packages: Vec<ReservedKeyPackage>,
-        mesh_enabled: bool,
     ) -> Result<(Self, Vec<u8>, Vec<u8>), Error> {
         let owner = identity.ensure_public_key(crate::IdentityPurpose::Root)?;
         let mut member_ids = Vec::with_capacity(packages.len());
@@ -151,23 +161,22 @@ impl GroupEngine {
             key_packages.push(package.validated_key_package()?);
         }
 
-        let mut id = [0_u8; 32];
-        getrandom::getrandom(&mut id).map_err(|_| Error::Entropy)?;
-        let group_id = GroupId::from_bytes(id);
         let policy = PigeonGroupPolicy::new_with_mesh(
-            group_id,
+            config.group_id,
             owner,
             member_ids,
-            name,
-            relay_url,
-            coordinator,
-            mesh_enabled,
+            config.name,
+            config.relay_url,
+            config.coordinator,
+            config.mesh_enabled,
         )?;
         let binding = MlsIdentityBinding::create(identity)?;
         let signer = PlatformMlsSigner(identity);
         let provider = storage.provider();
         let mut group = MlsGroup::builder()
-            .with_group_id(openmls::prelude::GroupId::from_slice(group_id.as_bytes()))
+            .with_group_id(openmls::prelude::GroupId::from_slice(
+                config.group_id.as_bytes(),
+            ))
             .ciphersuite(CIPHERSUITE)
             .with_wire_format_policy(PURE_CIPHERTEXT_WIRE_FORMAT_POLICY)
             .use_ratchet_tree_extension(true)
@@ -202,7 +211,7 @@ impl GroupEngine {
 
         Ok((
             Self {
-                group_id,
+                group_id: config.group_id,
                 policy,
                 epoch: group.epoch().as_u64(),
                 pending: None,

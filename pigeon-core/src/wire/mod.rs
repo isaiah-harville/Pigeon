@@ -84,7 +84,8 @@ pub(crate) fn validate_client_command(command: &proto::ClientCommand) -> Result<
             if inbound.request_id.is_empty()
                 || !matches!(
                     kind,
-                    proto::OutboundKind::KeyPackage
+                    proto::OutboundKind::GroupJoinRequest
+                        | proto::OutboundKind::GroupJoinMaterial
                         | proto::OutboundKind::GroupWelcome
                         | proto::OutboundKind::GroupMessage
                 )

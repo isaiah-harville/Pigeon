@@ -1,7 +1,7 @@
 use ed25519_dalek::{Signature, VerifyingKey};
 use prost::Message;
 
-use super::{IdentityPurpose, ReservedKeyPackage, SecureIdentity};
+use super::super::{IdentityPurpose, ReservedKeyPackage, SecureIdentity};
 use crate::Error;
 use crate::group::GroupId;
 use crate::storage::TransactionalOpenMlsStorage;
@@ -193,6 +193,14 @@ impl GroupJoinMaterial {
 
     pub fn recovery_public_key(&self) -> [u8; 32] {
         self.member_keys.recovery_public_key()
+    }
+
+    pub(crate) fn package_hash(&self) -> [u8; 32] {
+        self.key_package.package_hash()
+    }
+
+    pub(crate) fn key_package(&self) -> ReservedKeyPackage {
+        self.key_package.clone()
     }
 
     pub fn encode(&self) -> Vec<u8> {

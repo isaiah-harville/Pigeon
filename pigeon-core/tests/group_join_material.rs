@@ -1,6 +1,6 @@
 use ed25519_dalek::{Signer, SigningKey};
 use pigeon_core::{
-    GroupId, GroupJoinMaterial, IdentityError, IdentityPurpose, SecureIdentity,
+    GroupId, GroupJoinMaterial, GroupJoinRequest, IdentityError, IdentityPurpose, SecureIdentity,
     TransactionalOpenMlsStorage,
 };
 
@@ -44,6 +44,24 @@ impl SecureIdentity for TestIdentity {
     fn sign(&self, purpose: IdentityPurpose, message: &[u8]) -> Result<[u8; 64], IdentityError> {
         Ok(self.key(purpose)?.sign(message).to_bytes())
     }
+}
+
+#[test]
+fn creator_signs_the_exact_group_join_request() {
+    let creator = TestIdentity::new(1);
+    let request = GroupJoinRequest::create(
+        &creator,
+        GroupId::from_bytes([7; 32]),
+        [9; 32],
+        "https://relay.example",
+    )
+    .unwrap();
+    let decoded = GroupJoinRequest::decode(&request.encode()).unwrap();
+
+    assert_eq!(decoded.creator_identity(), creator.root_public_key());
+    assert_eq!(decoded.group_id(), GroupId::from_bytes([7; 32]));
+    assert_eq!(decoded.coordination_id(), [9; 32]);
+    assert_eq!(decoded.relay_url(), "https://relay.example");
 }
 
 #[test]

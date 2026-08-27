@@ -48,18 +48,45 @@ impl ClientCommand {
         self.inner.encode_to_vec()
     }
 
-    pub fn apply_key_package(
+    pub fn apply_group_join_request(
         command_id: impl Into<String>,
         request_id: impl Into<String>,
-        package: Vec<u8>,
+        request: Vec<u8>,
+    ) -> Result<Self, Error> {
+        Self::apply_inbound(
+            command_id,
+            request_id,
+            proto::OutboundKind::GroupJoinRequest,
+            request,
+        )
+    }
+
+    pub fn apply_group_join_material(
+        command_id: impl Into<String>,
+        request_id: impl Into<String>,
+        material: Vec<u8>,
+    ) -> Result<Self, Error> {
+        Self::apply_inbound(
+            command_id,
+            request_id,
+            proto::OutboundKind::GroupJoinMaterial,
+            material,
+        )
+    }
+
+    fn apply_inbound(
+        command_id: impl Into<String>,
+        request_id: impl Into<String>,
+        kind: proto::OutboundKind,
+        payload: Vec<u8>,
     ) -> Result<Self, Error> {
         let inner = proto::ClientCommand {
             version: PROTOCOL_VERSION,
             command_id: command_id.into(),
             body: Some(proto::client_command::Body::ApplyInbound(
                 proto::ApplyInbound {
-                    kind: proto::OutboundKind::KeyPackage as i32,
-                    payload: package,
+                    kind: kind as i32,
+                    payload,
                     request_id: request_id.into(),
                 },
             )),
