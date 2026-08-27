@@ -4,7 +4,8 @@ use super::checkpoint::stored_group;
 use crate::Error;
 use crate::client::{AppEvent, ClientOutput, OutboundItem};
 use crate::group::{
-    CoordinatorBinding, GroupCreationConfig, GroupEngine, GroupId, PigeonGroupPolicy,
+    CoordinatorBinding, GroupCreationConfig, GroupEngine, GroupId, GroupRelayRegistration,
+    PigeonGroupPolicy,
 };
 use crate::identity::{GroupJoinMaterial, GroupJoinRequest, IdentityPurpose, SecureIdentity};
 use crate::storage::{StateStore, TransactionalOpenMlsStorage};
@@ -204,6 +205,14 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             .iter()
             .map(GroupJoinMaterial::key_package)
             .collect();
+        let registration = GroupRelayRegistration::create(
+            &self.identity,
+            group_id,
+            coordination_id,
+            materials
+                .iter()
+                .map(GroupJoinMaterial::capability_public_key),
+        )?;
         let mut mls_storage = if candidate.openmls_checkpoint.is_empty() {
             TransactionalOpenMlsStorage::new()
         } else {
@@ -252,6 +261,15 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         output.outbound.push(OutboundItem {
             inner: proto::OutboundItem {
                 item_id: format!("{command_id}:register"),
+                kind: proto::OutboundKind::GroupRelayRegistration as i32,
+                relay_url: policy.relay_url().to_owned(),
+                destination: policy.coordination_id().to_vec(),
+                payload: registration.encode(),
+            },
+        });
+        output.outbound.push(OutboundItem {
+            inner: proto::OutboundItem {
+                item_id: format!("{command_id}:coordinate"),
                 kind: proto::OutboundKind::GroupCoordinator as i32,
                 relay_url: policy.relay_url().to_owned(),
                 destination: policy.coordination_id().to_vec(),

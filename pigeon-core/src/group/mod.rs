@@ -9,6 +9,7 @@ mod id;
 mod message;
 mod pending;
 mod policy;
+mod relay;
 
 pub use action::{Actor, GroupAction, PolicyEvent, PolicyEventKind};
 pub use buffer::{BufferDisposition, EpochBuffer};
@@ -23,3 +24,4 @@ pub use id::GroupId;
 pub use message::{AuthenticatedGroupMessage, GroupApplication, GroupCiphertext, GroupMessageId};
 pub use pending::PendingMutation;
 pub use policy::{PigeonGroupPolicy, PolicyError, validate_transition};
+pub use relay::{GroupRelayCapability, GroupRelayRegistration};

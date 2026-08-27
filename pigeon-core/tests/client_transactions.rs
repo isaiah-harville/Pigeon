@@ -1,7 +1,7 @@
 use ed25519_dalek::{Signer, SigningKey};
 use pigeon_core::{
-    ClientCommand, Error, GroupJoinMaterial, GroupJoinRequest, IdentityError, IdentityPurpose,
-    MemoryStateStore, PigeonClient, PigeonGroupPolicy, SecureIdentity, StateStore,
+    ClientCommand, Error, GroupJoinMaterial, GroupJoinRequest, GroupRelayRegistration,
+    IdentityError, IdentityPurpose, MemoryStateStore, PigeonClient, SecureIdentity, StateStore,
     TransactionalOpenMlsStorage, wire_proto,
 };
 use prost::Message;
@@ -158,7 +158,7 @@ fn final_join_material_atomically_creates_the_real_mls_group() {
         .unwrap();
     assert_eq!(created.checkpoint_generation, 3);
     assert_eq!(created.events.len(), 1);
-    assert_eq!(created.outbound.len(), 3);
+    assert_eq!(created.outbound.len(), 4);
     let event = wire_proto::AppEvent::decode(created.events[0].encode().as_slice()).unwrap();
     let wire_proto::app_event::Body::GroupCreated(group) = event.body.unwrap() else {
         panic!("final join material must emit GroupCreated");
@@ -172,14 +172,34 @@ fn final_join_material_atomically_creates_the_real_mls_group() {
         .iter()
         .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
         .collect();
-    let registration = outbound
+    let registration_item = outbound
         .iter()
         .find(|item| item.item_id.ends_with(":register"))
         .unwrap();
-    assert!(
-        PigeonGroupPolicy::decode(&registration.payload).is_err(),
-        "the zero-knowledge coordinator must receive an opaque MLS commit, not plaintext policy"
+    assert_eq!(
+        registration_item.kind,
+        wire_proto::OutboundKind::GroupRelayRegistration as i32
     );
+    let registration = GroupRelayRegistration::decode(&registration_item.payload).unwrap();
+    registration.verify().unwrap();
+    assert_eq!(registration.capabilities().len(), 3);
+    assert_eq!(
+        registration
+            .capabilities()
+            .iter()
+            .filter(|capability| capability.can_control())
+            .count(),
+        1
+    );
+    let coordinator = outbound
+        .iter()
+        .find(|item| item.item_id.ends_with(":coordinate"))
+        .unwrap();
+    assert_eq!(
+        coordinator.kind,
+        wire_proto::OutboundKind::GroupCoordinator as i32
+    );
+    assert_ne!(coordinator.payload, registration_item.payload);
     assert_eq!(client.checkpoint_generation(), 3);
 }
 

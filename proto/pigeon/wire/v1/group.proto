@@ -124,6 +124,20 @@ message GroupEpochFetch {
   uint64 through_epoch = 4;
 }
 
+message GroupRelayCapability {
+  bytes public_key = 1;
+  bool can_append = 2;
+  bool can_read = 3;
+  bool can_control = 4;
+}
+
+message GroupRelayRegistration {
+  uint32 version = 1;
+  bytes coordination_id = 2;
+  repeated GroupRelayCapability capabilities = 3;
+  bytes signature = 4;
+}
+
 message CoordinatorReceipt {
   uint32 version = 1;
   bytes coordination_id = 2;
