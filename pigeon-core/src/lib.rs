@@ -55,9 +55,9 @@ pub use group::{
     coordinator_receipt_transcript, select_canonical_candidate, validate_transition,
 };
 pub use identity::{
-    Account, IdentityBundle, IdentityError, IdentityKeypair, IdentityPurpose, Initiation,
-    KeyPackagePool, MlsIdentityBinding, PrekeyBundle, ReservedKeyPackage, SecureIdentity, Session,
-    decode_olm_message, encode_olm_message,
+    Account, GroupJoinMaterial, GroupMemberKeys, IdentityBundle, IdentityError, IdentityKeypair,
+    IdentityPurpose, Initiation, KeyPackagePool, MlsIdentityBinding, PrekeyBundle,
+    ReservedKeyPackage, SecureIdentity, Session, decode_olm_message, encode_olm_message,
 };
 pub use storage::{
     MemoryStateStore, SealedCheckpoint, StateStore, StorageError, TransactionalOpenMlsStorage,

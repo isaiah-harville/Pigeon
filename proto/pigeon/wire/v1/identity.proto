@@ -31,6 +31,25 @@ message ReservedKeyPackage {
   bytes reservation_signature = 5;
 }
 
+message GroupMemberKeys {
+  uint32 version = 1;
+  bytes group_id = 2;
+  bytes coordination_id = 3;
+  bytes intended_creator = 4;
+  bytes member_identity = 5;
+  bytes capability_public_key = 6;
+  bytes recovery_public_key = 7;
+  bytes binding_signature = 8;
+}
+
+message GroupJoinMaterial {
+  uint32 version = 1;
+  bytes group_id = 2;
+  bytes coordination_id = 3;
+  bytes reserved_key_package = 4;
+  GroupMemberKeys member_keys = 5;
+}
+
 message ContactCard {
   uint32 version = 1;
   IdentityBundle identity = 2;
