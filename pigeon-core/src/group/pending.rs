@@ -17,6 +17,10 @@ impl PendingMutation {
         &self.event
     }
 
+    pub fn next_policy(&self) -> &PigeonGroupPolicy {
+        &self.policy
+    }
+
     pub fn welcome(&self) -> Option<&[u8]> {
         self.welcome.as_deref()
     }

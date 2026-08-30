@@ -68,6 +68,7 @@ enum OutboundKind {
   OUTBOUND_KIND_GROUP_JOIN_MATERIAL = 6;
   OUTBOUND_KIND_GROUP_WELCOME = 7;
   OUTBOUND_KIND_GROUP_RELAY_REGISTRATION = 8;
+  OUTBOUND_KIND_GROUP_RELAY_CONTROL = 9;
 }
 
 message OutboundItem {
@@ -95,6 +96,7 @@ message ClientCheckpoint {
   repeated ProcessedGroupMessage processed_group_messages = 8;
   repeated StoredDeliveryLedger delivery_ledgers = 9;
   repeated BufferedGroupMessage buffered_group_messages = 10;
+  repeated PendingGroupMutation pending_group_mutations = 11;
 }
 
 message PendingGroupCreation {
@@ -131,4 +133,14 @@ message BufferedGroupMessage {
   uint64 epoch = 2;
   bytes message_id = 3;
   bytes ciphertext = 4;
+}
+
+message PendingGroupMutation {
+  bytes group_id = 1;
+  uint64 base_epoch = 2;
+  bytes commit = 3;
+  bytes next_policy = 4;
+  GroupPolicyChangeKind event_kind = 5;
+  bytes actor_identity = 6;
+  bytes subject_identity = 7;
 }

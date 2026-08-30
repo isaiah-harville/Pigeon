@@ -1,6 +1,7 @@
 mod checkpoint;
 mod group_creation;
 mod group_messaging;
+mod group_policy;
 
 use checkpoint::{decode_checkpoint, encode_checkpoint};
 
@@ -31,6 +32,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 processed_group_messages: Vec::new(),
                 delivery_ledgers: Vec::new(),
                 buffered_group_messages: Vec::new(),
+                pending_group_mutations: Vec::new(),
             },
         };
         Ok(Self {
@@ -77,7 +79,14 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     &mut output,
                 )?;
             }
-            _ => return Err(Error::MalformedBundle),
+            proto::client_command::Body::ChangeGroupPolicy(change) => {
+                self.stage_change_group_policy(
+                    &command.inner.command_id,
+                    change,
+                    &mut candidate,
+                    &mut output,
+                )?;
+            }
         }
 
         candidate.generation += 1;
@@ -118,6 +127,9 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             }
             proto::OutboundKind::GroupMessage => {
                 self.stage_apply_group_message(command_id, inbound, candidate, output)
+            }
+            proto::OutboundKind::GroupCoordinator => {
+                self.stage_apply_group_coordinator(command_id, inbound, candidate, output)
             }
             _ => Err(Error::MalformedBundle),
         }

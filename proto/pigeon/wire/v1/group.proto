@@ -110,6 +110,7 @@ message StoredGroup {
   uint64 epoch = 7;
   uint64 policy_revision = 8;
   bytes policy = 9;
+  bytes coordinator_chain = 10;
 }
 
 message GroupApplicationCiphertext {
@@ -167,6 +168,29 @@ message CoordinatorReceipt {
 message CoordinatorCandidate {
   CoordinatorReceipt receipt = 1;
   bytes candidate = 2;
+}
+
+message GroupCoordinatorSubmission {
+  uint32 version = 1;
+  uint64 claimed_base_epoch = 2;
+  bytes candidate = 3;
+}
+
+message CoordinatorChainEntry {
+  uint64 sequence = 1;
+  bytes prior_receipt_hash = 2;
+  bytes receipt_hash = 3;
+}
+
+message CoordinatorChainState {
+  uint32 version = 1;
+  bytes coordination_id = 2;
+  bytes verifying_key = 3;
+  uint64 last_sequence = 4;
+  bytes receipt_head = 5;
+  bytes last_prior_hash = 6;
+  repeated CoordinatorChainEntry accepted_receipts = 7;
+  bool frozen = 8;
 }
 
 message GroupApplicationContent {

@@ -177,6 +177,108 @@ impl CoordinatorChain {
     pub fn receipt_head(&self) -> [u8; 32] {
         self.receipt_head
     }
+
+    pub(crate) fn encode(&self) -> Vec<u8> {
+        proto::CoordinatorChainState {
+            version: PROTOCOL_VERSION,
+            coordination_id: self.coordination_id.to_vec(),
+            verifying_key: self.verifying_key.to_vec(),
+            last_sequence: self.last_sequence,
+            receipt_head: self.receipt_head.to_vec(),
+            last_prior_hash: self.last_prior_hash.to_vec(),
+            accepted_receipts: self
+                .accepted_receipts
+                .iter()
+                .map(|(sequence, (prior_receipt_hash, receipt_hash))| {
+                    proto::CoordinatorChainEntry {
+                        sequence: *sequence,
+                        prior_receipt_hash: prior_receipt_hash.to_vec(),
+                        receipt_hash: receipt_hash.to_vec(),
+                    }
+                })
+                .collect(),
+            frozen: self.frozen,
+        }
+        .encode_to_vec()
+    }
+
+    pub(crate) fn decode(
+        bytes: &[u8],
+        coordination_id: [u8; 32],
+        verifying_key: [u8; 32],
+    ) -> Result<Self, CoordinatorChainError> {
+        if bytes.len() > MAX_MLS_OBJECT_BYTES {
+            return Err(CoordinatorChainError::ResourceLimit);
+        }
+        let state = proto::CoordinatorChainState::decode(bytes)
+            .map_err(|_| CoordinatorChainError::Malformed)?;
+        let entry_count = state.accepted_receipts.len();
+        if state.version != PROTOCOL_VERSION
+            || fixed::<32>(&state.coordination_id)? != coordination_id
+            || fixed::<32>(&state.verifying_key)? != verifying_key
+            || entry_count > 256
+        {
+            return Err(CoordinatorChainError::Malformed);
+        }
+        let accepted_receipts = state
+            .accepted_receipts
+            .into_iter()
+            .map(|entry| {
+                Ok((
+                    entry.sequence,
+                    (
+                        fixed::<32>(&entry.prior_receipt_hash)?,
+                        fixed::<32>(&entry.receipt_hash)?,
+                    ),
+                ))
+            })
+            .collect::<Result<BTreeMap<_, _>, CoordinatorChainError>>()?;
+        if accepted_receipts.len() != entry_count {
+            return Err(CoordinatorChainError::Malformed);
+        }
+        let chain = Self {
+            coordination_id,
+            verifying_key,
+            last_sequence: state.last_sequence,
+            receipt_head: fixed(&state.receipt_head)?,
+            last_prior_hash: fixed(&state.last_prior_hash)?,
+            accepted_receipts,
+            frozen: state.frozen,
+        };
+        chain.validate_checkpoint()?;
+        Ok(chain)
+    }
+
+    fn validate_checkpoint(&self) -> Result<(), CoordinatorChainError> {
+        if self.last_sequence == 0 {
+            return (self.receipt_head == [0; 32]
+                && self.last_prior_hash == [0; 32]
+                && self.accepted_receipts.is_empty())
+            .then_some(())
+            .ok_or(CoordinatorChainError::Malformed);
+        }
+        let Some((last_sequence, (last_prior, last_hash))) =
+            self.accepted_receipts.last_key_value()
+        else {
+            return Err(CoordinatorChainError::Malformed);
+        };
+        if *last_sequence != self.last_sequence
+            || *last_prior != self.last_prior_hash
+            || *last_hash != self.receipt_head
+            || self
+                .accepted_receipts
+                .iter()
+                .zip(self.accepted_receipts.iter().skip(1))
+                .any(
+                    |((left_sequence, (_, left_hash)), (right_sequence, (right_prior, _)))| {
+                        *right_sequence != left_sequence + 1 || right_prior != left_hash
+                    },
+                )
+        {
+            return Err(CoordinatorChainError::Malformed);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

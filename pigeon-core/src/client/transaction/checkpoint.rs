@@ -2,7 +2,7 @@ use prost::Message;
 use sha2::{Digest, Sha256};
 
 use crate::Error;
-use crate::group::{GroupEngine, GroupId};
+use crate::group::{CoordinatorChain, GroupEngine, GroupId};
 use crate::storage::{SealedCheckpoint, StorageError};
 use crate::wire::{PROTOCOL_VERSION, proto};
 
@@ -51,6 +51,11 @@ pub(super) fn stored_group(engine: &GroupEngine) -> proto::StoredGroup {
         epoch: engine.epoch(),
         policy_revision: policy.revision(),
         policy: policy.encode(),
+        coordinator_chain: CoordinatorChain::new(
+            policy.coordination_id(),
+            policy.coordinator_public_key(),
+        )
+        .encode(),
     }
 }
 

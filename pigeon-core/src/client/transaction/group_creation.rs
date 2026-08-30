@@ -1,3 +1,5 @@
+use prost::Message;
+
 use super::PigeonClient;
 use super::checkpoint::stored_group;
 
@@ -268,7 +270,12 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 kind: proto::OutboundKind::GroupCoordinator as i32,
                 relay_url: policy.relay_url().to_owned(),
                 destination: policy.coordination_id().to_vec(),
-                payload: initial_commit,
+                payload: proto::GroupCoordinatorSubmission {
+                    version: PROTOCOL_VERSION,
+                    claimed_base_epoch: 0,
+                    candidate: initial_commit,
+                }
+                .encode_to_vec(),
             },
         });
         output

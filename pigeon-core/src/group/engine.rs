@@ -49,6 +49,25 @@ impl GroupEngine {
         })
     }
 
+    pub(crate) fn restore_pending(
+        storage: &TransactionalOpenMlsStorage,
+        policy: PigeonGroupPolicy,
+        expected_epoch: u64,
+        commit: Vec<u8>,
+        next_policy: PigeonGroupPolicy,
+        event: PolicyEvent,
+    ) -> Result<Self, Error> {
+        policy.relay_capability_delta(&next_policy, &event)?;
+        let mut engine = Self::restore(storage, policy, expected_epoch)?;
+        engine.pending = Some(PendingMutation {
+            commit,
+            policy: next_policy,
+            event,
+            welcome: None,
+        });
+        Ok(engine)
+    }
+
     pub fn encrypt_application<I: SecureIdentity>(
         &mut self,
         identity: &I,

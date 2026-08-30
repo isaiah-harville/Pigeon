@@ -104,6 +104,127 @@ impl ClientCommand {
         Self::send_group_text_at(command_id, group_id, body, reply_to_message_id, 0)
     }
 
+    pub fn rename_group(
+        command_id: impl Into<String>,
+        group_id: GroupId,
+        name: impl Into<String>,
+    ) -> Result<Self, Error> {
+        Self::change_group_policy(
+            command_id,
+            group_id,
+            proto::GroupPolicyChangeKind::NameChanged,
+            Vec::new(),
+            name.into(),
+            false,
+        )
+    }
+
+    pub fn set_group_mesh(
+        command_id: impl Into<String>,
+        group_id: GroupId,
+        enabled: bool,
+    ) -> Result<Self, Error> {
+        Self::change_group_policy(
+            command_id,
+            group_id,
+            proto::GroupPolicyChangeKind::MeshChanged,
+            Vec::new(),
+            String::new(),
+            enabled,
+        )
+    }
+
+    pub fn promote_group_admin(
+        command_id: impl Into<String>,
+        group_id: GroupId,
+        subject: [u8; 32],
+    ) -> Result<Self, Error> {
+        Self::member_policy_change(
+            command_id,
+            group_id,
+            proto::GroupPolicyChangeKind::AdminPromoted,
+            subject,
+        )
+    }
+
+    pub fn demote_group_admin(
+        command_id: impl Into<String>,
+        group_id: GroupId,
+        subject: [u8; 32],
+    ) -> Result<Self, Error> {
+        Self::member_policy_change(
+            command_id,
+            group_id,
+            proto::GroupPolicyChangeKind::AdminDemoted,
+            subject,
+        )
+    }
+
+    pub fn remove_group_member(
+        command_id: impl Into<String>,
+        group_id: GroupId,
+        subject: [u8; 32],
+    ) -> Result<Self, Error> {
+        Self::member_policy_change(
+            command_id,
+            group_id,
+            proto::GroupPolicyChangeKind::MemberRemoved,
+            subject,
+        )
+    }
+
+    pub fn dissolve_group(command_id: impl Into<String>, group_id: GroupId) -> Result<Self, Error> {
+        Self::change_group_policy(
+            command_id,
+            group_id,
+            proto::GroupPolicyChangeKind::Dissolved,
+            Vec::new(),
+            String::new(),
+            false,
+        )
+    }
+
+    fn member_policy_change(
+        command_id: impl Into<String>,
+        group_id: GroupId,
+        kind: proto::GroupPolicyChangeKind,
+        subject: [u8; 32],
+    ) -> Result<Self, Error> {
+        Self::change_group_policy(
+            command_id,
+            group_id,
+            kind,
+            subject.to_vec(),
+            String::new(),
+            false,
+        )
+    }
+
+    fn change_group_policy(
+        command_id: impl Into<String>,
+        group_id: GroupId,
+        kind: proto::GroupPolicyChangeKind,
+        subject_identity: Vec<u8>,
+        string_value: String,
+        bool_value: bool,
+    ) -> Result<Self, Error> {
+        let inner = proto::ClientCommand {
+            version: PROTOCOL_VERSION,
+            command_id: command_id.into(),
+            body: Some(proto::client_command::Body::ChangeGroupPolicy(
+                proto::ChangeGroupPolicy {
+                    group_id: group_id.as_bytes().to_vec(),
+                    kind: kind as i32,
+                    subject_identity,
+                    string_value,
+                    bool_value,
+                },
+            )),
+        };
+        wire::validate_client_command(&inner)?;
+        Ok(Self { inner })
+    }
+
     pub fn send_group_text_at(
         command_id: impl Into<String>,
         group_id: GroupId,
@@ -141,6 +262,13 @@ impl ClientCommand {
         ciphertext: Vec<u8>,
     ) -> Result<Self, Error> {
         Self::apply_group_input(command_id, proto::OutboundKind::GroupMessage, ciphertext)
+    }
+
+    pub fn apply_group_coordinator_candidate(
+        command_id: impl Into<String>,
+        candidate: Vec<u8>,
+    ) -> Result<Self, Error> {
+        Self::apply_group_input(command_id, proto::OutboundKind::GroupCoordinator, candidate)
     }
 
     fn apply_group_input(

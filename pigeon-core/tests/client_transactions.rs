@@ -1,10 +1,12 @@
 use ed25519_dalek::{Signer, SigningKey};
 use pigeon_core::{
-    ClientCommand, Error, GroupJoinMaterial, GroupJoinRequest, GroupRelayRegistration,
-    IdentityError, IdentityPurpose, MemoryStateStore, PigeonClient, SecureIdentity, StateStore,
-    TransactionalOpenMlsStorage, wire_proto,
+    ClientCommand, CoordinatorReceipt, Error, GroupId, GroupJoinMaterial, GroupJoinRequest,
+    GroupRelayRegistration, IdentityError, IdentityPurpose, MemoryStateStore, PigeonClient,
+    SecureIdentity, StateStore, TransactionalOpenMlsStorage, coordinator_receipt_transcript,
+    wire_proto,
 };
 use prost::Message;
+use sha2::{Digest, Sha256};
 
 struct TestIdentity {
     root: SigningKey,
@@ -85,6 +87,39 @@ fn issue_join_material(
         storage,
     )
     .unwrap()
+}
+
+fn coordinator_candidate(
+    submission: &wire_proto::GroupCoordinatorSubmission,
+    sequence: u64,
+    prior_receipt_hash: [u8; 32],
+    coordination_id: [u8; 32],
+) -> Vec<u8> {
+    let entry_hash: [u8; 32] = Sha256::digest(&submission.candidate).into();
+    let transcript = coordinator_receipt_transcript(
+        coordination_id,
+        sequence,
+        prior_receipt_hash,
+        submission.claimed_base_epoch,
+        entry_hash,
+    );
+    wire_proto::CoordinatorCandidate {
+        receipt: Some(wire_proto::CoordinatorReceipt {
+            version: 1,
+            coordination_id: coordination_id.to_vec(),
+            sequence,
+            prior_receipt_hash: prior_receipt_hash.to_vec(),
+            claimed_base_epoch: submission.claimed_base_epoch,
+            entry_hash: entry_hash.to_vec(),
+            signature: TestIdentity::new(60)
+                .root
+                .sign(&transcript)
+                .to_bytes()
+                .to_vec(),
+        }),
+        candidate: submission.candidate.clone(),
+    }
+    .encode_to_vec()
 }
 
 #[test]
@@ -286,4 +321,121 @@ fn member_issues_join_material_only_after_its_checkpoint_advances() {
     );
     assert_eq!(material.destination, TestIdentity::new(1).root_public());
     assert!(GroupJoinMaterial::decode(&material.payload).is_ok());
+}
+
+#[test]
+fn policy_change_persists_before_releasing_a_coordinator_submission() {
+    let owner = TestIdentity::new(1);
+    let bob = TestIdentity::new(2);
+    let carol = TestIdentity::new(3);
+    let mut bob_storage = TransactionalOpenMlsStorage::new();
+    let mut carol_storage = TransactionalOpenMlsStorage::new();
+    let mut client = PigeonClient::new(MemoryStateStore::default(), owner).unwrap();
+    let pending = client.execute(create_group()).unwrap();
+    let requests: Vec<_> = pending
+        .outbound
+        .iter()
+        .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
+        .collect();
+    let bob_material = issue_join_material(&requests[0], &bob, &mut bob_storage);
+    let carol_material = issue_join_material(&requests[1], &carol, &mut carol_storage);
+    client
+        .execute(
+            ClientCommand::apply_group_join_material(
+                "material-1",
+                "command-1:join:0",
+                bob_material.encode(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let created = client
+        .execute(
+            ClientCommand::apply_group_join_material(
+                "material-2",
+                "command-1:join:1",
+                carol_material.encode(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let event = wire_proto::AppEvent::decode(created.events[0].encode().as_slice()).unwrap();
+    let wire_proto::app_event::Body::GroupCreated(created_group) = event.body.unwrap() else {
+        panic!("expected group creation");
+    };
+    let group_id = GroupId::from_bytes(created_group.group_id.try_into().unwrap());
+    let initial_outbound = created
+        .outbound
+        .iter()
+        .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
+        .find(|item| item.kind == wire_proto::OutboundKind::GroupCoordinator as i32)
+        .unwrap();
+    let coordination_id: [u8; 32] = initial_outbound.destination.as_slice().try_into().unwrap();
+    let initial_submission =
+        wire_proto::GroupCoordinatorSubmission::decode(initial_outbound.payload.as_slice())
+            .unwrap();
+    let initial_candidate = coordinator_candidate(&initial_submission, 1, [0; 32], coordination_id);
+    let initial_receipt = CoordinatorReceipt::decode_candidate(&initial_candidate)
+        .unwrap()
+        .0;
+    let anchored = client
+        .execute(
+            ClientCommand::apply_group_coordinator_candidate("initial-receipt", initial_candidate)
+                .unwrap(),
+        )
+        .unwrap();
+    assert!(anchored.events.is_empty());
+    assert!(anchored.outbound.is_empty());
+
+    let staged = client
+        .execute(ClientCommand::rename_group("rename-1", group_id, "Best Friends").unwrap())
+        .unwrap();
+
+    assert_eq!(staged.checkpoint_generation, 5);
+    assert!(staged.events.is_empty());
+    assert_eq!(staged.outbound.len(), 1);
+    let outbound =
+        wire_proto::OutboundItem::decode(staged.outbound[0].encode().as_slice()).unwrap();
+    assert_eq!(
+        outbound.kind,
+        wire_proto::OutboundKind::GroupCoordinator as i32
+    );
+    let submission =
+        wire_proto::GroupCoordinatorSubmission::decode(outbound.payload.as_slice()).unwrap();
+    assert_eq!(submission.claimed_base_epoch, 1);
+    assert!(!submission.candidate.is_empty());
+    assert!(
+        client
+            .execute(
+                ClientCommand::rename_group("rename-while-pending", group_id, "Other").unwrap()
+            )
+            .is_err()
+    );
+    assert_eq!(client.checkpoint_generation(), 5);
+
+    let canonical = coordinator_candidate(
+        &submission,
+        2,
+        initial_receipt.receipt_hash(),
+        coordination_id,
+    );
+    let merged = client
+        .execute(
+            ClientCommand::apply_group_coordinator_candidate("rename-receipt", canonical).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(merged.checkpoint_generation, 6);
+    assert_eq!(merged.events.len(), 1);
+    assert!(merged.outbound.is_empty());
+    let event = wire_proto::AppEvent::decode(merged.events[0].encode().as_slice()).unwrap();
+    let wire_proto::app_event::Body::GroupPolicyChanged(change) = event.body.unwrap() else {
+        panic!("expected canonical policy event");
+    };
+    assert_eq!(
+        change.kind,
+        wire_proto::GroupPolicyChangeKind::NameChanged as i32
+    );
+    assert_eq!(change.name, "Best Friends");
+    assert_eq!(change.epoch, 2);
+    assert_eq!(change.policy_revision, 1);
 }
