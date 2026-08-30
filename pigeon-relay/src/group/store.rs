@@ -365,6 +365,41 @@ impl Store {
         Ok(())
     }
 
+    pub fn grant_capability(
+        &mut self,
+        controller: &GroupCapability,
+        granted: CapabilityRegistration,
+    ) -> Result<(), StoreError> {
+        let group = self
+            .groups
+            .get_mut(&controller.coordination_id)
+            .ok_or(StoreError::Unauthorized)?;
+        if !group
+            .capabilities
+            .get(&controller.public_key)
+            .is_some_and(|capability| capability.can_control)
+            || group.capabilities.contains_key(&granted.public_key)
+        {
+            return Err(StoreError::Unauthorized);
+        }
+        if group.capabilities.len() >= self.config.max_capabilities_per_group {
+            return Err(StoreError::CapabilityLimit);
+        }
+        if !granted.can_append || !granted.can_read || granted.can_control {
+            return Err(StoreError::InvalidRegistration);
+        }
+        group.capabilities.insert(
+            granted.public_key,
+            CapabilityState {
+                can_append: true,
+                can_read: true,
+                can_control: false,
+                cursor: group.next_sequence.saturating_sub(1),
+            },
+        );
+        Ok(())
+    }
+
     pub fn revoke_capability(
         &mut self,
         controller: &GroupCapability,

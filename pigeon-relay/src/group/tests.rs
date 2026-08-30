@@ -221,7 +221,7 @@ fn relay_accepts_the_registration_emitted_by_core() {
 }
 
 #[test]
-fn group_protocol_requires_exact_version_two_negotiation() {
+fn group_protocol_requires_current_version_negotiation() {
     let mut negotiated = false;
     assert!(matches!(
         gate_group_message(
@@ -238,12 +238,12 @@ fn group_protocol_requires_exact_version_two_negotiation() {
         gate_group_message(
             GroupClientMsg::Hello {
                 min_protocol_version: 1,
-                max_protocol_version: 2,
+                max_protocol_version: 3,
             },
             &mut negotiated
         ),
         GroupProtocolGate::Reply(GroupServerMsg::Compatible {
-            protocol_version: 2,
+            protocol_version: 3,
             ..
         })
     ));
@@ -296,4 +296,90 @@ fn group_control_capability_rotates_and_revokes_without_resetting_entries() {
         Err(StoreError::Unauthorized)
     );
     assert_eq!(store.entry_count(group.id()), 1);
+}
+
+#[test]
+fn controller_grants_members_from_the_current_cursor_only() {
+    let mut store = Store::bounded(config());
+    let group = store.register(registration(3)).unwrap();
+    store
+        .append(&group.writer(0), b"before join".to_vec(), 1)
+        .unwrap();
+    let granted = CapabilityRegistration {
+        public_key: [44; 32],
+        can_append: true,
+        can_read: true,
+        can_control: false,
+    };
+
+    store.grant_capability(&group.writer(0), granted).unwrap();
+    let new_member = GroupCapability {
+        coordination_id: *group.id(),
+        public_key: [44; 32],
+    };
+    assert!(store.fetch(&new_member, 1).unwrap().is_empty());
+    assert_eq!(store.fetch(&new_member, 0), Err(StoreError::StaleCursor));
+
+    store
+        .append(&group.writer(0), b"after join".to_vec(), 2)
+        .unwrap();
+    let entries = store.fetch(&new_member, 1).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].ciphertext, b"after join");
+    assert_eq!(
+        store.grant_capability(
+            &group.writer(0),
+            CapabilityRegistration {
+                public_key: [44; 32],
+                can_append: true,
+                can_read: true,
+                can_control: false,
+            },
+        ),
+        Err(StoreError::Unauthorized)
+    );
+}
+
+#[test]
+fn capability_grants_enforce_controller_role_shape_and_group_cap() {
+    let mut store = Store::bounded(config());
+    let group = store.register(registration(3)).unwrap();
+    let member = CapabilityRegistration {
+        public_key: [44; 32],
+        can_append: true,
+        can_read: true,
+        can_control: false,
+    };
+    assert_eq!(
+        store.grant_capability(&group.writer(1), member.clone()),
+        Err(StoreError::Unauthorized)
+    );
+    assert_eq!(
+        store.grant_capability(
+            &group.writer(0),
+            CapabilityRegistration {
+                can_control: true,
+                ..member
+            },
+        ),
+        Err(StoreError::InvalidRegistration)
+    );
+
+    let full = store.register(GroupRegistration {
+        coordination_id: [10; 32],
+        capabilities: registration(128).capabilities,
+    });
+    let full = full.unwrap();
+    assert_eq!(
+        store.grant_capability(
+            &full.writer(0),
+            CapabilityRegistration {
+                public_key: [200; 32],
+                can_append: true,
+                can_read: true,
+                can_control: false,
+            },
+        ),
+        Err(StoreError::CapabilityLimit)
+    );
 }
