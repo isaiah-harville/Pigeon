@@ -59,7 +59,7 @@ fn creator_signs_the_exact_group_join_request() {
     .unwrap();
     let decoded = GroupJoinRequest::decode(&request.encode()).unwrap();
 
-    assert_eq!(decoded.creator_identity(), creator.root_public_key());
+    assert_eq!(decoded.requester_identity(), creator.root_public_key());
     assert_eq!(decoded.group_id(), GroupId::from_bytes([7; 32]));
     assert_eq!(decoded.coordination_id(), [9; 32]);
     assert_eq!(decoded.relay_url(), "https://relay.example");
@@ -184,5 +184,53 @@ fn group_policy_authenticates_every_member_key_binding() {
             CoordinatorBinding::new(coordination_id, TestIdentity::new(60).root_public_key()),
         ),
         Err(PolicyError::InvalidRoster)
+    );
+}
+
+#[test]
+fn admin_invite_separates_key_package_consumer_from_permanent_owner() {
+    let owner = TestIdentity::new(1);
+    let admin = TestIdentity::new(10);
+    let member = TestIdentity::new(20);
+    let group_id = GroupId::from_bytes([7; 32]);
+    let coordination_id = [9; 32];
+    let request = GroupJoinRequest::create_for_owner(
+        &admin,
+        owner.root_public_key(),
+        group_id,
+        coordination_id,
+        "https://relay.example",
+    )
+    .unwrap();
+    assert_eq!(request.requester_identity(), admin.root_public_key());
+    assert_eq!(request.owner_identity(), owner.root_public_key());
+
+    let mut storage = TransactionalOpenMlsStorage::new();
+    let material = GroupJoinMaterial::issue_for(
+        &member,
+        request.requester_identity(),
+        request.owner_identity(),
+        group_id,
+        coordination_id,
+        &mut storage,
+    )
+    .unwrap();
+    material
+        .verify_for_requester(
+            admin.root_public_key(),
+            owner.root_public_key(),
+            group_id,
+            coordination_id,
+        )
+        .unwrap();
+    assert!(
+        material
+            .verify_for_requester(
+                owner.root_public_key(),
+                admin.root_public_key(),
+                group_id,
+                coordination_id,
+            )
+            .is_err()
     );
 }

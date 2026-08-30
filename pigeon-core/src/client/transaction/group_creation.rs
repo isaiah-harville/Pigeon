@@ -107,9 +107,10 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         } else {
             TransactionalOpenMlsStorage::from_checkpoint(&candidate.openmls_checkpoint)?
         };
-        let material = GroupJoinMaterial::issue(
+        let material = GroupJoinMaterial::issue_for(
             &self.identity,
-            request.creator_identity(),
+            request.requester_identity(),
+            request.owner_identity(),
             request.group_id(),
             request.coordination_id(),
             &mut mls_storage,
@@ -120,7 +121,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 item_id: format!("{command_id}:material"),
                 kind: proto::OutboundKind::GroupJoinMaterial as i32,
                 relay_url: request.relay_url().to_owned(),
-                destination: request.creator_identity().to_vec(),
+                destination: request.requester_identity().to_vec(),
                 payload: material.encode(),
             },
         });

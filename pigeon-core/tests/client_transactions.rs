@@ -81,7 +81,7 @@ fn issue_join_material(
     let request = GroupJoinRequest::decode(&request.payload).unwrap();
     GroupJoinMaterial::issue(
         member,
-        request.creator_identity(),
+        request.requester_identity(),
         request.group_id(),
         request.coordination_id(),
         storage,

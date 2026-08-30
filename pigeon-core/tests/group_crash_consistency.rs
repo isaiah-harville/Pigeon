@@ -116,7 +116,7 @@ fn issue_join_material(
     assert_eq!(item.destination, member.root_public());
     GroupJoinMaterial::issue(
         member,
-        request.creator_identity(),
+        request.requester_identity(),
         request.group_id(),
         request.coordination_id(),
         storage,

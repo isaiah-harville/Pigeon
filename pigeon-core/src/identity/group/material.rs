@@ -164,10 +164,28 @@ impl GroupJoinMaterial {
         coordination_id: [u8; 32],
         storage: &mut TransactionalOpenMlsStorage,
     ) -> Result<Self, Error> {
+        Self::issue_for(
+            identity,
+            intended_creator,
+            intended_creator,
+            group_id,
+            coordination_id,
+            storage,
+        )
+    }
+
+    pub fn issue_for(
+        identity: &impl SecureIdentity,
+        intended_consumer: [u8; 32],
+        intended_creator: [u8; 32],
+        group_id: GroupId,
+        coordination_id: [u8; 32],
+        storage: &mut TransactionalOpenMlsStorage,
+    ) -> Result<Self, Error> {
         Ok(Self {
             group_id,
             coordination_id,
-            key_package: ReservedKeyPackage::issue(identity, intended_creator, storage)?,
+            key_package: ReservedKeyPackage::issue(identity, intended_consumer, storage)?,
             member_keys: GroupMemberKeys::issue(
                 identity,
                 intended_creator,
@@ -183,10 +201,25 @@ impl GroupJoinMaterial {
         group_id: GroupId,
         coordination_id: [u8; 32],
     ) -> Result<(), Error> {
+        self.verify_for_requester(
+            intended_creator,
+            intended_creator,
+            group_id,
+            coordination_id,
+        )
+    }
+
+    pub fn verify_for_requester(
+        &self,
+        intended_consumer: [u8; 32],
+        intended_creator: [u8; 32],
+        group_id: GroupId,
+        coordination_id: [u8; 32],
+    ) -> Result<(), Error> {
         if self.group_id != group_id || self.coordination_id != coordination_id {
             return Err(Error::InvalidSignature);
         }
-        self.key_package.verify_for(intended_creator)?;
+        self.key_package.verify_for(intended_consumer)?;
         self.member_keys
             .verify(intended_creator, group_id, coordination_id)?;
         if self.key_package.issuer() != self.member_keys.member_identity {

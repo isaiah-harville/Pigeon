@@ -166,7 +166,12 @@ impl GroupEngine {
         )?);
         let mut key_packages = Vec::with_capacity(materials.len());
         for material in materials {
-            material.verify_for(owner, config.group_id, config.coordinator.coordination_id)?;
+            material.verify_for_requester(
+                owner,
+                owner,
+                config.group_id,
+                config.coordinator.coordination_id,
+            )?;
             member_keys.push(material.member_keys());
             key_packages.push(material.key_package().validated_key_package()?);
         }
@@ -299,9 +304,10 @@ impl GroupEngine {
         let provider = storage.provider();
         let mut group = load_group(provider, self.group_id)?;
         let (add, remove) = match &action {
-            GroupAction::Add { member_keys, .. } => {
+            GroupAction::Add { actor, member_keys } => {
                 let material = join_material.ok_or(Error::InvalidKey)?;
-                material.verify_for(
+                material.verify_for_requester(
+                    *actor,
                     self.policy.owner(),
                     self.group_id,
                     self.policy.coordination_id(),
