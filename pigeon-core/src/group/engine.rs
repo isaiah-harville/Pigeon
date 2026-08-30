@@ -8,8 +8,8 @@ use super::{
 };
 use crate::Error;
 use crate::identity::{
-    CIPHERSUITE, MlsIdentityBinding, POLICY_EXTENSION_TYPE_ID, PlatformMlsSigner,
-    ReservedKeyPackage, SecureIdentity,
+    CIPHERSUITE, GroupJoinMaterial, GroupMemberKeys, MlsIdentityBinding, POLICY_EXTENSION_TYPE_ID,
+    PlatformMlsSigner, SecureIdentity,
 };
 use crate::storage::TransactionalOpenMlsStorage;
 use crate::wire::{MAX_FUTURE_EPOCHS, MAX_MLS_OBJECT_BYTES};
@@ -22,7 +22,7 @@ pub struct GroupEngine {
     pending: Option<PendingMutation>,
 }
 
-pub(crate) struct GroupCreationConfig {
+pub struct GroupCreationConfig {
     pub group_id: GroupId,
     pub name: String,
     pub relay_url: String,
@@ -124,25 +124,10 @@ impl GroupEngine {
     pub fn create<I: SecureIdentity>(
         identity: &I,
         storage: &mut TransactionalOpenMlsStorage,
-        name: impl Into<String>,
-        relay_url: impl Into<String>,
-        coordinator: CoordinatorBinding,
-        packages: Vec<ReservedKeyPackage>,
+        config: GroupCreationConfig,
+        materials: Vec<GroupJoinMaterial>,
     ) -> Result<(Self, Vec<u8>), Error> {
-        let mut id = [0_u8; 32];
-        getrandom::getrandom(&mut id).map_err(|_| Error::Entropy)?;
-        let (engine, _, welcome) = Self::create_configured(
-            identity,
-            storage,
-            GroupCreationConfig {
-                group_id: GroupId::from_bytes(id),
-                name: name.into(),
-                relay_url: relay_url.into(),
-                coordinator,
-                mesh_enabled: false,
-            },
-            packages,
-        )?;
+        let (engine, _, welcome) = Self::create_configured(identity, storage, config, materials)?;
         Ok((engine, welcome))
     }
 
@@ -150,21 +135,27 @@ impl GroupEngine {
         identity: &I,
         storage: &mut TransactionalOpenMlsStorage,
         config: GroupCreationConfig,
-        packages: Vec<ReservedKeyPackage>,
+        materials: Vec<GroupJoinMaterial>,
     ) -> Result<(Self, Vec<u8>, Vec<u8>), Error> {
         let owner = identity.ensure_public_key(crate::IdentityPurpose::Root)?;
-        let mut member_ids = Vec::with_capacity(packages.len());
-        let mut key_packages = Vec::with_capacity(packages.len());
-        for package in packages {
-            package.verify_for(owner)?;
-            member_ids.push(package.issuer());
-            key_packages.push(package.validated_key_package()?);
+        let mut member_keys = Vec::with_capacity(materials.len() + 1);
+        member_keys.push(GroupMemberKeys::issue(
+            identity,
+            owner,
+            config.group_id,
+            config.coordinator.coordination_id,
+        )?);
+        let mut key_packages = Vec::with_capacity(materials.len());
+        for material in materials {
+            material.verify_for(owner, config.group_id, config.coordinator.coordination_id)?;
+            member_keys.push(material.member_keys());
+            key_packages.push(material.key_package().validated_key_package()?);
         }
 
         let policy = PigeonGroupPolicy::new_with_mesh(
             config.group_id,
             owner,
-            member_ids,
+            member_keys,
             config.name,
             config.relay_url,
             config.coordinator,
@@ -272,7 +263,7 @@ impl GroupEngine {
         identity: &I,
         storage: &mut TransactionalOpenMlsStorage,
         action: GroupAction,
-        key_package: Option<ReservedKeyPackage>,
+        join_material: Option<GroupJoinMaterial>,
     ) -> Result<PendingMutation, Error> {
         if self.pending.is_some() {
             return Err(Error::Mls("candidate already pending"));
@@ -289,22 +280,26 @@ impl GroupEngine {
         let provider = storage.provider();
         let mut group = load_group(provider, self.group_id)?;
         let (add, remove) = match &action {
-            GroupAction::Add { actor, subject } => {
-                let package = key_package.ok_or(Error::InvalidKey)?;
-                package.verify_for(*actor)?;
-                if package.issuer() != *subject {
+            GroupAction::Add { member_keys, .. } => {
+                let material = join_material.ok_or(Error::InvalidKey)?;
+                material.verify_for(
+                    self.policy.owner(),
+                    self.group_id,
+                    self.policy.coordination_id(),
+                )?;
+                if material.member_keys() != **member_keys {
                     return Err(Error::InvalidSignature);
                 }
-                (Some(package.validated_key_package()?), None)
+                (Some(material.key_package().validated_key_package()?), None)
             }
             GroupAction::Remove { subject, .. } | GroupAction::Leave { actor: subject, .. } => {
-                if key_package.is_some() {
+                if join_material.is_some() {
                     return Err(Error::InvalidKey);
                 }
                 (None, Some(member_index(&group, *subject)?))
             }
             _ => {
-                if key_package.is_some() {
+                if join_material.is_some() {
                     return Err(Error::InvalidKey);
                 }
                 (None, None)

@@ -6,12 +6,13 @@ use unicode_general_category::{GeneralCategory, get_general_category};
 use unicode_normalization::UnicodeNormalization;
 
 use super::{CoordinatorBinding, GroupAction, GroupId, PolicyEvent, PolicyEventKind};
+use crate::identity::GroupMemberKeys;
 use crate::wire::{
     MAX_GROUP_MEMBERS, MAX_GROUP_NAME_BYTES, MAX_GROUP_NAME_SCALARS, MAX_MLS_OBJECT_BYTES, proto,
 };
 
 const PROTOCOL_VERSION: u32 = 1;
-const POLICY_VERSION: u32 = 1;
+const POLICY_VERSION: u32 = 2;
 const MIN_GROUP_MEMBERS: usize = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -22,6 +23,7 @@ pub struct PigeonGroupPolicy {
     owner: [u8; 32],
     admins: Vec<[u8; 32]>,
     members: Vec<[u8; 32]>,
+    member_keys: Vec<GroupMemberKeys>,
     name: String,
     relay_url: String,
     coordination_id: [u8; 32],
@@ -54,10 +56,35 @@ impl fmt::Display for PolicyError {
 impl std::error::Error for PolicyError {}
 
 impl PigeonGroupPolicy {
+    pub(crate) fn validate_draft(
+        owner: [u8; 32],
+        mut additional_members: Vec<[u8; 32]>,
+        name: &str,
+        relay_url: &str,
+        coordinator: CoordinatorBinding,
+    ) -> Result<(), PolicyError> {
+        additional_members.push(owner);
+        additional_members.sort_unstable();
+        if additional_members.len() < MIN_GROUP_MEMBERS
+            || additional_members.len() > MAX_GROUP_MEMBERS
+            || !is_sorted_unique(&additional_members)
+        {
+            return Err(PolicyError::InvalidRoster);
+        }
+        validate_name(name)?;
+        validate_relay(relay_url)?;
+        if coordinator.public_key == [0; 32]
+            || VerifyingKey::from_bytes(&coordinator.public_key).is_err()
+        {
+            return Err(PolicyError::InvalidRelay);
+        }
+        Ok(())
+    }
+
     pub fn new(
         group_id: GroupId,
         owner: [u8; 32],
-        additional_members: Vec<[u8; 32]>,
+        member_keys: Vec<GroupMemberKeys>,
         name: impl Into<String>,
         relay_url: impl Into<String>,
         coordinator: CoordinatorBinding,
@@ -65,7 +92,7 @@ impl PigeonGroupPolicy {
         Self::new_with_mesh(
             group_id,
             owner,
-            additional_members,
+            member_keys,
             name,
             relay_url,
             coordinator,
@@ -76,15 +103,17 @@ impl PigeonGroupPolicy {
     pub(crate) fn new_with_mesh(
         group_id: GroupId,
         owner: [u8; 32],
-        additional_members: Vec<[u8; 32]>,
+        mut member_keys: Vec<GroupMemberKeys>,
         name: impl Into<String>,
         relay_url: impl Into<String>,
         coordinator: CoordinatorBinding,
         mesh_enabled: bool,
     ) -> Result<Self, PolicyError> {
-        let mut members = additional_members;
-        members.push(owner);
-        members.sort_unstable();
+        member_keys.sort_unstable_by_key(GroupMemberKeys::member_identity);
+        let members = member_keys
+            .iter()
+            .map(GroupMemberKeys::member_identity)
+            .collect();
         let policy = Self {
             protocol_version: PROTOCOL_VERSION,
             policy_version: POLICY_VERSION,
@@ -92,6 +121,7 @@ impl PigeonGroupPolicy {
             owner,
             admins: vec![owner],
             members,
+            member_keys,
             name: name.into(),
             relay_url: relay_url.into(),
             coordination_id: coordinator.coordination_id,
@@ -125,6 +155,12 @@ impl PigeonGroupPolicy {
             owner: to_identity(&encoded.owner_identity)?,
             admins: identities(encoded.admin_identities)?,
             members: identities(encoded.member_identities)?,
+            member_keys: encoded
+                .member_keys
+                .into_iter()
+                .map(GroupMemberKeys::from_proto)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| PolicyError::Malformed)?,
             name: encoded.name,
             relay_url: encoded.relay_url,
             coordination_id: to_identity(&encoded.coordination_id)?,
@@ -183,9 +219,15 @@ impl PigeonGroupPolicy {
         let added_admins = difference(&candidate.admins, &self.admins);
         let removed_admins = difference(&self.admins, &candidate.admins);
         let action = if added_members.len() == 1 && removed_members.is_empty() {
+            let member_keys = candidate
+                .member_keys
+                .iter()
+                .find(|keys| keys.member_identity() == added_members[0])
+                .cloned()
+                .ok_or(PolicyError::UnexpectedTransition)?;
             GroupAction::Add {
                 actor,
-                subject: added_members[0],
+                member_keys: Box::new(member_keys),
             }
         } else if removed_members.len() == 1 && added_members.is_empty() {
             GroupAction::Remove {
@@ -248,6 +290,13 @@ impl PigeonGroupPolicy {
         &self.members
     }
 
+    pub fn member_capability_key(&self, identity: [u8; 32]) -> Option<[u8; 32]> {
+        self.member_keys
+            .binary_search_by_key(&identity, GroupMemberKeys::member_identity)
+            .ok()
+            .map(|index| self.member_keys[index].capability_public_key())
+    }
+
     fn to_proto(&self) -> proto::PigeonGroupPolicy {
         proto::PigeonGroupPolicy {
             protocol_version: self.protocol_version,
@@ -271,6 +320,11 @@ impl PigeonGroupPolicy {
             revision: self.revision,
             dissolved: self.dissolved,
             coordinator_public_key: self.coordinator_public_key.to_vec(),
+            member_keys: self
+                .member_keys
+                .iter()
+                .map(GroupMemberKeys::to_proto)
+                .collect(),
         }
     }
 
@@ -282,10 +336,30 @@ impl PigeonGroupPolicy {
             || self.members.len() > MAX_GROUP_MEMBERS
             || !is_sorted_unique(&self.members)
             || !is_sorted_unique(&self.admins)
+            || self.member_keys.len() != self.members.len()
+            || self
+                .member_keys
+                .iter()
+                .map(GroupMemberKeys::member_identity)
+                .ne(self.members.iter().copied())
             || !self.has_member(&self.owner)
             || !self.has_admin(&self.owner)
             || self.admins.iter().any(|admin| !self.has_member(admin))
         {
+            return Err(PolicyError::InvalidRoster);
+        }
+        if self.member_keys.iter().any(|keys| {
+            keys.verify(self.owner, self.group_id, self.coordination_id)
+                .is_err()
+        }) || !is_unique_keys(
+            self.member_keys
+                .iter()
+                .map(GroupMemberKeys::capability_public_key),
+        ) || !is_unique_keys(
+            self.member_keys
+                .iter()
+                .map(GroupMemberKeys::recovery_public_key),
+        ) {
             return Err(PolicyError::InvalidRoster);
         }
         validate_name(&self.name)?;
@@ -352,14 +426,21 @@ fn transition_body(
     prior.validate_invariants()?;
     let mut next = prior.clone();
     let (kind, actor, subject) = match action {
-        GroupAction::Add { actor, subject } => {
+        GroupAction::Add { actor, member_keys } => {
             prior.require_admin(actor)?;
-            if next.members.len() >= MAX_GROUP_MEMBERS || next.has_member(subject) {
+            let subject = member_keys.member_identity();
+            if next.members.len() >= MAX_GROUP_MEMBERS || next.has_member(&subject) {
                 return Err(PolicyError::InvalidRoster);
             }
-            next.members.push(*subject);
+            member_keys
+                .verify(prior.owner, prior.group_id, prior.coordination_id)
+                .map_err(|_| PolicyError::InvalidRoster)?;
+            next.members.push(subject);
             next.members.sort_unstable();
-            (PolicyEventKind::MemberAdded, *actor, Some(*subject))
+            next.member_keys.push((**member_keys).clone());
+            next.member_keys
+                .sort_unstable_by_key(GroupMemberKeys::member_identity);
+            (PolicyEventKind::MemberAdded, *actor, Some(subject))
         }
         GroupAction::Remove { actor, subject } => {
             prior.require_admin(actor)?;
@@ -369,6 +450,7 @@ fn transition_body(
             require_can_shrink(&next)?;
             remove_identity(&mut next.members, subject);
             remove_identity(&mut next.admins, subject);
+            remove_member_keys(&mut next.member_keys, subject);
             (PolicyEventKind::MemberRemoved, *actor, Some(*subject))
         }
         GroupAction::Leave { actor, committer } => {
@@ -382,6 +464,7 @@ fn transition_body(
             require_can_shrink(&next)?;
             remove_identity(&mut next.members, actor);
             remove_identity(&mut next.admins, actor);
+            remove_member_keys(&mut next.member_keys, actor);
             (PolicyEventKind::MemberLeft, *actor, Some(*actor))
         }
         GroupAction::Promote { actor, subject } => {
@@ -493,6 +576,18 @@ fn remove_identity(identities: &mut Vec<[u8; 32]>, identity: &[u8; 32]) {
     if let Ok(index) = identities.binary_search(identity) {
         identities.remove(index);
     }
+}
+
+fn remove_member_keys(keys: &mut Vec<GroupMemberKeys>, identity: &[u8; 32]) {
+    if let Ok(index) = keys.binary_search_by_key(identity, GroupMemberKeys::member_identity) {
+        keys.remove(index);
+    }
+}
+
+fn is_unique_keys(keys: impl Iterator<Item = [u8; 32]>) -> bool {
+    let mut keys = keys.collect::<Vec<_>>();
+    keys.sort_unstable();
+    is_sorted_unique(&keys)
 }
 
 fn difference(left: &[[u8; 32]], right: &[[u8; 32]]) -> Vec<[u8; 32]> {

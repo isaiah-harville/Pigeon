@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package pigeon.wire.v1;
 
+import "pigeon/wire/v1/identity.proto";
+
 message PigeonGroupPolicy {
   uint32 protocol_version = 1;
   uint32 policy_version = 2;
@@ -16,6 +18,7 @@ message PigeonGroupPolicy {
   uint64 revision = 11;
   bool dissolved = 12;
   bytes coordinator_public_key = 13;
+  repeated GroupMemberKeys member_keys = 14;
 }
 
 enum GroupPolicyChangeKind {

@@ -35,12 +35,11 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     .map_err(|_| Error::InvalidKey)
             })
             .collect::<Result<Vec<[u8; 32]>, _>>()?;
-        PigeonGroupPolicy::new(
-            group_id,
+        PigeonGroupPolicy::validate_draft(
             owner,
             members,
-            create.name.clone(),
-            create.relay_url.clone(),
+            &create.name,
+            &create.relay_url,
             CoordinatorBinding::new(
                 coordination_id,
                 create
@@ -201,10 +200,6 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             .iter()
             .map(|material| material.package_hash().to_vec())
             .collect();
-        let packages = materials
-            .iter()
-            .map(GroupJoinMaterial::key_package)
-            .collect();
         let registration = GroupRelayRegistration::create(
             &self.identity,
             group_id,
@@ -235,7 +230,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 ),
                 mesh_enabled: draft.mesh_enabled,
             },
-            packages,
+            materials,
         )?;
         candidate
             .consumed_key_package_hashes

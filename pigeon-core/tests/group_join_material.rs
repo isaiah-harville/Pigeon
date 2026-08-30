@@ -1,6 +1,7 @@
 use ed25519_dalek::{Signer, SigningKey};
 use pigeon_core::{
-    GroupId, GroupJoinMaterial, GroupJoinRequest, IdentityError, IdentityPurpose, SecureIdentity,
+    CoordinatorBinding, GroupId, GroupJoinMaterial, GroupJoinRequest, GroupMemberKeys,
+    IdentityError, IdentityPurpose, PigeonGroupPolicy, PolicyError, SecureIdentity,
     TransactionalOpenMlsStorage,
 };
 
@@ -131,5 +132,57 @@ fn join_material_is_not_reusable_across_groups_or_creators() {
         material
             .verify_for(creator.root_public_key(), group_id, [10; 32])
             .is_err()
+    );
+}
+
+#[test]
+fn group_policy_authenticates_every_member_key_binding() {
+    let creator = TestIdentity::new(1);
+    let bob = TestIdentity::new(20);
+    let carol = TestIdentity::new(30);
+    let group_id = GroupId::from_bytes([7; 32]);
+    let coordination_id = [9; 32];
+    let owner = creator.root_public_key();
+    let keys = [&creator, &bob, &carol]
+        .into_iter()
+        .map(|identity| GroupMemberKeys::issue(identity, owner, group_id, coordination_id).unwrap())
+        .collect();
+    let policy = PigeonGroupPolicy::new(
+        group_id,
+        owner,
+        keys,
+        "Birds",
+        "https://relay.example",
+        CoordinatorBinding::new(coordination_id, TestIdentity::new(60).root_public_key()),
+    )
+    .unwrap();
+
+    let decoded = PigeonGroupPolicy::decode(&policy.encode()).unwrap();
+    assert_eq!(
+        decoded.member_capability_key(bob.root_public_key()),
+        Some(bob.capability.verifying_key().to_bytes())
+    );
+
+    let cross_group = GroupMemberKeys::issue(
+        &TestIdentity::new(40),
+        owner,
+        GroupId::from_bytes([8; 32]),
+        coordination_id,
+    )
+    .unwrap();
+    assert_eq!(
+        PigeonGroupPolicy::new(
+            group_id,
+            owner,
+            vec![
+                GroupMemberKeys::issue(&creator, owner, group_id, coordination_id).unwrap(),
+                GroupMemberKeys::issue(&bob, owner, group_id, coordination_id).unwrap(),
+                cross_group,
+            ],
+            "Birds",
+            "https://relay.example",
+            CoordinatorBinding::new(coordination_id, TestIdentity::new(60).root_public_key()),
+        ),
+        Err(PolicyError::InvalidRoster)
     );
 }

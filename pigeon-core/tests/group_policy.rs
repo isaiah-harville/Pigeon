@@ -1,32 +1,83 @@
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signer, SigningKey};
 use pigeon_core::{
-    CoordinatorBinding, GroupAction, GroupId, PigeonGroupPolicy, PolicyError, validate_transition,
+    CoordinatorBinding, GroupAction, GroupId, GroupMemberKeys, IdentityError, IdentityPurpose,
+    PigeonGroupPolicy, PolicyError, SecureIdentity, validate_transition,
 };
 use sha2::{Digest, Sha256};
 
-const OWNER: [u8; 32] = [1; 32];
-const ADMIN: [u8; 32] = [2; 32];
-const MEMBER: [u8; 32] = [3; 32];
-const DAVE: [u8; 32] = [4; 32];
+const GROUP_ID: GroupId = GroupId::from_bytes([9; 32]);
+const COORDINATION_ID: [u8; 32] = [8; 32];
+
+struct TestIdentity {
+    root: SigningKey,
+    capability: SigningKey,
+    recovery: SigningKey,
+}
+
+impl TestIdentity {
+    fn new(byte: u8) -> Self {
+        Self {
+            root: SigningKey::from_bytes(&[byte; 32]),
+            capability: SigningKey::from_bytes(&[byte.wrapping_add(96); 32]),
+            recovery: SigningKey::from_bytes(&[byte.wrapping_add(128); 32]),
+        }
+    }
+
+    fn root_public(&self) -> [u8; 32] {
+        self.root.verifying_key().to_bytes()
+    }
+}
+
+impl SecureIdentity for TestIdentity {
+    fn ensure_public_key(&self, purpose: IdentityPurpose) -> Result<[u8; 32], IdentityError> {
+        Ok(match purpose {
+            IdentityPurpose::Root => self.root.verifying_key().to_bytes(),
+            IdentityPurpose::GroupCapability(_) => self.capability.verifying_key().to_bytes(),
+            IdentityPurpose::GroupRecovery(_) => self.recovery.verifying_key().to_bytes(),
+            _ => return Err(IdentityError::Unavailable),
+        })
+    }
+
+    fn sign(&self, purpose: IdentityPurpose, message: &[u8]) -> Result<[u8; 64], IdentityError> {
+        let key = match purpose {
+            IdentityPurpose::Root => &self.root,
+            IdentityPurpose::GroupCapability(_) => &self.capability,
+            IdentityPurpose::GroupRecovery(_) => &self.recovery,
+            _ => return Err(IdentityError::Unavailable),
+        };
+        Ok(key.sign(message).to_bytes())
+    }
+}
+
+fn root(byte: u8) -> [u8; 32] {
+    TestIdentity::new(byte).root_public()
+}
+
+fn member_keys(byte: u8) -> GroupMemberKeys {
+    GroupMemberKeys::issue(&TestIdentity::new(byte), root(1), GROUP_ID, COORDINATION_ID).unwrap()
+}
 
 fn coordinator_key() -> [u8; 32] {
     SigningKey::from_bytes(&[60; 32]).verifying_key().to_bytes()
 }
 
-fn policy() -> PigeonGroupPolicy {
-    let mut policy = PigeonGroupPolicy::new(
-        GroupId::from_bytes([9; 32]),
-        OWNER,
-        vec![ADMIN, MEMBER],
+fn new_policy(member_keys: Vec<GroupMemberKeys>) -> Result<PigeonGroupPolicy, PolicyError> {
+    PigeonGroupPolicy::new(
+        GROUP_ID,
+        root(1),
+        member_keys,
         "Friends",
         "https://relay.example",
-        CoordinatorBinding::new([8; 32], coordinator_key()),
+        CoordinatorBinding::new(COORDINATION_ID, coordinator_key()),
     )
-    .unwrap();
+}
+
+fn policy() -> PigeonGroupPolicy {
+    let mut policy = new_policy(vec![member_keys(1), member_keys(2), member_keys(3)]).unwrap();
     policy = policy
         .apply(&GroupAction::Promote {
-            actor: OWNER,
-            subject: ADMIN,
+            actor: root(1),
+            subject: root(2),
         })
         .unwrap()
         .0;
@@ -38,32 +89,32 @@ fn policy_role_matrix_is_fail_closed() {
     let policy = policy();
     let four_members = policy
         .apply(&GroupAction::Add {
-            actor: ADMIN,
-            subject: DAVE,
+            actor: root(2),
+            member_keys: Box::new(member_keys(4)),
         })
         .unwrap()
         .0;
     assert!(
         four_members
             .apply(&GroupAction::Leave {
-                actor: MEMBER,
-                committer: DAVE,
+                actor: root(3),
+                committer: root(4),
             })
             .is_ok()
     );
     assert!(
         policy
             .apply(&GroupAction::Add {
-                actor: MEMBER,
-                subject: DAVE
+                actor: root(3),
+                member_keys: Box::new(member_keys(4)),
             })
             .is_err()
     );
     assert!(
         policy
             .apply(&GroupAction::Leave {
-                actor: MEMBER,
-                committer: ADMIN,
+                actor: root(3),
+                committer: root(2),
             })
             .is_err(),
         "a three-person group cannot shrink below three"
@@ -71,23 +122,23 @@ fn policy_role_matrix_is_fail_closed() {
     assert!(
         policy
             .apply(&GroupAction::Leave {
-                actor: OWNER,
-                committer: ADMIN,
+                actor: root(1),
+                committer: root(2),
             })
             .is_err()
     );
     assert!(
         policy
             .apply(&GroupAction::Demote {
-                actor: ADMIN,
-                subject: ADMIN,
+                actor: root(2),
+                subject: root(2),
             })
             .is_err()
     );
     assert!(
         policy
             .apply(&GroupAction::Rename {
-                actor: ADMIN,
+                actor: root(2),
                 name: "no".into(),
             })
             .is_err()
@@ -95,7 +146,7 @@ fn policy_role_matrix_is_fail_closed() {
     assert!(
         policy
             .apply(&GroupAction::SetMesh {
-                actor: OWNER,
+                actor: root(1),
                 enabled: true,
             })
             .is_ok()
@@ -108,27 +159,27 @@ fn owner_and_terminal_invariants_cannot_be_bypassed() {
     assert!(
         policy
             .apply(&GroupAction::Remove {
-                actor: ADMIN,
-                subject: OWNER,
+                actor: root(2),
+                subject: root(1),
             })
             .is_err()
     );
     assert!(
         policy
             .apply(&GroupAction::Demote {
-                actor: ADMIN,
-                subject: OWNER,
+                actor: root(2),
+                subject: root(1),
             })
             .is_err()
     );
     let dissolved = policy
-        .apply(&GroupAction::Dissolve { actor: OWNER })
+        .apply(&GroupAction::Dissolve { actor: root(1) })
         .unwrap()
         .0;
     assert!(
         dissolved
             .apply(&GroupAction::SetMesh {
-                actor: OWNER,
+                actor: root(1),
                 enabled: true,
             })
             .is_err()
@@ -138,33 +189,18 @@ fn owner_and_terminal_invariants_cannot_be_bypassed() {
 #[test]
 fn roster_bounds_and_duplicates_are_rejected() {
     assert!(
-        PigeonGroupPolicy::new(
-            GroupId::from_bytes([9; 32]),
-            OWNER,
-            vec![OWNER, MEMBER],
-            "Friends",
-            "https://relay.example",
-            CoordinatorBinding::new([8; 32], coordinator_key()),
-        )
-        .is_err()
+        new_policy(vec![member_keys(1), member_keys(1), member_keys(3)]).is_err(),
+        "duplicate member identities and key bindings must fail"
     );
 
-    let members: Vec<[u8; 32]> = (2u8..=128).map(|byte| [byte; 32]).collect();
-    let at_cap = PigeonGroupPolicy::new(
-        GroupId::from_bytes([9; 32]),
-        OWNER,
-        members,
-        "Friends",
-        "https://relay.example",
-        CoordinatorBinding::new([8; 32], coordinator_key()),
-    )
-    .unwrap();
+    let members = (1u8..=128).map(member_keys).collect();
+    let at_cap = new_policy(members).unwrap();
     assert_eq!(at_cap.members().len(), 128);
     assert!(
         at_cap
             .apply(&GroupAction::Add {
-                actor: OWNER,
-                subject: [129; 32],
+                actor: root(1),
+                member_keys: Box::new(member_keys(129)),
             })
             .is_err()
     );
@@ -174,12 +210,12 @@ fn roster_bounds_and_duplicates_are_rejected() {
 fn coordinator_signing_key_is_required_and_authenticated() {
     assert_eq!(
         PigeonGroupPolicy::new(
-            GroupId::from_bytes([9; 32]),
-            OWNER,
-            vec![ADMIN, MEMBER],
+            GROUP_ID,
+            root(1),
+            vec![member_keys(1), member_keys(2), member_keys(3)],
             "Friends",
             "https://relay.example",
-            CoordinatorBinding::new([8; 32], [0; 32]),
+            CoordinatorBinding::new(COORDINATION_ID, [0; 32]),
         ),
         Err(PolicyError::InvalidRelay)
     );
@@ -188,25 +224,17 @@ fn coordinator_signing_key_is_required_and_authenticated() {
 
 #[test]
 fn deterministic_policy_vectors_are_stable() {
-    let initial = PigeonGroupPolicy::new(
-        GroupId::from_bytes([9; 32]),
-        OWNER,
-        vec![ADMIN, MEMBER],
-        "Friends",
-        "https://relay.example",
-        CoordinatorBinding::new([8; 32], coordinator_key()),
-    )
-    .unwrap();
+    let initial = new_policy(vec![member_keys(1), member_keys(2), member_keys(3)]).unwrap();
     let renamed = initial
         .apply(&GroupAction::Rename {
-            actor: OWNER,
+            actor: root(1),
             name: "Best Friends".into(),
         })
         .unwrap()
         .0;
     let mesh = renamed
         .apply(&GroupAction::SetMesh {
-            actor: OWNER,
+            actor: root(1),
             enabled: true,
         })
         .unwrap()
@@ -224,9 +252,9 @@ fn deterministic_policy_vectors_are_stable() {
     assert_eq!(
         hashes,
         [
-            "1deedfcb74a9b858ae31523b1cc1c65b234c7bf91562a5fd688fdbc77be9b412",
-            "eaa63b560701be7aced4efc04048f49767aef5e8365839a2a73d3b2d05e46957",
-            "ba1e5be5f7c3d0e0299a25b89629c65dcedafd14ee08e2f16d3fb8a254c89b20",
+            "3045f22d34580be2d3d84628dda7dba4f8f0274500998066dcfeda03bd7975c9",
+            "0252110b6fcf515ab61d13fd710fecfd9795149375de4617aae6a758b2afbf90",
+            "3ac92d33a70427c8d266238494b7d6a0bb286598e35b736bde34975a8b11ac75",
         ]
     );
 }
@@ -235,7 +263,7 @@ fn deterministic_policy_vectors_are_stable() {
 fn transition_requires_exactly_the_authenticated_action() {
     let prior = policy();
     let action = GroupAction::Rename {
-        actor: OWNER,
+        actor: root(1),
         name: "Best Friends".into(),
     };
     let (next, _) = prior.apply(&action).unwrap();
@@ -249,7 +277,7 @@ fn transition_requires_exactly_the_authenticated_action() {
 
     decoded = decoded
         .apply(&GroupAction::SetMesh {
-            actor: OWNER,
+            actor: root(1),
             enabled: true,
         })
         .unwrap()
@@ -266,7 +294,7 @@ fn names_must_already_be_canonical_nfc() {
     assert!(
         policy
             .apply(&GroupAction::Rename {
-                actor: OWNER,
+                actor: root(1),
                 name: "Cafe\u{301}".into(),
             })
             .is_err()
@@ -274,7 +302,7 @@ fn names_must_already_be_canonical_nfc() {
     assert!(
         policy
             .apply(&GroupAction::Rename {
-                actor: OWNER,
+                actor: root(1),
                 name: "Café".into(),
             })
             .is_ok()
@@ -282,7 +310,7 @@ fn names_must_already_be_canonical_nfc() {
     assert!(
         policy
             .apply(&GroupAction::Rename {
-                actor: OWNER,
+                actor: root(1),
                 name: "Alice\u{202e}Bob".into(),
             })
             .is_err()
@@ -290,7 +318,7 @@ fn names_must_already_be_canonical_nfc() {
     assert!(
         policy
             .apply(&GroupAction::Rename {
-                actor: OWNER,
+                actor: root(1),
                 name: "x".repeat(65),
             })
             .is_err()

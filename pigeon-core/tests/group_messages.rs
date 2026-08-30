@@ -1,14 +1,16 @@
 use ed25519_dalek::{Signer, SigningKey};
 use pigeon_core::{
     BufferDisposition, CoordinatorBinding, DeliveryLedger, GroupAction, GroupApplication,
-    GroupDeliveryState, GroupEngine, IdentityError, IdentityPurpose, ReservedKeyPackage,
-    SecureIdentity, TransactionalOpenMlsStorage,
+    GroupCreationConfig, GroupDeliveryState, GroupEngine, GroupId, GroupJoinMaterial,
+    IdentityError, IdentityPurpose, SecureIdentity, TransactionalOpenMlsStorage,
 };
 use prost::Message;
 
 struct TestIdentity {
     root: SigningKey,
     mls: SigningKey,
+    capability: SigningKey,
+    recovery: SigningKey,
 }
 
 impl TestIdentity {
@@ -16,6 +18,8 @@ impl TestIdentity {
         Self {
             root: SigningKey::from_bytes(&[byte; 32]),
             mls: SigningKey::from_bytes(&[byte.wrapping_add(64); 32]),
+            capability: SigningKey::from_bytes(&[byte.wrapping_add(96); 32]),
+            recovery: SigningKey::from_bytes(&[byte.wrapping_add(128); 32]),
         }
     }
 
@@ -29,6 +33,8 @@ impl SecureIdentity for TestIdentity {
         Ok(match purpose {
             IdentityPurpose::Root => self.root.verifying_key().to_bytes(),
             IdentityPurpose::Mls => self.mls.verifying_key().to_bytes(),
+            IdentityPurpose::GroupCapability(_) => self.capability.verifying_key().to_bytes(),
+            IdentityPurpose::GroupRecovery(_) => self.recovery.verifying_key().to_bytes(),
             _ => return Err(IdentityError::Unavailable),
         })
     }
@@ -37,10 +43,43 @@ impl SecureIdentity for TestIdentity {
         let key = match purpose {
             IdentityPurpose::Root => &self.root,
             IdentityPurpose::Mls => &self.mls,
+            IdentityPurpose::GroupCapability(_) => &self.capability,
+            IdentityPurpose::GroupRecovery(_) => &self.recovery,
             _ => return Err(IdentityError::Unavailable),
         };
         Ok(key.sign(message).to_bytes())
     }
+}
+
+fn creation(
+    group_id: GroupId,
+    coordination_id: [u8; 32],
+    name: impl Into<String>,
+) -> GroupCreationConfig {
+    GroupCreationConfig {
+        group_id,
+        name: name.into(),
+        relay_url: "https://relay.example".into(),
+        coordinator: CoordinatorBinding::new(coordination_id, TestIdentity::new(60).root_public()),
+        mesh_enabled: false,
+    }
+}
+
+fn join_material(
+    member: &TestIdentity,
+    owner: &TestIdentity,
+    group_id: GroupId,
+    coordination_id: [u8; 32],
+    storage: &mut TransactionalOpenMlsStorage,
+) -> GroupJoinMaterial {
+    GroupJoinMaterial::issue(
+        member,
+        owner.root_public(),
+        group_id,
+        coordination_id,
+        storage,
+    )
+    .unwrap()
 }
 
 #[test]
@@ -54,17 +93,21 @@ fn joiner_reads_join_epoch_but_not_prejoin_ciphertext() {
     let mut carol_storage = TransactionalOpenMlsStorage::new();
     let mut dave_storage = TransactionalOpenMlsStorage::new();
 
-    let bob_package =
-        ReservedKeyPackage::issue(&bob, alice.root_public(), &mut bob_storage).unwrap();
-    let carol_package =
-        ReservedKeyPackage::issue(&carol, alice.root_public(), &mut carol_storage).unwrap();
+    let group_id = GroupId::from_bytes([6; 32]);
+    let coordination_id = [7; 32];
+    let bob_material = join_material(&bob, &alice, group_id, coordination_id, &mut bob_storage);
+    let carol_material = join_material(
+        &carol,
+        &alice,
+        group_id,
+        coordination_id,
+        &mut carol_storage,
+    );
     let (mut alice_group, welcome) = GroupEngine::create(
         &alice,
         &mut alice_storage,
-        "Birds",
-        "https://relay.example",
-        CoordinatorBinding::new([7; 32], TestIdentity::new(60).root_public()),
-        vec![bob_package, carol_package],
+        creation(group_id, coordination_id, "Birds"),
+        vec![bob_material, carol_material],
     )
     .unwrap();
     let mut bob_group = GroupEngine::join_welcome(&bob, &mut bob_storage, &welcome).unwrap();
@@ -77,17 +120,16 @@ fn joiner_reads_join_epoch_but_not_prejoin_ciphertext() {
             GroupApplication::text(b"before".to_vec(), None, 1),
         )
         .unwrap();
-    let dave_package =
-        ReservedKeyPackage::issue(&dave, alice.root_public(), &mut dave_storage).unwrap();
+    let dave_material = join_material(&dave, &alice, group_id, coordination_id, &mut dave_storage);
     let add = alice_group
         .stage_candidate(
             &alice,
             &mut alice_storage,
             GroupAction::Add {
                 actor: alice.root_public(),
-                subject: dave.root_public(),
+                member_keys: Box::new(dave_material.member_keys()),
             },
-            Some(dave_package),
+            Some(dave_material),
         )
         .unwrap();
     alice_group
@@ -142,28 +184,22 @@ fn removed_member_cannot_read_the_next_epoch() {
     let mut bob_storage = TransactionalOpenMlsStorage::new();
     let mut carol_storage = TransactionalOpenMlsStorage::new();
     let mut dave_storage = TransactionalOpenMlsStorage::new();
-    let packages = [&bob, &carol, &dave]
-        .into_iter()
-        .map(|member| {
-            ReservedKeyPackage::issue(
-                member,
-                alice.root_public(),
-                match member.root_public() {
-                    id if id == bob.root_public() => &mut bob_storage,
-                    id if id == carol.root_public() => &mut carol_storage,
-                    _ => &mut dave_storage,
-                },
-            )
-            .unwrap()
-        })
-        .collect();
+    let group_id = GroupId::from_bytes([16; 32]);
+    let coordination_id = [8; 32];
+    let bob_material = join_material(&bob, &alice, group_id, coordination_id, &mut bob_storage);
+    let carol_material = join_material(
+        &carol,
+        &alice,
+        group_id,
+        coordination_id,
+        &mut carol_storage,
+    );
+    let dave_material = join_material(&dave, &alice, group_id, coordination_id, &mut dave_storage);
     let (mut alice_group, welcome) = GroupEngine::create(
         &alice,
         &mut alice_storage,
-        "Birds",
-        "https://relay.example",
-        CoordinatorBinding::new([8; 32], TestIdentity::new(60).root_public()),
-        packages,
+        creation(group_id, coordination_id, "Birds"),
+        vec![bob_material, carol_material, dave_material],
     )
     .unwrap();
     let mut bob_group = GroupEngine::join_welcome(&bob, &mut bob_storage, &welcome).unwrap();
@@ -216,17 +252,21 @@ fn ciphertext_hints_are_checked_against_authenticated_content() {
     let mut alice_storage = TransactionalOpenMlsStorage::new();
     let mut bob_storage = TransactionalOpenMlsStorage::new();
     let mut carol_storage = TransactionalOpenMlsStorage::new();
-    let bob_package =
-        ReservedKeyPackage::issue(&bob, alice.root_public(), &mut bob_storage).unwrap();
-    let carol_package =
-        ReservedKeyPackage::issue(&carol, alice.root_public(), &mut carol_storage).unwrap();
+    let group_id = GroupId::from_bytes([26; 32]);
+    let coordination_id = [9; 32];
+    let bob_material = join_material(&bob, &alice, group_id, coordination_id, &mut bob_storage);
+    let carol_material = join_material(
+        &carol,
+        &alice,
+        group_id,
+        coordination_id,
+        &mut carol_storage,
+    );
     let (mut alice_group, welcome) = GroupEngine::create(
         &alice,
         &mut alice_storage,
-        "Birds",
-        "https://relay.example",
-        CoordinatorBinding::new([9; 32], TestIdentity::new(60).root_public()),
-        vec![bob_package, carol_package],
+        creation(group_id, coordination_id, "Birds"),
+        vec![bob_material, carol_material],
     )
     .unwrap();
     let mut bob_group = GroupEngine::join_welcome(&bob, &mut bob_storage, &welcome).unwrap();
@@ -258,17 +298,21 @@ fn processed_secret_tree_state_survives_checkpoint_reload() {
     let mut alice_storage = TransactionalOpenMlsStorage::new();
     let mut bob_storage = TransactionalOpenMlsStorage::new();
     let mut carol_storage = TransactionalOpenMlsStorage::new();
-    let bob_package =
-        ReservedKeyPackage::issue(&bob, alice.root_public(), &mut bob_storage).unwrap();
-    let carol_package =
-        ReservedKeyPackage::issue(&carol, alice.root_public(), &mut carol_storage).unwrap();
+    let group_id = GroupId::from_bytes([36; 32]);
+    let coordination_id = [10; 32];
+    let bob_material = join_material(&bob, &alice, group_id, coordination_id, &mut bob_storage);
+    let carol_material = join_material(
+        &carol,
+        &alice,
+        group_id,
+        coordination_id,
+        &mut carol_storage,
+    );
     let (mut alice_group, welcome) = GroupEngine::create(
         &alice,
         &mut alice_storage,
-        "Birds",
-        "https://relay.example",
-        CoordinatorBinding::new([10; 32], TestIdentity::new(60).root_public()),
-        vec![bob_package, carol_package],
+        creation(group_id, coordination_id, "Birds"),
+        vec![bob_material, carol_material],
     )
     .unwrap();
     let mut bob_group = GroupEngine::join_welcome(&bob, &mut bob_storage, &welcome).unwrap();

@@ -23,7 +23,7 @@ pub struct GroupMemberKeys {
 }
 
 impl GroupMemberKeys {
-    fn issue(
+    pub fn issue(
         identity: &impl SecureIdentity,
         intended_creator: [u8; 32],
         group_id: GroupId,
@@ -90,6 +90,18 @@ impl GroupMemberKeys {
 
     pub fn member_identity(&self) -> [u8; 32] {
         self.member_identity
+    }
+
+    pub fn group_id(&self) -> GroupId {
+        self.group_id
+    }
+
+    pub fn coordination_id(&self) -> [u8; 32] {
+        self.coordination_id
+    }
+
+    pub fn intended_creator(&self) -> [u8; 32] {
+        self.intended_creator
     }
 
     pub fn capability_public_key(&self) -> [u8; 32] {
@@ -201,6 +213,11 @@ impl GroupJoinMaterial {
 
     pub(crate) fn key_package(&self) -> ReservedKeyPackage {
         self.key_package.clone()
+    }
+
+    /// Returns the signed public-key binding carried with this join material.
+    pub fn member_keys(&self) -> GroupMemberKeys {
+        self.member_keys.clone()
     }
 
     pub fn encode(&self) -> Vec<u8> {

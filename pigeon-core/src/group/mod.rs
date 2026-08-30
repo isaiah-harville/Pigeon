@@ -18,8 +18,7 @@ pub use coordinator::{
     CoordinatorReceipt, coordinator_receipt_transcript, select_canonical_candidate,
 };
 pub use delivery::{DeliveryLedger, GroupDeliveryState};
-pub(crate) use engine::GroupCreationConfig;
-pub use engine::GroupEngine;
+pub use engine::{GroupCreationConfig, GroupEngine};
 pub use id::GroupId;
 pub use message::{AuthenticatedGroupMessage, GroupApplication, GroupCiphertext, GroupMessageId};
 pub use pending::PendingMutation;
