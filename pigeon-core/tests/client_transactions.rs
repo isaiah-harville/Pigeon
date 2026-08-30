@@ -506,7 +506,7 @@ fn policy_change_persists_before_releasing_a_coordinator_submission() {
 }
 
 #[test]
-fn added_member_is_granted_relay_access_and_welcome_only_after_canonical_merge() {
+fn membership_changes_release_relay_controls_and_welcome_only_after_canonical_merge() {
     let (mut owner_client, group_id, coordination_id, receipt_head) = create_anchored_group();
     let dave = TestIdentity::new(4);
     let invited = owner_client
@@ -554,6 +554,10 @@ fn added_member_is_granted_relay_access_and_welcome_only_after_canonical_merge()
     let submission =
         wire_proto::GroupCoordinatorSubmission::decode(submission_item.payload.as_slice()).unwrap();
     let canonical = coordinator_candidate(&submission, 2, receipt_head, coordination_id);
+    let second_receipt_head = CoordinatorReceipt::decode_candidate(&canonical)
+        .unwrap()
+        .0
+        .receipt_hash();
 
     let merged = owner_client
         .execute(ClientCommand::apply_group_coordinator_candidate("merge-dave", canonical).unwrap())
@@ -593,4 +597,44 @@ fn added_member_is_granted_relay_access_and_welcome_only_after_canonical_merge()
         .execute(ClientCommand::apply_group_welcome("join-dave", welcome.payload.clone()).unwrap())
         .unwrap();
     assert_eq!(joined.events.len(), 1);
+
+    let staged_remove = owner_client
+        .execute(
+            ClientCommand::remove_group_member(
+                "remove-dave",
+                group_id,
+                TestIdentity::new(4).root_public(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert!(staged_remove.events.is_empty());
+    let remove_item =
+        wire_proto::OutboundItem::decode(staged_remove.outbound[0].encode().as_slice()).unwrap();
+    let remove_submission =
+        wire_proto::GroupCoordinatorSubmission::decode(remove_item.payload.as_slice()).unwrap();
+    let canonical_remove =
+        coordinator_candidate(&remove_submission, 3, second_receipt_head, coordination_id);
+    let removed = owner_client
+        .execute(
+            ClientCommand::apply_group_coordinator_candidate("merge-remove", canonical_remove)
+                .unwrap(),
+        )
+        .unwrap();
+    let event = wire_proto::AppEvent::decode(removed.events[0].encode().as_slice()).unwrap();
+    let wire_proto::app_event::Body::GroupPolicyChanged(change) = event.body.unwrap() else {
+        panic!("expected member-removed policy event");
+    };
+    assert_eq!(
+        change.kind,
+        wire_proto::GroupPolicyChangeKind::MemberRemoved as i32
+    );
+    let revoke_item =
+        wire_proto::OutboundItem::decode(removed.outbound[0].encode().as_slice()).unwrap();
+    let revoke = GroupRelayControl::decode(&revoke_item.payload).unwrap();
+    assert_eq!(revoke.kind(), GroupRelayControlKind::Revoke);
+    assert_eq!(
+        revoke.public_key(),
+        TestIdentity::new(4).capability.verifying_key().to_bytes()
+    );
 }
