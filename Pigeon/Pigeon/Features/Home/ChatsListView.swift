@@ -52,7 +52,12 @@ struct ChatsListView: View {
         ChatView(contact: contact)
       }
     }
-    .sheet(isPresented: $showAddContact) { AddContactView() }
+    .sheet(isPresented: $showAddContact, onDismiss: openPendingChat) {
+      AddContactView { contactID in
+        pendingChatID = contactID
+        showAddContact = false
+      }
+    }
     .sheet(isPresented: $showMenu) { MenuView() }
     .sheet(isPresented: $showContacts, onDismiss: openPendingChat) {
       ContactsListView { contactID in

@@ -6,6 +6,7 @@
 //  The contact's name comes from their card; it can be edited later in the chat.
 //
 
+import PigeonFFI
 import SwiftUI
 
 struct AddContactView: View {
@@ -26,17 +27,29 @@ struct AddContactView: View {
   /// the other person has already added us, so once we add them the exchange is
   /// complete — we don't flip back to our QR (we were the second to scan).
   @State private var didShowMyCode = false
+  @State private var addedContactID: Data?
+  @State private var canOfferMessageRequest = false
+
+  private let onOpenMessageRequest: (Data) -> Void
 
   init() {
-    _pasted = State(initialValue: "")
-    _showManualEntry = State(initialValue: false)
+    self.init(initialCode: "") { _ in }
+  }
+
+  init(onOpenMessageRequest: @escaping (Data) -> Void) {
+    self.init(initialCode: "", onOpenMessageRequest: onOpenMessageRequest)
   }
 
   /// Opened from a tapped contact link: prefill the code and open the panel it
   /// belongs to, so the user only has to confirm.
   init(initialCode: String) {
+    self.init(initialCode: initialCode) { _ in }
+  }
+
+  init(initialCode: String, onOpenMessageRequest: @escaping (Data) -> Void) {
     _pasted = State(initialValue: initialCode)
     _showManualEntry = State(initialValue: !initialCode.isEmpty)
+    self.onOpenMessageRequest = onOpenMessageRequest
   }
 
   /// Nothing more to do on the scanner: either the in-person exchange is mutual
@@ -85,7 +98,7 @@ struct AddContactView: View {
       }
       return isComplete
         ? "Added \(addedName). You're all set."
-        : "Added \(addedName). Now have them scan your QR code to add you back."
+        : "Have \(addedName) scan your QR, or send them a message request."
     }
     return showingMyQR
       ? "Have the other person scan this QR code to add you."
@@ -107,6 +120,19 @@ struct AddContactView: View {
     VStack(spacing: 12) {
       scannerFrame
       if !isComplete { scanToggleButton }
+      if canOfferMessageRequest, showingMyQR, let addedContactID {
+        Button {
+          guard session.beginMessageRequest(to: addedContactID) else {
+            error = "Couldn't start a message request."
+            return
+          }
+          onOpenMessageRequest(addedContactID)
+        } label: {
+          Label("Send Message Request", systemImage: "paperplane.fill")
+        }
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.capsule)
+      }
     }
   }
 
@@ -214,13 +240,16 @@ struct AddContactView: View {
     }
     .padding(.top, 4)
   }
+}
 
+extension AddContactView {
   private func handle(_ code: String, verifiedInPerson: Bool) {
     guard let card = ContactCard(scanned: code) else {
       error = "That isn't a valid Pigeon contact code."
       return
     }
     let name = card.name.isEmpty ? "Unnamed" : card.name
+    let wasAlreadyKnown = session.contacts.contains { $0.id == card.bundle.identityKey }
     if session.addContact(
       card.bundle, name: name, relayURLs: card.relayURLs,
       prekeyBundle: card.prekeyBundle,
@@ -235,6 +264,8 @@ struct AddContactView: View {
       // anything, so we keep the link panel open for them to share back instead.
       withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
         addedName = name
+        addedContactID = card.bundle.identityKey
+        canOfferMessageRequest = verifiedInPerson && !wasAlreadyKnown
         addedRemotely = !verifiedInPerson
         showingMyFingerprint = false
         showingMyQR = verifiedInPerson && !didShowMyCode
