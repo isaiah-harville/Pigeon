@@ -141,6 +141,19 @@ message GroupRelayRegistration {
   bytes signature = 4;
 }
 
+enum GroupRelayControlKind {
+  GROUP_RELAY_CONTROL_KIND_UNSPECIFIED = 0;
+  GROUP_RELAY_CONTROL_KIND_GRANT = 1;
+  GROUP_RELAY_CONTROL_KIND_REVOKE = 2;
+}
+
+message GroupRelayControl {
+  uint32 version = 1;
+  bytes coordination_id = 2;
+  GroupRelayControlKind kind = 3;
+  bytes public_key = 4;
+}
+
 message CoordinatorReceipt {
   uint32 version = 1;
   bytes coordination_id = 2;

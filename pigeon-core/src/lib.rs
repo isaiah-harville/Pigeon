@@ -51,9 +51,10 @@ pub use group::{
     Actor, AuthenticatedGroupMessage, BufferDisposition, CanonicalCandidate, CoordinatorBinding,
     CoordinatorChain, CoordinatorChainError, CoordinatorReceipt, DeliveryLedger, EpochBuffer,
     GroupAction, GroupApplication, GroupCiphertext, GroupCreationConfig, GroupDeliveryState,
-    GroupEngine, GroupId, GroupMessageId, GroupRelayCapability, GroupRelayRegistration,
-    PendingMutation, PigeonGroupPolicy, PolicyError, PolicyEvent, PolicyEventKind,
-    coordinator_receipt_transcript, select_canonical_candidate, validate_transition,
+    GroupEngine, GroupId, GroupMessageId, GroupRelayCapability, GroupRelayControl,
+    GroupRelayControlKind, GroupRelayRegistration, PendingMutation, PigeonGroupPolicy, PolicyError,
+    PolicyEvent, PolicyEventKind, coordinator_receipt_transcript, select_canonical_candidate,
+    validate_transition,
 };
 pub use identity::{
     Account, GroupJoinMaterial, GroupJoinRequest, GroupMemberKeys, IdentityBundle, IdentityError,

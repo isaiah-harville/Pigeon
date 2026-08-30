@@ -297,6 +297,89 @@ impl PigeonGroupPolicy {
             .map(|index| self.member_keys[index].capability_public_key())
     }
 
+    pub(crate) fn relay_capability_delta(
+        &self,
+        next: &Self,
+        event: &PolicyEvent,
+    ) -> Result<Option<(bool, [u8; 32])>, PolicyError> {
+        if self.group_id != next.group_id
+            || self.coordination_id != next.coordination_id
+            || event.revision != next.revision
+        {
+            return Err(PolicyError::UnexpectedTransition);
+        }
+        let action = match event.kind {
+            PolicyEventKind::MemberAdded => {
+                let subject = event.subject.ok_or(PolicyError::UnexpectedTransition)?;
+                let member_keys = next
+                    .member_keys
+                    .iter()
+                    .find(|keys| keys.member_identity() == subject)
+                    .cloned()
+                    .ok_or(PolicyError::UnexpectedTransition)?;
+                GroupAction::Add {
+                    actor: event.actor,
+                    member_keys: Box::new(member_keys),
+                }
+            }
+            PolicyEventKind::MemberRemoved => GroupAction::Remove {
+                actor: event.actor,
+                subject: event.subject.ok_or(PolicyError::UnexpectedTransition)?,
+            },
+            PolicyEventKind::MemberLeft => {
+                let departing = event.subject.ok_or(PolicyError::UnexpectedTransition)?;
+                let committer = next
+                    .members
+                    .iter()
+                    .find(|identity| **identity != departing)
+                    .copied()
+                    .ok_or(PolicyError::UnexpectedTransition)?;
+                GroupAction::Leave {
+                    actor: departing,
+                    committer,
+                }
+            }
+            PolicyEventKind::AdminPromoted => GroupAction::Promote {
+                actor: event.actor,
+                subject: event.subject.ok_or(PolicyError::UnexpectedTransition)?,
+            },
+            PolicyEventKind::AdminDemoted => GroupAction::Demote {
+                actor: event.actor,
+                subject: event.subject.ok_or(PolicyError::UnexpectedTransition)?,
+            },
+            PolicyEventKind::NameChanged => GroupAction::Rename {
+                actor: event.actor,
+                name: next.name.clone(),
+            },
+            PolicyEventKind::MeshChanged => GroupAction::SetMesh {
+                actor: event.actor,
+                enabled: next.mesh_enabled,
+            },
+            PolicyEventKind::RelayChanged => GroupAction::SetRelay {
+                actor: event.actor,
+                relay_url: next.relay_url.clone(),
+            },
+            PolicyEventKind::Dissolved => GroupAction::Dissolve { actor: event.actor },
+        };
+        let (expected, expected_event) = self.apply(&action)?;
+        if expected != *next || expected_event != *event {
+            return Err(PolicyError::UnexpectedTransition);
+        }
+        match event.kind {
+            PolicyEventKind::MemberAdded => Ok(Some((
+                true,
+                next.member_capability_key(event.subject.ok_or(PolicyError::UnexpectedTransition)?)
+                    .ok_or(PolicyError::UnexpectedTransition)?,
+            ))),
+            PolicyEventKind::MemberRemoved | PolicyEventKind::MemberLeft => Ok(Some((
+                false,
+                self.member_capability_key(event.subject.ok_or(PolicyError::UnexpectedTransition)?)
+                    .ok_or(PolicyError::UnexpectedTransition)?,
+            ))),
+            _ => Ok(None),
+        }
+    }
+
     fn to_proto(&self) -> proto::PigeonGroupPolicy {
         proto::PigeonGroupPolicy {
             protocol_version: self.protocol_version,

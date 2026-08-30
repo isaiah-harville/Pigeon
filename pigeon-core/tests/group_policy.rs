@@ -1,7 +1,8 @@
 use ed25519_dalek::{Signer, SigningKey};
 use pigeon_core::{
-    CoordinatorBinding, GroupAction, GroupId, GroupMemberKeys, IdentityError, IdentityPurpose,
-    PigeonGroupPolicy, PolicyError, SecureIdentity, validate_transition,
+    CoordinatorBinding, GroupAction, GroupId, GroupMemberKeys, GroupRelayControl,
+    GroupRelayControlKind, IdentityError, IdentityPurpose, PigeonGroupPolicy, PolicyError,
+    SecureIdentity, validate_transition,
 };
 use sha2::{Digest, Sha256};
 
@@ -204,6 +205,51 @@ fn roster_bounds_and_duplicates_are_rejected() {
             })
             .is_err()
     );
+}
+
+#[test]
+fn membership_transitions_derive_exact_relay_capability_changes() {
+    let prior = policy();
+    let dave_keys = member_keys(4);
+    let dave_capability = dave_keys.capability_public_key();
+    let (with_dave, added) = prior
+        .apply(&GroupAction::Add {
+            actor: root(2),
+            member_keys: Box::new(dave_keys),
+        })
+        .unwrap();
+    let grant = GroupRelayControl::for_transition(&prior, &with_dave, &added)
+        .unwrap()
+        .unwrap();
+    assert_eq!(grant.kind(), GroupRelayControlKind::Grant);
+    assert_eq!(grant.public_key(), dave_capability);
+    assert_eq!(grant.coordination_id(), COORDINATION_ID);
+    assert_eq!(GroupRelayControl::decode(&grant.encode()).unwrap(), grant);
+
+    let (without_dave, removed) = with_dave
+        .apply(&GroupAction::Remove {
+            actor: root(2),
+            subject: root(4),
+        })
+        .unwrap();
+    let revoke = GroupRelayControl::for_transition(&with_dave, &without_dave, &removed)
+        .unwrap()
+        .unwrap();
+    assert_eq!(revoke.kind(), GroupRelayControlKind::Revoke);
+    assert_eq!(revoke.public_key(), dave_capability);
+
+    let (renamed, renamed_event) = without_dave
+        .apply(&GroupAction::Rename {
+            actor: root(1),
+            name: "Best Friends".into(),
+        })
+        .unwrap();
+    assert!(
+        GroupRelayControl::for_transition(&without_dave, &renamed, &renamed_event)
+            .unwrap()
+            .is_none()
+    );
+    assert!(GroupRelayControl::for_transition(&prior, &renamed, &added).is_err());
 }
 
 #[test]

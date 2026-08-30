@@ -7,6 +7,7 @@ use crate::identity::{IdentityPurpose, SecureIdentity};
 use crate::wire::{MAX_GROUP_MEMBERS, MAX_MLS_OBJECT_BYTES, proto};
 
 const REGISTRATION_VERSION: u32 = 1;
+const CONTROL_VERSION: u32 = 1;
 const REGISTRATION_DOMAIN: &[u8] = b"pigeon.relay.group.registration.v1";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,6 +33,97 @@ impl GroupRelayCapability {
 
     pub fn can_control(&self) -> bool {
         self.can_control
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GroupRelayControlKind {
+    Grant,
+    Revoke,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroupRelayControl {
+    coordination_id: [u8; 32],
+    kind: GroupRelayControlKind,
+    public_key: [u8; 32],
+}
+
+impl GroupRelayControl {
+    pub fn for_transition(
+        prior: &super::PigeonGroupPolicy,
+        next: &super::PigeonGroupPolicy,
+        event: &super::PolicyEvent,
+    ) -> Result<Option<Self>, super::PolicyError> {
+        prior.relay_capability_delta(next, event).map(|delta| {
+            delta.map(|(grant, public_key)| Self {
+                coordination_id: next.coordination_id(),
+                kind: if grant {
+                    GroupRelayControlKind::Grant
+                } else {
+                    GroupRelayControlKind::Revoke
+                },
+                public_key,
+            })
+        })
+    }
+
+    pub fn coordination_id(&self) -> [u8; 32] {
+        self.coordination_id
+    }
+
+    pub fn kind(&self) -> GroupRelayControlKind {
+        self.kind
+    }
+
+    pub fn public_key(&self) -> [u8; 32] {
+        self.public_key
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        proto::GroupRelayControl {
+            version: CONTROL_VERSION,
+            coordination_id: self.coordination_id.to_vec(),
+            kind: match self.kind {
+                GroupRelayControlKind::Grant => proto::GroupRelayControlKind::Grant as i32,
+                GroupRelayControlKind::Revoke => proto::GroupRelayControlKind::Revoke as i32,
+            },
+            public_key: self.public_key.to_vec(),
+        }
+        .encode_to_vec()
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, Error> {
+        if bytes.len() > MAX_MLS_OBJECT_BYTES {
+            return Err(Error::ResourceLimit("group relay control bytes"));
+        }
+        let control = proto::GroupRelayControl::decode(bytes).map_err(|_| Error::Serialization)?;
+        if control.version != CONTROL_VERSION {
+            return Err(Error::UnsupportedVersion {
+                kind: "group relay control",
+                version: control.version,
+            });
+        }
+        let kind = match proto::GroupRelayControlKind::try_from(control.kind)
+            .map_err(|_| Error::Serialization)?
+        {
+            proto::GroupRelayControlKind::Grant => GroupRelayControlKind::Grant,
+            proto::GroupRelayControlKind::Revoke => GroupRelayControlKind::Revoke,
+            proto::GroupRelayControlKind::Unspecified => return Err(Error::Serialization),
+        };
+        Ok(Self {
+            coordination_id: control
+                .coordination_id
+                .as_slice()
+                .try_into()
+                .map_err(|_| Error::InvalidKey)?,
+            kind,
+            public_key: control
+                .public_key
+                .as_slice()
+                .try_into()
+                .map_err(|_| Error::InvalidKey)?,
+        })
     }
 }
 

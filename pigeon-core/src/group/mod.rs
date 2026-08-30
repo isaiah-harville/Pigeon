@@ -23,4 +23,6 @@ pub use id::GroupId;
 pub use message::{AuthenticatedGroupMessage, GroupApplication, GroupCiphertext, GroupMessageId};
 pub use pending::PendingMutation;
 pub use policy::{PigeonGroupPolicy, PolicyError, validate_transition};
-pub use relay::{GroupRelayCapability, GroupRelayRegistration};
+pub use relay::{
+    GroupRelayCapability, GroupRelayControl, GroupRelayControlKind, GroupRelayRegistration,
+};
