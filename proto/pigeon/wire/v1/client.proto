@@ -97,6 +97,7 @@ message ClientCheckpoint {
   repeated StoredDeliveryLedger delivery_ledgers = 9;
   repeated BufferedGroupMessage buffered_group_messages = 10;
   repeated PendingGroupMutation pending_group_mutations = 11;
+  repeated PendingGroupAddition pending_group_additions = 12;
 }
 
 message PendingGroupCreation {
@@ -143,4 +144,12 @@ message PendingGroupMutation {
   GroupPolicyChangeKind event_kind = 5;
   bytes actor_identity = 6;
   bytes subject_identity = 7;
+  bytes welcome = 8;
+  bytes welcome_destination = 9;
+}
+
+message PendingGroupAddition {
+  string request_id = 1;
+  bytes group_id = 2;
+  bytes member_identity = 3;
 }

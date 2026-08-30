@@ -7,7 +7,7 @@ use crate::group::{
     CoordinatorChain, CoordinatorReceipt, GroupAction, GroupEngine, GroupRelayControl,
     PigeonGroupPolicy, PolicyEvent, PolicyEventKind,
 };
-use crate::identity::{IdentityPurpose, SecureIdentity};
+use crate::identity::{GroupJoinMaterial, GroupJoinRequest, IdentityPurpose, SecureIdentity};
 use crate::storage::{StateStore, TransactionalOpenMlsStorage};
 use crate::wire::{PROTOCOL_VERSION, proto};
 
@@ -111,6 +111,17 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 },
             });
         }
+        if !pending.welcome.is_empty() {
+            output.outbound.push(OutboundItem {
+                inner: proto::OutboundItem {
+                    item_id: format!("{command_id}:welcome"),
+                    kind: proto::OutboundKind::GroupWelcome as i32,
+                    relay_url: prior.relay_url().to_owned(),
+                    destination: pending.welcome_destination,
+                    payload: pending.welcome,
+                },
+            });
+        }
         Ok(())
     }
 
@@ -121,6 +132,11 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         candidate: &mut proto::ClientCheckpoint,
         output: &mut ClientOutput,
     ) -> Result<(), Error> {
+        let kind = proto::GroupPolicyChangeKind::try_from(change.kind)
+            .map_err(|_| Error::MalformedBundle)?;
+        if kind == proto::GroupPolicyChangeKind::MemberAdded {
+            return self.stage_invite_group_member(command_id, change, candidate, output);
+        }
         if candidate
             .pending_group_mutations
             .iter()
@@ -156,6 +172,8 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     .subject
                     .map(|subject| subject.to_vec())
                     .unwrap_or_default(),
+                welcome: Vec::new(),
+                welcome_destination: Vec::new(),
             });
         output.outbound.push(OutboundItem {
             inner: proto::OutboundItem {
@@ -173,6 +191,170 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         });
         Ok(())
     }
+
+    pub(super) fn stage_apply_group_addition_material(
+        &self,
+        command_id: &str,
+        inbound: &proto::ApplyInbound,
+        material: &GroupJoinMaterial,
+        candidate: &mut proto::ClientCheckpoint,
+        output: &mut ClientOutput,
+    ) -> Result<bool, Error> {
+        let Some(addition_index) = candidate
+            .pending_group_additions
+            .iter()
+            .position(|addition| addition.request_id == inbound.request_id)
+        else {
+            return Ok(false);
+        };
+        let addition = candidate.pending_group_additions[addition_index].clone();
+        if candidate
+            .pending_group_mutations
+            .iter()
+            .any(|pending| pending.group_id == addition.group_id)
+        {
+            return Err(Error::Mls("group mutation already pending"));
+        }
+        let stored = candidate
+            .groups
+            .iter()
+            .find(|group| group.group_id == addition.group_id)
+            .cloned()
+            .ok_or(Error::InvalidKey)?;
+        let policy = PigeonGroupPolicy::decode(&stored.policy)?;
+        let actor = self.identity.ensure_public_key(IdentityPurpose::Root)?;
+        material.verify_for_requester(
+            actor,
+            policy.owner(),
+            policy.group_id(),
+            policy.coordination_id(),
+        )?;
+        if material.member_identity().as_slice() != addition.member_identity {
+            return Err(Error::InvalidSignature);
+        }
+        let mut mls_storage =
+            TransactionalOpenMlsStorage::from_checkpoint(&candidate.openmls_checkpoint)?;
+        let mut engine = GroupEngine::restore(&mls_storage, policy, stored.epoch)?;
+        let pending = engine.stage_candidate(
+            &self.identity,
+            &mut mls_storage,
+            GroupAction::Add {
+                actor,
+                member_keys: Box::new(material.member_keys()),
+            },
+            Some(material.clone()),
+        )?;
+        candidate.openmls_checkpoint = mls_storage.export_checkpoint()?;
+        candidate
+            .consumed_key_package_hashes
+            .push(material.package_hash().to_vec());
+        candidate
+            .pending_group_mutations
+            .push(proto::PendingGroupMutation {
+                group_id: addition.group_id.clone(),
+                base_epoch: stored.epoch,
+                commit: pending.commit().to_vec(),
+                next_policy: pending.next_policy().encode(),
+                event_kind: event_kind(pending.event().kind) as i32,
+                actor_identity: pending.event().actor.to_vec(),
+                subject_identity: pending
+                    .event()
+                    .subject
+                    .map(|subject| subject.to_vec())
+                    .unwrap_or_default(),
+                welcome: pending.welcome().ok_or(Error::Serialization)?.to_vec(),
+                welcome_destination: addition.member_identity,
+            });
+        candidate.pending_group_additions.remove(addition_index);
+        output.outbound.push(coordinator_submission(
+            command_id,
+            &stored,
+            engine.policy().coordination_id(),
+            pending.commit(),
+        ));
+        Ok(true)
+    }
+
+    fn stage_invite_group_member(
+        &self,
+        command_id: &str,
+        change: &proto::ChangeGroupPolicy,
+        candidate: &mut proto::ClientCheckpoint,
+        output: &mut ClientOutput,
+    ) -> Result<(), Error> {
+        if candidate
+            .pending_group_mutations
+            .iter()
+            .any(|pending| pending.group_id == change.group_id)
+            || candidate
+                .pending_group_additions
+                .iter()
+                .any(|addition| addition.group_id == change.group_id)
+        {
+            return Err(Error::Mls("group mutation already pending"));
+        }
+        let stored = candidate
+            .groups
+            .iter()
+            .find(|group| group.group_id == change.group_id)
+            .cloned()
+            .ok_or(Error::InvalidKey)?;
+        let policy = PigeonGroupPolicy::decode(&stored.policy)?;
+        let actor = self.identity.ensure_public_key(IdentityPurpose::Root)?;
+        let subject = decode_subject(&change.subject_identity)?;
+        policy.can_invite(actor, subject)?;
+        let request = GroupJoinRequest::create_for_owner(
+            &self.identity,
+            policy.owner(),
+            policy.group_id(),
+            policy.coordination_id(),
+            policy.relay_url(),
+        )?;
+        let request_id = format!("{command_id}:join");
+        candidate
+            .pending_group_additions
+            .push(proto::PendingGroupAddition {
+                request_id: request_id.clone(),
+                group_id: change.group_id.clone(),
+                member_identity: subject.to_vec(),
+            });
+        output.outbound.push(OutboundItem {
+            inner: proto::OutboundItem {
+                item_id: request_id,
+                kind: proto::OutboundKind::GroupJoinRequest as i32,
+                relay_url: stored.relay_url,
+                destination: subject.to_vec(),
+                payload: request.encode(),
+            },
+        });
+        Ok(())
+    }
+}
+
+fn coordinator_submission(
+    command_id: &str,
+    stored: &proto::StoredGroup,
+    coordination_id: [u8; 32],
+    commit: &[u8],
+) -> OutboundItem {
+    OutboundItem {
+        inner: proto::OutboundItem {
+            item_id: format!("{command_id}:coordinate"),
+            kind: proto::OutboundKind::GroupCoordinator as i32,
+            relay_url: stored.relay_url.clone(),
+            destination: coordination_id.to_vec(),
+            payload: proto::GroupCoordinatorSubmission {
+                version: PROTOCOL_VERSION,
+                claimed_base_epoch: stored.epoch,
+                candidate: commit.to_vec(),
+            }
+            .encode_to_vec(),
+        },
+    }
+}
+
+fn decode_subject(bytes: &[u8]) -> Result<[u8; 32], Error> {
+    bytes.try_into().map_err(|_| Error::InvalidKey)
 }
 
 fn action_from_change(
@@ -181,13 +363,7 @@ fn action_from_change(
 ) -> Result<GroupAction, Error> {
     let kind =
         proto::GroupPolicyChangeKind::try_from(change.kind).map_err(|_| Error::MalformedBundle)?;
-    let subject = || {
-        change
-            .subject_identity
-            .as_slice()
-            .try_into()
-            .map_err(|_| Error::InvalidKey)
-    };
+    let subject = || decode_subject(&change.subject_identity);
     match kind {
         proto::GroupPolicyChangeKind::MemberRemoved => Ok(GroupAction::Remove {
             actor,

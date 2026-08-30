@@ -380,6 +380,19 @@ impl PigeonGroupPolicy {
         }
     }
 
+    pub(crate) fn can_invite(&self, actor: [u8; 32], subject: [u8; 32]) -> Result<(), PolicyError> {
+        self.validate_invariants()?;
+        self.require_admin(&actor)?;
+        if self.dissolved
+            || self.members.len() >= MAX_GROUP_MEMBERS
+            || self.has_member(&subject)
+            || VerifyingKey::from_bytes(&subject).is_err()
+        {
+            return Err(PolicyError::InvalidRoster);
+        }
+        Ok(())
+    }
+
     fn to_proto(&self) -> proto::PigeonGroupPolicy {
         proto::PigeonGroupPolicy {
             protocol_version: self.protocol_version,

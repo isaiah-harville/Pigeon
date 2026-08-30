@@ -33,6 +33,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 delivery_ledgers: Vec::new(),
                 buffered_group_messages: Vec::new(),
                 pending_group_mutations: Vec::new(),
+                pending_group_additions: Vec::new(),
             },
         };
         Ok(Self {

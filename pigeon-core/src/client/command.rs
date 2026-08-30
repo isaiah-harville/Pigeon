@@ -173,6 +173,19 @@ impl ClientCommand {
         )
     }
 
+    pub fn add_group_member(
+        command_id: impl Into<String>,
+        group_id: GroupId,
+        subject: [u8; 32],
+    ) -> Result<Self, Error> {
+        Self::member_policy_change(
+            command_id,
+            group_id,
+            proto::GroupPolicyChangeKind::MemberAdded,
+            subject,
+        )
+    }
+
     pub fn dissolve_group(command_id: impl Into<String>, group_id: GroupId) -> Result<Self, Error> {
         Self::change_group_policy(
             command_id,

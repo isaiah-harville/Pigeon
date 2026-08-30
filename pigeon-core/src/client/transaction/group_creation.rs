@@ -150,6 +150,11 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         {
             return Err(Error::InvalidSignature);
         }
+        if self.stage_apply_group_addition_material(
+            command_id, inbound, &material, candidate, output,
+        )? {
+            return Ok(());
+        }
         let draft_index = candidate
             .pending_group_creations
             .iter()
