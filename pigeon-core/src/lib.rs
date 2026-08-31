@@ -45,7 +45,9 @@ mod identity;
 mod storage;
 mod wire;
 
-pub use client::{AppEvent, ClientCommand, ClientOutput, OutboundItem, PigeonClient};
+pub use client::{
+    AppEvent, ClientCommand, ClientOutput, ClientSnapshot, OutboundItem, PigeonClient,
+};
 pub use error::Error;
 pub use group::{
     Actor, AuthenticatedGroupMessage, BufferDisposition, CanonicalCandidate, CoordinatorBinding,

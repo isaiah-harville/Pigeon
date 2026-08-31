@@ -31,6 +31,17 @@ pub struct ClientOutput {
     pub outbound: Vec<OutboundItem>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ClientSnapshot {
+    pub(crate) inner: proto::ClientSnapshot,
+}
+
+impl ClientSnapshot {
+    pub fn encode(&self) -> Vec<u8> {
+        self.inner.encode_to_vec()
+    }
+}
+
 impl ClientOutput {
     pub(crate) fn empty(checkpoint_generation: u64) -> Self {
         Self {

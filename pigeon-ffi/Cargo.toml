@@ -27,3 +27,4 @@ uniffi = { version = "0.31", features = ["cli"] }
 
 [dev-dependencies]
 ed25519-dalek = "2"
+prost = "0.14"

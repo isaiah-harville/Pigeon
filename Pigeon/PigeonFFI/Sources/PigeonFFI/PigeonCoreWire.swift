@@ -14,6 +14,11 @@ extension FfiClient {
     let output = try Pigeon_Wire_V1_ClientOutput(serializedBytes: execute(command: encoded))
     return try PigeonCoreOutput(proto: output)
   }
+
+  public func stateSnapshot() throws -> PigeonCoreSnapshot {
+    let proto = try Pigeon_Wire_V1_ClientSnapshot(serializedBytes: snapshot())
+    return PigeonCoreSnapshot(proto: proto)
+  }
 }
 
 extension PigeonCoreOutput {
@@ -21,6 +26,27 @@ extension PigeonCoreOutput {
     checkpointGeneration = proto.checkpointGeneration
     events = try proto.events.map(PigeonCoreEvent.init(proto:))
     outbound = proto.outbound.map(PigeonCoreOutboundItem.init(proto:))
+  }
+}
+
+extension PigeonCoreSnapshot {
+  init(proto: Pigeon_Wire_V1_ClientSnapshot) {
+    self.init(
+      checkpointGeneration: proto.checkpointGeneration,
+      groups: proto.groups.map(PigeonGroupState.init(proto:)))
+  }
+}
+
+extension PigeonGroupState {
+  init(proto: Pigeon_Wire_V1_GroupState) {
+    self.init(
+      groupID: proto.groupID, ownerIdentity: proto.ownerIdentity,
+      adminIdentities: proto.adminIdentities, memberIdentities: proto.memberIdentities,
+      name: proto.name, relayURL: proto.relayURL, coordinationID: proto.coordinationID,
+      meshEnabled: proto.meshEnabled, epoch: proto.epoch,
+      policyRevision: proto.policyRevision, dissolved: proto.dissolved,
+      capabilityPublicKey: proto.capabilityPublicKey,
+      coordinatorPublicKey: proto.coordinatorPublicKey)
   }
 }
 

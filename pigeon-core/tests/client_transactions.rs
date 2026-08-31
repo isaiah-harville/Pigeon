@@ -410,6 +410,40 @@ fn final_join_material_atomically_creates_the_real_mls_group() {
 }
 
 #[test]
+fn snapshot_rebuilds_group_projection_without_advancing_checkpoint() {
+    let anchored = create_anchored_group();
+    let generation = anchored.owner.checkpoint_generation();
+
+    let snapshot =
+        wire_proto::ClientSnapshot::decode(anchored.owner.snapshot().unwrap().encode().as_slice())
+            .unwrap();
+
+    assert_eq!(snapshot.checkpoint_generation, generation);
+    assert_eq!(anchored.owner.checkpoint_generation(), generation);
+    assert_eq!(snapshot.groups.len(), 1);
+    let group = &snapshot.groups[0];
+    assert_eq!(group.group_id, anchored.group_id.as_bytes());
+    assert_eq!(group.owner_identity, TestIdentity::new(1).root_public());
+    assert_eq!(
+        group.admin_identities,
+        vec![TestIdentity::new(1).root_public()]
+    );
+    assert_eq!(group.member_identities.len(), 3);
+    assert_eq!(group.name, "Friends");
+    assert_eq!(group.relay_url, "https://relay.example");
+    assert_eq!(group.coordination_id, anchored.coordination_id);
+    assert_eq!(group.capability_public_key.len(), 32);
+    assert_eq!(
+        group.coordinator_public_key,
+        TestIdentity::new(60).root_public()
+    );
+    assert_eq!(group.epoch, 1);
+    assert_eq!(group.policy_revision, 0);
+    assert!(!group.mesh_enabled);
+    assert!(!group.dissolved);
+}
+
+#[test]
 fn one_join_material_cannot_fill_two_group_drafts() {
     let owner = TestIdentity::new(1);
     let bob = TestIdentity::new(2);

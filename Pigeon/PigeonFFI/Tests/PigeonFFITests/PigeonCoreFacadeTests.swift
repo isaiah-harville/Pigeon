@@ -197,3 +197,50 @@ final class PigeonCoreFacadeTests: XCTestCase {
     return event
   }
 }
+
+extension PigeonCoreFacadeTests {
+  func testPublicFacadeReadsSnapshotWithoutChangingGeneration() throws {
+    let client = try PigeonCoreClient(identity: Identity(), store: Store())
+
+    let snapshot = try client.stateSnapshot()
+
+    XCTAssertEqual(snapshot, PigeonCoreSnapshot(checkpointGeneration: 0, groups: []))
+    XCTAssertEqual(try client.checkpointGeneration(), 0)
+  }
+
+  func testSnapshotMapsAuthenticatedGroupProjection() {
+    var group = Pigeon_Wire_V1_GroupState()
+    group.groupID = Data([1])
+    group.ownerIdentity = Data([2])
+    group.adminIdentities = [Data([2]), Data([3])]
+    group.memberIdentities = [Data([2]), Data([3]), Data([4])]
+    group.name = "Birds"
+    group.relayURL = "https://relay.example"
+    group.coordinationID = Data([5])
+    group.meshEnabled = true
+    group.epoch = 6
+    group.policyRevision = 7
+    group.dissolved = false
+    group.capabilityPublicKey = Data([8])
+    group.coordinatorPublicKey = Data([9])
+    var snapshot = Pigeon_Wire_V1_ClientSnapshot()
+    snapshot.checkpointGeneration = 10
+    snapshot.groups = [group]
+
+    let mapped = PigeonCoreSnapshot(proto: snapshot)
+
+    XCTAssertEqual(
+      mapped,
+      PigeonCoreSnapshot(
+        checkpointGeneration: 10,
+        groups: [
+          PigeonGroupState(
+            groupID: Data([1]), ownerIdentity: Data([2]),
+            adminIdentities: [Data([2]), Data([3])],
+            memberIdentities: [Data([2]), Data([3]), Data([4])], name: "Birds",
+            relayURL: "https://relay.example", coordinationID: Data([5]),
+            meshEnabled: true, epoch: 6, policyRevision: 7, dissolved: false,
+            capabilityPublicKey: Data([8]), coordinatorPublicKey: Data([9]))
+        ]))
+  }
+}

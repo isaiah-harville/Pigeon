@@ -1,11 +1,12 @@
 use std::sync::{Arc, Mutex};
 
 use ed25519_dalek::{Signer, SigningKey};
-use pigeon_core::ClientCommand;
+use pigeon_core::{wire_proto, ClientCommand};
 use pigeon_ffi::{
     Checkpoint, CheckpointStore, FfiClient, IdentityPurposeKind, IdentityPurposeRequest,
     PlatformError, PlatformIdentity,
 };
+use prost::Message;
 
 #[derive(Debug)]
 struct TestIdentity {
@@ -111,5 +112,21 @@ fn client_releases_no_output_when_the_host_checkpoint_fails() {
     let client = FfiClient::new(Arc::new(TestIdentity::new()), store).unwrap();
 
     assert!(client.execute(create_group().encode()).is_err());
+    assert_eq!(client.checkpoint_generation().unwrap(), 0);
+}
+
+#[test]
+fn client_exposes_read_only_snapshot_bytes() {
+    let client = FfiClient::new(
+        Arc::new(TestIdentity::new()),
+        Arc::new(TestStore::default()),
+    )
+    .unwrap();
+
+    let snapshot =
+        wire_proto::ClientSnapshot::decode(client.snapshot().unwrap().as_slice()).unwrap();
+
+    assert_eq!(snapshot.checkpoint_generation, 0);
+    assert!(snapshot.groups.is_empty());
     assert_eq!(client.checkpoint_generation().unwrap(), 0);
 }

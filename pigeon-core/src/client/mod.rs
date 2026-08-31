@@ -5,5 +5,5 @@ mod event;
 mod transaction;
 
 pub use command::ClientCommand;
-pub use event::{AppEvent, ClientOutput, OutboundItem};
+pub use event::{AppEvent, ClientOutput, ClientSnapshot, OutboundItem};
 pub use transaction::PigeonClient;

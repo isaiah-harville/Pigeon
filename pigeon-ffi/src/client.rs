@@ -169,6 +169,17 @@ impl FfiClient {
             .map_err(|_| PigeonError::Persistence)?
             .checkpoint_generation())
     }
+
+    /// Returns a versioned, read-only projection of durable group state. This
+    /// never advances or replaces the checkpoint.
+    pub fn snapshot(&self) -> Result<Vec<u8>, PigeonError> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| PigeonError::Persistence)?
+            .snapshot()?
+            .encode())
+    }
 }
 
 fn purpose_request(purpose: IdentityPurpose) -> IdentityPurposeRequest {

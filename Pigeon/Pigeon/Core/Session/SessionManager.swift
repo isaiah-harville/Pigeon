@@ -113,6 +113,10 @@ final class SessionManager {
   private(set) var coreClient: PigeonCoreClient?
   private var coreIdentityProvider: CoreIdentityProvider?
   private var coreCheckpointStore: CoreCheckpointStore?
+  /// Authenticated group projection rebuilt from the Rust checkpoint. It is
+  /// never persisted separately, so it cannot drift across a crash boundary.
+  var groups: [PigeonGroupState] = []
+  var coreSnapshotGeneration: UInt64 = 0
 
   /// Configured relay endpoints, mirrored here so the value is observable —
   /// changing it refreshes anything that depends on it (e.g. the QR card, which
@@ -191,9 +195,11 @@ final class SessionManager {
     let coreClient = try PigeonCoreClient(
       identity: coreIdentityProvider,
       store: coreCheckpointStore)
+    let coreSnapshot = try coreClient.stateSnapshot()
     self.coreIdentityProvider = coreIdentityProvider
     self.coreCheckpointStore = coreCheckpointStore
     self.coreClient = coreClient
+    applyCoreSnapshot(coreSnapshot)
     account = loaded.account
     contacts = loaded.contacts
     conversationStore.load(loaded.conversations)  // in-memory view starts from disk

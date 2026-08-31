@@ -2109,6 +2109,7 @@ dependencies = [
  "ed25519-dalek",
  "pigeon-core",
  "pigeon-mesh",
+ "prost",
  "uniffi",
 ]
 

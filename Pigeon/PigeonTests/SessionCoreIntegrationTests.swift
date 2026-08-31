@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import PigeonFFI
 import XCTest
 
 @testable import Pigeon
@@ -14,6 +15,24 @@ final class SessionCoreIntegrationTests: XCTestCase {
 
     XCTAssertTrue(fixture.manager.isUnlocked)
     XCTAssertEqual(try fixture.manager.coreClient?.checkpointGeneration(), 0)
+    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, 0)
+    XCTAssertEqual(fixture.manager.groups, [])
+  }
+
+  func testCoreSnapshotAtomicallyReplacesGroupProjectionAndRejectsRollback() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    let current = groupState(name: "Birds", revision: 2)
+
+    fixture.manager.applyCoreSnapshot(
+      PigeonCoreSnapshot(
+        checkpointGeneration: 5, groups: [current]))
+    fixture.manager.applyCoreSnapshot(
+      PigeonCoreSnapshot(
+        checkpointGeneration: 4, groups: [groupState(name: "Stale", revision: 1)]))
+
+    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, 5)
+    XCTAssertEqual(fixture.manager.groups, [current])
   }
 
   func testCorruptCoreCheckpointKeepsSessionLocked() throws {
@@ -42,6 +61,22 @@ final class SessionCoreIntegrationTests: XCTestCase {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("pigeon-session-core-\(UUID().uuidString).store")
     return (manager, EncryptedStore(key: SymmetricKey(size: .bits256), url: url))
+  }
+
+  private func groupState(name: String, revision: UInt64) -> PigeonGroupState {
+    PigeonGroupState(
+      groupID: Data(repeating: 1, count: 32),
+      ownerIdentity: Data(repeating: 2, count: 32),
+      adminIdentities: [Data(repeating: 2, count: 32)],
+      memberIdentities: [
+        Data(repeating: 2, count: 32), Data(repeating: 3, count: 32),
+        Data(repeating: 4, count: 32),
+      ],
+      name: name, relayURL: "https://relay.example",
+      coordinationID: Data(repeating: 5, count: 32), meshEnabled: false,
+      epoch: 3, policyRevision: revision, dissolved: false,
+      capabilityPublicKey: Data(repeating: 6, count: 32),
+      coordinatorPublicKey: Data(repeating: 7, count: 32))
   }
 
   private func wipe(_ store: EncryptedStore) {

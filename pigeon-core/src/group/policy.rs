@@ -297,6 +297,10 @@ impl PigeonGroupPolicy {
         &self.members
     }
 
+    pub fn admins(&self) -> &[[u8; 32]] {
+        &self.admins
+    }
+
     pub fn is_admin(&self, identity: [u8; 32]) -> bool {
         self.admins.binary_search(&identity).is_ok()
     }

@@ -6,7 +6,8 @@ mod group_policy;
 use checkpoint::{decode_checkpoint, encode_checkpoint};
 
 use crate::Error;
-use crate::client::{ClientCommand, ClientOutput};
+use crate::client::{ClientCommand, ClientOutput, ClientSnapshot};
+use crate::group::PigeonGroupPolicy;
 use crate::identity::SecureIdentity;
 use crate::storage::StateStore;
 use crate::wire::{PROTOCOL_VERSION, proto};
@@ -103,6 +104,54 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
 
     pub fn checkpoint_generation(&self) -> u64 {
         self.state.generation
+    }
+
+    /// Returns the durable application projection without mutating or replacing
+    /// the checkpoint. Hosts use this to rebuild UI state after a crash or
+    /// relaunch; the core checkpoint remains the sole group-state authority.
+    pub fn snapshot(&self) -> Result<ClientSnapshot, Error> {
+        let local_identity = self
+            .identity
+            .ensure_public_key(crate::IdentityPurpose::Root)?;
+        let groups = self
+            .state
+            .groups
+            .iter()
+            .map(|stored| {
+                let policy = PigeonGroupPolicy::decode(&stored.policy)?;
+                Ok(proto::GroupState {
+                    group_id: policy.group_id().as_bytes().to_vec(),
+                    owner_identity: policy.owner().to_vec(),
+                    admin_identities: policy
+                        .admins()
+                        .iter()
+                        .map(|identity| identity.to_vec())
+                        .collect(),
+                    member_identities: policy
+                        .members()
+                        .iter()
+                        .map(|identity| identity.to_vec())
+                        .collect(),
+                    name: policy.name().to_owned(),
+                    relay_url: policy.relay_url().to_owned(),
+                    coordination_id: policy.coordination_id().to_vec(),
+                    mesh_enabled: policy.mesh_enabled(),
+                    epoch: stored.epoch,
+                    policy_revision: policy.revision(),
+                    dissolved: policy.dissolved(),
+                    capability_public_key: policy
+                        .member_capability_key(local_identity)
+                        .map_or_else(Vec::new, |key| key.to_vec()),
+                    coordinator_public_key: policy.coordinator_public_key().to_vec(),
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        Ok(ClientSnapshot {
+            inner: proto::ClientSnapshot {
+                checkpoint_generation: self.state.generation,
+                groups,
+            },
+        })
     }
 
     pub fn store(&self) -> &S {
