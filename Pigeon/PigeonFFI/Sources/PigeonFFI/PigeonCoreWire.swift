@@ -19,6 +19,12 @@ extension FfiClient {
     let proto = try Pigeon_Wire_V1_ClientSnapshot(serializedBytes: snapshot())
     return PigeonCoreSnapshot(proto: proto)
   }
+
+  /// Signs a relay-issued nonce with the authenticated capability for this
+  /// group. Transcript construction and private-key access remain in Rust.
+  public func relayChallengeSignature(groupID: Data, nonce: Data) throws -> Data {
+    try signGroupRelayChallenge(groupId: groupID, nonce: nonce)
+  }
 }
 
 extension PigeonCoreOutput {

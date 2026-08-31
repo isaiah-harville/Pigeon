@@ -208,6 +208,19 @@ extension PigeonCoreFacadeTests {
     XCTAssertEqual(try client.checkpointGeneration(), 0)
   }
 
+  func testRelayChallengeSigningRejectsMalformedHostInputs() throws {
+    let client = try PigeonCoreClient(identity: Identity(), store: Store())
+
+    XCTAssertThrowsError(
+      try client.relayChallengeSignature(
+        groupID: Data(repeating: 1, count: 31),
+        nonce: Data(repeating: 2, count: 32)))
+    XCTAssertThrowsError(
+      try client.relayChallengeSignature(
+        groupID: Data(repeating: 1, count: 32),
+        nonce: Data(repeating: 2, count: 31)))
+  }
+
   func testSnapshotMapsAuthenticatedGroupProjection() {
     var group = Pigeon_Wire_V1_GroupState()
     group.groupID = Data([1])
