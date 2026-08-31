@@ -110,6 +110,24 @@ struct StoredGroup {
 }
 
 impl StoredGroup {
+    fn matches_registration(
+        &self,
+        capabilities: &[CapabilityRegistration],
+        permanent_controller: [u8; CAPABILITY_KEY_BYTES],
+    ) -> bool {
+        self.permanent_controller == permanent_controller
+            && self.capabilities.len() == capabilities.len()
+            && capabilities.iter().all(|capability| {
+                self.capabilities
+                    .get(&capability.public_key)
+                    .is_some_and(|stored| {
+                        stored.can_append == capability.can_append
+                            && stored.can_read == capability.can_read
+                            && stored.can_control == capability.can_control
+                    })
+            })
+    }
+
     fn collect_garbage(&mut self) -> usize {
         let Some(minimum_cursor) = self
             .capabilities
@@ -154,12 +172,6 @@ impl Store {
         &mut self,
         registration: GroupRegistration,
     ) -> Result<RegisteredGroup, StoreError> {
-        if self.groups.contains_key(&registration.coordination_id) {
-            return Err(StoreError::AlreadyRegistered);
-        }
-        if self.groups.len() >= self.config.max_groups {
-            return Err(StoreError::AtCapacity);
-        }
         if registration.capabilities.is_empty()
             || registration.capabilities.len() > self.config.max_capabilities_per_group
         {
@@ -197,6 +209,18 @@ impl Store {
             .find(|capability| capability.can_control)
             .map(|capability| capability.public_key)
             .ok_or(StoreError::InvalidRegistration)?;
+        if let Some(existing) = self.groups.get(&registration.coordination_id) {
+            if existing.matches_registration(&registration.capabilities, permanent_controller) {
+                return Ok(RegisteredGroup {
+                    coordination_id: registration.coordination_id,
+                    capabilities: registration.capabilities,
+                });
+            }
+            return Err(StoreError::AlreadyRegistered);
+        }
+        if self.groups.len() >= self.config.max_groups {
+            return Err(StoreError::AtCapacity);
+        }
         let capabilities = registration
             .capabilities
             .iter()
@@ -290,14 +314,12 @@ impl Store {
             .get(&capability.public_key)
             .filter(|state| state.can_read)
             .ok_or(StoreError::Unauthorized)?;
-        if after_cursor < reader.cursor {
-            return Err(StoreError::StaleCursor);
-        }
+        let effective_cursor = after_cursor.max(reader.cursor);
         let mut bytes: usize = 0;
         Ok(group
             .entries
             .iter()
-            .filter(|entry| entry.sequence > after_cursor)
+            .filter(|entry| entry.sequence > effective_cursor)
             .take_while(|entry| {
                 let next = bytes.saturating_add(entry.ciphertext.len());
                 if next > self.config.max_fetch_batch_bytes {
@@ -326,7 +348,10 @@ impl Store {
             .get_mut(&capability.public_key)
             .filter(|state| state.can_read)
             .ok_or(StoreError::Unauthorized)?;
-        if sequence <= reader.cursor || sequence > last_sequence {
+        if sequence > 0 && sequence <= reader.cursor {
+            return Ok(());
+        }
+        if sequence == 0 || sequence > last_sequence {
             return Err(StoreError::StaleCursor);
         }
         reader.cursor = sequence;
@@ -417,15 +442,21 @@ impl Store {
             .capabilities
             .get(&controller.public_key)
             .is_some_and(|capability| capability.can_control)
-            || group.capabilities.contains_key(&granted.public_key)
         {
             return Err(StoreError::Unauthorized);
         }
-        if group.capabilities.len() >= self.config.max_capabilities_per_group {
-            return Err(StoreError::CapabilityLimit);
-        }
         if !granted.can_append || !granted.can_read || granted.can_control {
             return Err(StoreError::InvalidRegistration);
+        }
+        if let Some(existing) = group.capabilities.get(&granted.public_key) {
+            return if existing.can_append && existing.can_read && !existing.can_control {
+                Ok(())
+            } else {
+                Err(StoreError::Unauthorized)
+            };
+        }
+        if group.capabilities.len() >= self.config.max_capabilities_per_group {
+            return Err(StoreError::CapabilityLimit);
         }
         group.capabilities.insert(
             granted.public_key,
@@ -455,10 +486,9 @@ impl Store {
         {
             return Err(StoreError::Unauthorized);
         }
-        let removed = group
-            .capabilities
-            .get(&public_key)
-            .ok_or(StoreError::Unauthorized)?;
+        let Some(removed) = group.capabilities.get(&public_key) else {
+            return Ok(());
+        };
         if public_key == group.permanent_controller
             || (removed.can_read
                 && group

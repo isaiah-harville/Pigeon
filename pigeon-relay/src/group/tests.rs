@@ -96,8 +96,9 @@ fn group_capability_and_cursor_checks_fail_closed() {
         .unwrap();
     store.advance(&group.reader(0), receipt.sequence).unwrap();
 
+    store.advance(&group.reader(0), receipt.sequence).unwrap();
     assert_eq!(
-        store.advance(&group.reader(0), receipt.sequence),
+        store.advance(&group.reader(0), receipt.sequence + 1),
         Err(StoreError::StaleCursor)
     );
     let mut forged = group.reader(0);
@@ -186,6 +187,22 @@ fn group_registration_and_challenge_require_valid_capability_signatures() {
         &[9; 32],
         &challenge_signature
     ));
+}
+
+#[test]
+fn identical_group_registration_retry_is_idempotent_but_conflicts_fail() {
+    let mut store = Store::bounded(config());
+    let original = registration(3);
+
+    store.register(original.clone()).unwrap();
+    store.register(original).unwrap();
+
+    let mut conflicting = registration(3);
+    conflicting.capabilities[0].public_key = [99; 32];
+    assert_eq!(
+        store.register(conflicting),
+        Err(StoreError::AlreadyRegistered)
+    );
 }
 
 #[test]
@@ -318,7 +335,7 @@ fn controller_grants_members_from_the_current_cursor_only() {
         public_key: [44; 32],
     };
     assert!(store.fetch(&new_member, 1).unwrap().is_empty());
-    assert_eq!(store.fetch(&new_member, 0), Err(StoreError::StaleCursor));
+    assert!(store.fetch(&new_member, 0).unwrap().is_empty());
 
     store
         .append(&group.writer(0), b"after join".to_vec(), 2)
@@ -326,8 +343,8 @@ fn controller_grants_members_from_the_current_cursor_only() {
     let entries = store.fetch(&new_member, 1).unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].ciphertext, b"after join");
-    assert_eq!(
-        store.grant_capability(
+    store
+        .grant_capability(
             &group.writer(0),
             CapabilityRegistration {
                 public_key: [44; 32],
@@ -335,9 +352,10 @@ fn controller_grants_members_from_the_current_cursor_only() {
                 can_read: true,
                 can_control: false,
             },
-        ),
-        Err(StoreError::Unauthorized)
-    );
+        )
+        .unwrap();
+    store.revoke_capability(&group.writer(0), [44; 32]).unwrap();
+    store.revoke_capability(&group.writer(0), [44; 32]).unwrap();
 }
 
 #[test]
