@@ -25,6 +25,7 @@ pub use id::GroupId;
 pub use message::{AuthenticatedGroupMessage, GroupApplication, GroupCiphertext, GroupMessageId};
 pub use pending::PendingMutation;
 pub use policy::{PigeonGroupPolicy, PolicyError, validate_transition};
+pub(crate) use relay::challenge_transcript as group_relay_challenge_transcript;
 pub use relay::{
     GroupRelayCapability, GroupRelayControl, GroupRelayControlKind, GroupRelayRegistration,
 };

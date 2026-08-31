@@ -444,6 +444,35 @@ fn snapshot_rebuilds_group_projection_without_advancing_checkpoint() {
 }
 
 #[test]
+fn relay_challenge_signature_is_bound_to_the_authenticated_group_capability() {
+    let anchored = create_anchored_group();
+    let nonce = [42_u8; 32];
+
+    let signature = anchored
+        .owner
+        .sign_group_relay_challenge(anchored.group_id, nonce)
+        .unwrap();
+
+    let snapshot =
+        wire_proto::ClientSnapshot::decode(anchored.owner.snapshot().unwrap().encode().as_slice())
+            .unwrap();
+    let group = &snapshot.groups[0];
+    let capability_key: [u8; 32] = group.capability_public_key.as_slice().try_into().unwrap();
+    let mut transcript = b"pigeon.relay.group.challenge.v1".to_vec();
+    transcript.extend_from_slice(&anchored.coordination_id);
+    transcript.extend_from_slice(&capability_key);
+    transcript.extend_from_slice(&nonce);
+
+    ed25519_dalek::VerifyingKey::from_bytes(&capability_key)
+        .unwrap()
+        .verify_strict(
+            &transcript,
+            &ed25519_dalek::Signature::from_bytes(&signature),
+        )
+        .unwrap();
+}
+
+#[test]
 fn one_join_material_cannot_fill_two_group_drafts() {
     let owner = TestIdentity::new(1);
     let bob = TestIdentity::new(2);

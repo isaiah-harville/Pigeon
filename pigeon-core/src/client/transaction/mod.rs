@@ -7,8 +7,8 @@ use checkpoint::{decode_checkpoint, encode_checkpoint};
 
 use crate::Error;
 use crate::client::{ClientCommand, ClientOutput, ClientSnapshot};
-use crate::group::PigeonGroupPolicy;
-use crate::identity::SecureIdentity;
+use crate::group::{PigeonGroupPolicy, group_relay_challenge_transcript};
+use crate::identity::{IdentityPurpose, SecureIdentity};
 use crate::storage::StateStore;
 use crate::wire::{PROTOCOL_VERSION, proto};
 
@@ -152,6 +152,43 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 groups,
             },
         })
+    }
+
+    /// Signs the relay's group-capability challenge inside the identity/core
+    /// boundary. The host supplies only the authenticated group id and nonce;
+    /// it never constructs the signed transcript or handles the private key.
+    pub fn sign_group_relay_challenge(
+        &self,
+        group_id: crate::GroupId,
+        nonce: [u8; 32],
+    ) -> Result<[u8; 64], Error> {
+        let stored = self
+            .state
+            .groups
+            .iter()
+            .find(|stored| stored.group_id.as_slice() == group_id.as_bytes())
+            .ok_or(Error::InvalidKey)?;
+        let policy = PigeonGroupPolicy::decode(&stored.policy)?;
+        let local_identity = self.identity.ensure_public_key(IdentityPurpose::Root)?;
+        let policy_capability = policy
+            .member_capability_key(local_identity)
+            .ok_or(Error::InvalidKey)?;
+        let signing_capability = self
+            .identity
+            .ensure_public_key(IdentityPurpose::GroupCapability(*group_id.as_bytes()))?;
+        if policy_capability != signing_capability {
+            return Err(Error::InvalidSignature);
+        }
+        self.identity
+            .sign(
+                IdentityPurpose::GroupCapability(*group_id.as_bytes()),
+                &group_relay_challenge_transcript(
+                    policy.coordination_id(),
+                    policy_capability,
+                    nonce,
+                ),
+            )
+            .map_err(Error::from)
     }
 
     pub fn store(&self) -> &S {

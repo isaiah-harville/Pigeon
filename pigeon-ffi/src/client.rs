@@ -2,8 +2,8 @@ use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
 use pigeon_core::{
-    ClientCommand, IdentityError, IdentityPurpose, PigeonClient, SealedCheckpoint, SecureIdentity,
-    StateStore, StorageError,
+    ClientCommand, GroupId, IdentityError, IdentityPurpose, PigeonClient, SealedCheckpoint,
+    SecureIdentity, StateStore, StorageError,
 };
 
 use crate::PigeonError;
@@ -179,6 +179,24 @@ impl FfiClient {
             .map_err(|_| PigeonError::Persistence)?
             .snapshot()?
             .encode())
+    }
+
+    /// Signs an authenticated group relay challenge without exposing the
+    /// capability key or transcript construction to the host platform.
+    pub fn sign_group_relay_challenge(
+        &self,
+        group_id: Vec<u8>,
+        nonce: Vec<u8>,
+    ) -> Result<Vec<u8>, PigeonError> {
+        let group_id =
+            GroupId::from_bytes(group_id.try_into().map_err(|_| PigeonError::InvalidKey)?);
+        let nonce = nonce.try_into().map_err(|_| PigeonError::InvalidKey)?;
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| PigeonError::Persistence)?
+            .sign_group_relay_challenge(group_id, nonce)?
+            .to_vec())
     }
 }
 

@@ -130,3 +130,19 @@ fn client_exposes_read_only_snapshot_bytes() {
     assert!(snapshot.groups.is_empty());
     assert_eq!(client.checkpoint_generation().unwrap(), 0);
 }
+
+#[test]
+fn relay_challenge_signing_rejects_malformed_identifiers_at_the_ffi_boundary() {
+    let client = FfiClient::new(
+        Arc::new(TestIdentity::new()),
+        Arc::new(TestStore::default()),
+    )
+    .unwrap();
+
+    assert!(client
+        .sign_group_relay_challenge(vec![1; 31], vec![2; 32])
+        .is_err());
+    assert!(client
+        .sign_group_relay_challenge(vec![1; 32], vec![2; 31])
+        .is_err());
+}

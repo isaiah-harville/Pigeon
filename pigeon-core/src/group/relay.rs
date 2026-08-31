@@ -10,6 +10,20 @@ use crate::wire::{MAX_GROUP_MEMBERS, MAX_MLS_OBJECT_BYTES, proto};
 const REGISTRATION_VERSION: u32 = 1;
 const CONTROL_VERSION: u32 = 1;
 const REGISTRATION_DOMAIN: &[u8] = b"pigeon.relay.group.registration.v1";
+const CHALLENGE_DOMAIN: &[u8] = b"pigeon.relay.group.challenge.v1";
+
+pub(crate) fn challenge_transcript(
+    coordination_id: [u8; 32],
+    capability_public_key: [u8; 32],
+    nonce: [u8; 32],
+) -> Vec<u8> {
+    let mut transcript = Vec::with_capacity(CHALLENGE_DOMAIN.len() + 96);
+    transcript.extend_from_slice(CHALLENGE_DOMAIN);
+    transcript.extend_from_slice(&coordination_id);
+    transcript.extend_from_slice(&capability_public_key);
+    transcript.extend_from_slice(&nonce);
+    transcript
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroupRelayCapability {
