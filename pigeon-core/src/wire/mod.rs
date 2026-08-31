@@ -108,6 +108,28 @@ pub(crate) fn validate_client_command(command: &proto::ClientCommand) -> Result<
                 "policy string",
             )?;
         }
+        proto::client_command::Body::AcknowledgeEffects(acknowledgement) => {
+            check_count(
+                acknowledgement.outbound_item_ids.len(),
+                MAX_PENDING_OUTBOUND_ENTRIES,
+                "acknowledged outbound items",
+            )?;
+            check_count(
+                acknowledgement.event_ids.len(),
+                MAX_PENDING_OUTBOUND_ENTRIES,
+                "acknowledged events",
+            )?;
+            for id in acknowledgement
+                .outbound_item_ids
+                .iter()
+                .chain(&acknowledgement.event_ids)
+            {
+                if id.is_empty() {
+                    return Err(Error::MalformedBundle);
+                }
+                check_bytes(id.len(), MAX_STABLE_ID_BYTES, "effect id")?;
+            }
+        }
     }
     Ok(())
 }

@@ -48,6 +48,25 @@ impl ClientCommand {
         self.inner.encode_to_vec()
     }
 
+    pub fn acknowledge_effects(
+        command_id: impl Into<String>,
+        outbound_item_ids: Vec<String>,
+        event_ids: Vec<String>,
+    ) -> Result<Self, Error> {
+        let inner = proto::ClientCommand {
+            version: PROTOCOL_VERSION,
+            command_id: command_id.into(),
+            body: Some(proto::client_command::Body::AcknowledgeEffects(
+                proto::AcknowledgeEffects {
+                    outbound_item_ids,
+                    event_ids,
+                },
+            )),
+        };
+        wire::validate_client_command(&inner)?;
+        Ok(Self { inner })
+    }
+
     pub fn apply_group_join_request(
         command_id: impl Into<String>,
         request_id: impl Into<String>,

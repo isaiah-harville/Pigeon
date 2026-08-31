@@ -16,3 +16,4 @@ pub const MAX_FUTURE_EPOCHS: usize = 8;
 pub const MAX_FUTURE_EPOCH_BUFFER_BYTES: usize = 2 * MAX_MLS_OBJECT_BYTES;
 pub const MAX_PROPOSAL_CANDIDATES: usize = 256;
 pub const MAX_PENDING_OUTBOUND_ENTRIES: usize = 1024;
+pub const MAX_PENDING_EFFECT_BYTES: usize = 16 * 1024 * 1024;

@@ -35,6 +35,8 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 buffered_group_messages: Vec::new(),
                 pending_group_mutations: Vec::new(),
                 pending_group_additions: Vec::new(),
+                pending_outbound: Vec::new(),
+                pending_events: Vec::new(),
             },
         };
         Ok(Self {
@@ -89,6 +91,48 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     &mut output,
                 )?;
             }
+            proto::client_command::Body::AcknowledgeEffects(acknowledgement) => {
+                candidate.pending_outbound.retain(|item| {
+                    !acknowledgement
+                        .outbound_item_ids
+                        .iter()
+                        .any(|id| id == &item.item_id)
+                });
+                candidate.pending_events.retain(|event| {
+                    !acknowledgement
+                        .event_ids
+                        .iter()
+                        .any(|id| id == &event.event_id)
+                });
+            }
+        }
+
+        if candidate.pending_outbound.len() + output.outbound.len()
+            > crate::MAX_PENDING_OUTBOUND_ENTRIES
+            || candidate.pending_events.len() + output.events.len()
+                > crate::MAX_PENDING_OUTBOUND_ENTRIES
+        {
+            return Err(Error::ResourceLimit("pending core effects"));
+        }
+        candidate
+            .pending_outbound
+            .extend(output.outbound.iter().map(|item| item.inner.clone()));
+        candidate
+            .pending_events
+            .extend(output.events.iter().map(|event| event.inner.clone()));
+        let pending_effect_bytes = candidate
+            .pending_outbound
+            .iter()
+            .map(prost::Message::encoded_len)
+            .chain(
+                candidate
+                    .pending_events
+                    .iter()
+                    .map(prost::Message::encoded_len),
+            )
+            .sum::<usize>();
+        if pending_effect_bytes > crate::wire::MAX_PENDING_EFFECT_BYTES {
+            return Err(Error::ResourceLimit("pending core effect bytes"));
         }
 
         candidate.generation += 1;
@@ -150,6 +194,8 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             inner: proto::ClientSnapshot {
                 checkpoint_generation: self.state.generation,
                 groups,
+                pending_outbound: self.state.pending_outbound.clone(),
+                pending_events: self.state.pending_events.clone(),
             },
         })
     }

@@ -473,6 +473,27 @@ fn relay_challenge_signature_is_bound_to_the_authenticated_group_capability() {
 }
 
 #[test]
+fn outbound_effects_remain_in_the_snapshot_until_explicitly_acknowledged() {
+    let mut client = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(1)).unwrap();
+    let output = client.execute(create_group()).unwrap();
+    let first = wire_proto::OutboundItem::decode(output.outbound[0].encode().as_slice()).unwrap();
+
+    let snapshot =
+        wire_proto::ClientSnapshot::decode(client.snapshot().unwrap().encode().as_slice()).unwrap();
+    assert_eq!(snapshot.pending_outbound.len(), 2);
+
+    client
+        .execute(
+            ClientCommand::acknowledge_effects("ack-first", vec![first.item_id], Vec::new())
+                .unwrap(),
+        )
+        .unwrap();
+    let snapshot =
+        wire_proto::ClientSnapshot::decode(client.snapshot().unwrap().encode().as_slice()).unwrap();
+    assert_eq!(snapshot.pending_outbound.len(), 1);
+}
+
+#[test]
 fn one_join_material_cannot_fill_two_group_drafts() {
     let owner = TestIdentity::new(1);
     let bob = TestIdentity::new(2);

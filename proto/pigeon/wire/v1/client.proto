@@ -12,6 +12,7 @@ message ClientCommand {
     SendGroupMessage send_group_message = 11;
     ApplyInbound apply_inbound = 12;
     ChangeGroupPolicy change_group_policy = 13;
+    AcknowledgeEffects acknowledge_effects = 14;
   }
 }
 
@@ -43,6 +44,11 @@ message ChangeGroupPolicy {
   bytes subject_identity = 3;
   string string_value = 4;
   bool bool_value = 5;
+}
+
+message AcknowledgeEffects {
+  repeated string outbound_item_ids = 1;
+  repeated string event_ids = 2;
 }
 
 message AppEvent {
@@ -92,6 +98,8 @@ message ClientOutput {
 message ClientSnapshot {
   uint64 checkpoint_generation = 1;
   repeated GroupState groups = 2;
+  repeated OutboundItem pending_outbound = 3;
+  repeated AppEvent pending_events = 4;
 }
 
 message GroupState {
@@ -123,6 +131,8 @@ message ClientCheckpoint {
   repeated BufferedGroupMessage buffered_group_messages = 10;
   repeated PendingGroupMutation pending_group_mutations = 11;
   repeated PendingGroupAddition pending_group_additions = 12;
+  repeated OutboundItem pending_outbound = 13;
+  repeated AppEvent pending_events = 14;
 }
 
 message PendingGroupCreation {
