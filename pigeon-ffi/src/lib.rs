@@ -1,10 +1,10 @@
 //! UniFFI surface for `pigeon-core` — the seam the Swift app calls across.
 //!
-//! This crate is deliberately thin and **byte-oriented**: every bundle and Olm
-//! message crosses the FFI as opaque bytes, and the only objects with identity
-//! are [`FfiAccount`] and [`FfiSession`]. Keeping the surface bytes-and-objects
-//! lets `pigeon-core` stay free of any UniFFI coupling (and of any licensing or
-//! audit-surface entanglement with the bindings layer).
+//! This crate is deliberately thin and **byte-oriented**. New protocol behavior
+//! crosses through the transactional [`FfiClient`] as opaque command/output
+//! bytes. The account/session objects remain temporarily while pairwise traffic
+//! migrates into that client; they must not be extended with new protocol
+//! behavior. This keeps `pigeon-core` free of UniFFI coupling.
 //!
 //! The trust model is unchanged from `pigeon-core`: the identity binding and
 //! prekey signatures are verified inside `establish_*`, so a session is only
@@ -20,6 +20,12 @@ use pigeon_core::{
 };
 
 uniffi::setup_scaffolding!();
+
+mod client;
+pub use client::{
+    Checkpoint, CheckpointStore, FfiClient, IdentityPurposeKind, IdentityPurposeRequest,
+    PlatformError, PlatformIdentity,
+};
 
 /// The transport-agnostic mesh surface (framing, fragmentation, routing,
 /// envelope), wrapping `pigeon-mesh`. Carries opaque bytes only — no crypto.

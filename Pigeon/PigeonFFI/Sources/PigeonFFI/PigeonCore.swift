@@ -19,6 +19,19 @@ public typealias PigeonAccount = FfiAccount
 /// One end of a pairwise end-to-end-encrypted session (Olm Double Ratchet).
 public typealias PigeonSession = FfiSession
 
+/// The transactional application core. It accepts and returns versioned wire
+/// messages while keeping identity, pairwise, and MLS state inside Rust.
+public typealias PigeonCoreClient = FfiClient
+
+extension FfiClient {
+  func execute(_ command: Pigeon_Wire_V1_ClientCommand) throws
+    -> Pigeon_Wire_V1_ClientOutput
+  {
+    let encoded = try command.serializedData()
+    return try Pigeon_Wire_V1_ClientOutput(serializedBytes: execute(command: encoded))
+  }
+}
+
 /// A device's public identity: its Ed25519 identity key, its Olm Curve25519
 /// identity key, and the binding signature — the QR payload. Decoding verifies
 /// the binding, so a value of this type is always authentic (the Curve key is

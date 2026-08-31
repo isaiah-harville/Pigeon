@@ -24,3 +24,6 @@ pigeon-core = { version = "=0.1.2", path = "../pigeon-core" }
 # so the app links one XCFramework. pigeon-mesh stays binding-free itself.
 pigeon-mesh = { version = "=0.1.1", path = "../pigeon-mesh" }
 uniffi = { version = "0.31", features = ["cli"] }
+
+[dev-dependencies]
+ed25519-dalek = "2"
