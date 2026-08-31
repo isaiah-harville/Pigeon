@@ -55,6 +55,16 @@ final class PigeonCoreFacadeTests: XCTestCase {
     XCTAssertEqual(
       output.outbound.map(\.destination),
       [Data(repeating: 8, count: 32), Data(repeating: 9, count: 32)])
+
+    var snapshot = try client.stateSnapshot()
+    XCTAssertEqual(snapshot.pendingOutbound.map(\.id), output.outbound.map(\.id))
+    _ = try client.execute(
+      PigeonCoreCommand(
+        id: "ack-first-effect",
+        body: .acknowledgeEffects(
+          PigeonAcknowledgeEffects(outboundItemIDs: [output.outbound[0].id]))))
+    snapshot = try client.stateSnapshot()
+    XCTAssertEqual(snapshot.pendingOutbound.map(\.id), [output.outbound[1].id])
   }
 
   func testFacadeMapsEveryEventAndPreservesUnknownEnums() throws {
@@ -337,7 +347,7 @@ extension PigeonCoreFacadeTests {
     XCTAssertEqual(decoded.candidate, Data([6, 7]))
   }
 
-  func testSnapshotMapsAuthenticatedGroupProjection() {
+  func testSnapshotMapsAuthenticatedGroupProjection() throws {
     var group = Pigeon_Wire_V1_GroupState()
     group.groupID = Data([1])
     group.ownerIdentity = Data([2])
@@ -356,7 +366,7 @@ extension PigeonCoreFacadeTests {
     snapshot.checkpointGeneration = 10
     snapshot.groups = [group]
 
-    let mapped = PigeonCoreSnapshot(proto: snapshot)
+    let mapped = try PigeonCoreSnapshot(proto: snapshot)
 
     XCTAssertEqual(
       mapped,

@@ -6,6 +6,7 @@ public struct PigeonCoreCommand: Equatable, Sendable {
     case sendGroupMessage(PigeonSendGroupMessage)
     case applyInbound(PigeonApplyInbound)
     case changeGroupPolicy(PigeonChangeGroupPolicy)
+    case acknowledgeEffects(PigeonAcknowledgeEffects)
   }
 
   public let id: String
@@ -14,6 +15,16 @@ public struct PigeonCoreCommand: Equatable, Sendable {
   public init(id: String, body: Body) {
     self.id = id
     self.body = body
+  }
+}
+
+public struct PigeonAcknowledgeEffects: Equatable, Sendable {
+  public let outboundItemIDs: [String]
+  public let eventIDs: [String]
+
+  public init(outboundItemIDs: [String] = [], eventIDs: [String] = []) {
+    self.outboundItemIDs = outboundItemIDs
+    self.eventIDs = eventIDs
   }
 }
 
@@ -145,10 +156,19 @@ public struct PigeonCoreOutput: Equatable, Sendable {
 public struct PigeonCoreSnapshot: Equatable, Sendable {
   public let checkpointGeneration: UInt64
   public let groups: [PigeonGroupState]
+  public let pendingOutbound: [PigeonCoreOutboundItem]
+  public let pendingEvents: [PigeonCoreEvent]
 
-  public init(checkpointGeneration: UInt64, groups: [PigeonGroupState]) {
+  public init(
+    checkpointGeneration: UInt64,
+    groups: [PigeonGroupState],
+    pendingOutbound: [PigeonCoreOutboundItem] = [],
+    pendingEvents: [PigeonCoreEvent] = []
+  ) {
     self.checkpointGeneration = checkpointGeneration
     self.groups = groups
+    self.pendingOutbound = pendingOutbound
+    self.pendingEvents = pendingEvents
   }
 }
 
