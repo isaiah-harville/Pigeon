@@ -15,7 +15,7 @@ final class GroupRelayTransport {
 
   var onMessage: MessageConsumer?
   var onCoordinatorCandidate: CoordinatorConsumer?
-  var onEffectDelivered: ((String) -> Void)?
+  var onEffectDelivered: ((String) -> Bool)?
 
   private let signer: ChallengeSigner
   private let session: URLSession
@@ -88,24 +88,6 @@ final class GroupRelayTransport {
     reconcileEffects(snapshot.pendingOutbound)
   }
 
-  static func endpoint(for relayURL: URL?) -> URL? {
-    guard let relayURL,
-      var components = URLComponents(
-        url: relayURL,
-        resolvingAgainstBaseURL: false),
-      components.user == nil, components.password == nil, components.fragment == nil
-    else { return nil }
-    switch components.scheme?.lowercased() {
-    case "https": components.scheme = "wss"
-    case "http": components.scheme = "ws"
-    case "wss", "ws": break
-    default: return nil
-    }
-    guard components.host != nil else { return nil }
-    components.path = "/group/ws"
-    components.query = nil
-    return components.url
-  }
 }
 
 extension GroupRelayTransport {
@@ -137,6 +119,9 @@ extension GroupRelayTransport {
         } catch {
           guard !Task.isCancelled else { break }
           connection.ready = false
+          if let awaiting = connection.awaiting {
+            connection.queue.insert(awaiting, at: 0)
+          }
           connection.awaiting = nil
           connection.socket?.cancel(with: .goingAway, reason: nil)
           try? await Task.sleep(for: .seconds(min(backoff, 30)))
@@ -165,13 +150,19 @@ extension GroupRelayTransport {
 
     let registration = takeRegistration(from: connection)
     if let registration {
+      connection.awaiting = .effect(registration)
       try await send(GroupRelayProtocol.action(registration.action), over: socket)
       guard case .registered = try await receive(over: socket) else { throw RelayError.handshake }
     }
     try await authenticate(connection, over: socket)
     connection.ready = true
     connection.fetchedAfterConnect = false
-    if let registration { onEffectDelivered?(registration.id) }
+    if let registration {
+      guard onEffectDelivered?(registration.id) == true else {
+        throw RelayError.protocolError
+      }
+      connection.awaiting = nil
+    }
     sendNext(connection)
 
     while !Task.isCancelled {
@@ -240,7 +231,10 @@ extension GroupRelayTransport {
       case .append = effect.action
     else { throw RelayError.protocolError }
     connection.awaiting = nil
-    onEffectDelivered?(effect.id)
+    guard onEffectDelivered?(effect.id) == true else {
+      connection.awaiting = .effect(effect)
+      throw RelayError.protocolError
+    }
   }
 
   private func completeOK(for connection: Connection) throws {
@@ -254,7 +248,12 @@ extension GroupRelayTransport {
       throw RelayError.protocolError
     }
     connection.awaiting = nil
-    if case .effect(let effect) = awaiting { onEffectDelivered?(effect.id) }
+    if case .effect(let effect) = awaiting,
+      onEffectDelivered?(effect.id) != true
+    {
+      connection.awaiting = awaiting
+      throw RelayError.protocolError
+    }
   }
 
   private func completeSubmission(
@@ -269,7 +268,10 @@ extension GroupRelayTransport {
         receipt.publicValue, submission.candidate, "\(effect.id):receipt") == true
     guard accepted else { throw RelayError.protocolError }
     connection.awaiting = nil
-    onEffectDelivered?(effect.id)
+    guard onEffectDelivered?(effect.id) == true else {
+      connection.awaiting = .effect(effect)
+      throw RelayError.protocolError
+    }
   }
 
   private func completeCoordinatorFetch(
@@ -369,14 +371,5 @@ extension GroupRelayTransport {
       let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
     else { throw RelayError.protocolError }
     return GroupRelayProtocol.classify(object)
-  }
-}
-
-extension GroupRelayProtocol.CoordinatorReceipt {
-  var publicValue: PigeonCoordinatorReceipt {
-    PigeonCoordinatorReceipt(
-      coordinationID: coordinationID, sequence: sequence,
-      priorReceiptHash: priorReceiptHash, claimedBaseEpoch: claimedBaseEpoch,
-      entryHash: entryHash, signature: signature)
   }
 }

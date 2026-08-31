@@ -35,6 +35,31 @@ final class SessionCoreIntegrationTests: XCTestCase {
     XCTAssertEqual(fixture.manager.groups, [current])
   }
 
+  func testExecutingCoreCommandRefreshesDurableSnapshot() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    try fixture.manager.attachStore(fixture.store)
+
+    let output = try fixture.manager.executeCore(
+      PigeonCoreCommand(
+        id: "ack-empty-effects",
+        body: .acknowledgeEffects(PigeonAcknowledgeEffects())))
+
+    XCTAssertEqual(output.checkpointGeneration, 1)
+    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, 1)
+  }
+
+  func testInvalidGroupRelayMessageDoesNotAdvanceCoreState() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    try fixture.manager.attachStore(fixture.store)
+
+    XCTAssertFalse(
+      fixture.manager.consumeGroupRelayMessage(
+        Data("not an MLS message".utf8), requestID: "relay-entry-1"))
+    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, 0)
+  }
+
   func testCorruptCoreCheckpointKeepsSessionLocked() throws {
     let fixture = try makeFixture()
     defer { wipe(fixture.store) }

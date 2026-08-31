@@ -113,6 +113,7 @@ final class SessionManager {
   private(set) var coreClient: PigeonCoreClient?
   private var coreIdentityProvider: CoreIdentityProvider?
   private var coreCheckpointStore: CoreCheckpointStore?
+  @ObservationIgnored private(set) lazy var groupRelay = makeGroupRelay()
   /// Authenticated group projection rebuilt from the Rust checkpoint. It is
   /// never persisted separately, so it cannot drift across a crash boundary.
   var groups: [PigeonGroupState] = []
@@ -223,6 +224,7 @@ final class SessionManager {
     guard purgeExpiredIncomingRequests(now: Date()) else {
       throw SessionPersistenceError.unreadableStore
     }
+    groupRelay.reconfigure(snapshot: coreSnapshot)
     refreshRelay()  // pick up loaded contacts' relays
     // Drain anything buffered while locked *before* re-driving establishment, so
     // a buffered initiation/rehandshake stands up the session itself and the
