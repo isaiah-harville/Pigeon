@@ -108,6 +108,12 @@ final class SessionManager {
   /// (including building the bound Olm account). See `SessionPersistence`.
   let persistence: SessionPersistence
 
+  /// Transactional application core. The host supplies signing and encrypted
+  /// checkpoint callbacks; pairwise/MLS internals remain behind this API.
+  private(set) var coreClient: PigeonCoreClient?
+  private var coreIdentityProvider: CoreIdentityProvider?
+  private var coreCheckpointStore: CoreCheckpointStore?
+
   /// Configured relay endpoints, mirrored here so the value is observable —
   /// changing it refreshes anything that depends on it (e.g. the QR card, which
   /// advertises these relays). Persisted via `RelaySettings`.
@@ -180,6 +186,14 @@ final class SessionManager {
     // seed. The codec/account logic lives in `SessionPersistence`; here we just
     // apply the result to the live state and run the post-unlock orchestration.
     let loaded = try persistence.attach(store, identitySeed: identity.identitySeed)
+    let coreIdentityProvider = CoreIdentityProvider(rootIdentity: identity)
+    let coreCheckpointStore = CoreCheckpointStore(appStore: store)
+    let coreClient = try PigeonCoreClient(
+      identity: coreIdentityProvider,
+      store: coreCheckpointStore)
+    self.coreIdentityProvider = coreIdentityProvider
+    self.coreCheckpointStore = coreCheckpointStore
+    self.coreClient = coreClient
     account = loaded.account
     contacts = loaded.contacts
     conversationStore.load(loaded.conversations)  // in-memory view starts from disk
