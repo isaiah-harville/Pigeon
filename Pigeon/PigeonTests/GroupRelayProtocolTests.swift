@@ -7,6 +7,16 @@ import XCTest
 final class GroupRelayProtocolTests: XCTestCase {
   private let coordinationID = Data((0..<32).map(UInt8.init))
 
+  func testGroupEndpointUsesTheSelectedRelayHost() {
+    XCTAssertEqual(
+      GroupRelayTransport.endpoint(for: URL(string: "https://relay.example/ws")),
+      URL(string: "wss://relay.example/group/ws"))
+    XCTAssertEqual(
+      GroupRelayTransport.endpoint(for: URL(string: "wss://relay.example/custom")),
+      URL(string: "wss://relay.example/group/ws"))
+    XCTAssertNil(GroupRelayTransport.endpoint(for: URL(string: "file:///tmp/relay")))
+  }
+
   func testClientFramesMatchRelayVersionFourWireFormat() throws {
     XCTAssertEqual(
       try object(GroupRelayProtocol.hello()),
