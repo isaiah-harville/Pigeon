@@ -275,7 +275,12 @@ extension SessionPersistence {
     let store = EncryptedStore(key: SymmetricKey(size: .bits256))
     let cryptoStore = store.companion(suffix: Self.cryptoSuffix)
     let transactionStore = store.companion(suffix: Self.transactionSuffix)
-    return wipe(store: store, cryptoStore: cryptoStore, transactionStore: transactionStore)
+    let coreStore = store.companion(suffix: CoreCheckpointStore.companionSuffix)
+    return wipe(
+      store: store,
+      cryptoStore: cryptoStore,
+      transactionStore: transactionStore,
+      coreStore: coreStore)
   }
 
   /// Irreversibly removes bulk history, cryptographic state, and any pending
@@ -284,7 +289,10 @@ extension SessionPersistence {
   func wipeAll() -> Bool {
     guard let store, let cryptoStore, let transactionStore else { return false }
     let wiped = Self.wipe(
-      store: store, cryptoStore: cryptoStore, transactionStore: transactionStore)
+      store: store,
+      cryptoStore: cryptoStore,
+      transactionStore: transactionStore,
+      coreStore: store.companion(suffix: CoreCheckpointStore.companionSuffix))
     if wiped {
       self.store = nil
       self.cryptoStore = nil
@@ -296,13 +304,15 @@ extension SessionPersistence {
   private static func wipe(
     store: EncryptedStore,
     cryptoStore: EncryptedStore,
-    transactionStore: EncryptedStore
+    transactionStore: EncryptedStore,
+    coreStore: EncryptedStore
   ) -> Bool {
     // Do not short-circuit: every path must be attempted on each recovery pass.
     let bulkWiped = store.wipe()
     let cryptoWiped = cryptoStore.wipe()
     let transactionWiped = transactionStore.wipe()
-    return bulkWiped && cryptoWiped && transactionWiped
+    let coreWiped = coreStore.wipe()
+    return bulkWiped && cryptoWiped && transactionWiped && coreWiped
   }
 
   /// Writes one recoverable full generation. The journal becomes durable before
