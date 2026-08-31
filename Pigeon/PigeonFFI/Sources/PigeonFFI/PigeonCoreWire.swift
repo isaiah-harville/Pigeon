@@ -5,6 +5,8 @@ public enum PigeonCoreWireError: Error, Equatable, Sendable {
   case missingEventBody
   case invalidOutboundKind(Int)
   case invalidPolicyChangeKind(Int)
+  case notRelayAction(PigeonCoreOutboundKind)
+  case malformedRelayAction
 }
 
 extension FfiClient {
@@ -104,6 +106,104 @@ extension PigeonCoreOutboundItem {
     relayURL = proto.relayURL
     destination = proto.destination
     payload = proto.payload
+  }
+
+  public func relayAction() throws -> PigeonCoreRelayAction {
+    guard destination.count == 32, !payload.isEmpty else {
+      throw PigeonCoreWireError.malformedRelayAction
+    }
+    switch kind {
+    case .groupMessage:
+      return .append(
+        PigeonGroupRelayAppend(coordinationID: destination, ciphertext: payload))
+    case .groupRelayRegistration:
+      return try decodeRegistration()
+    case .groupRelayControl:
+      return try decodeControl()
+    case .groupCoordinator:
+      return try decodeCoordinatorAction()
+    default:
+      throw PigeonCoreWireError.notRelayAction(kind)
+    }
+  }
+
+  private func decodeRegistration() throws -> PigeonCoreRelayAction {
+    let value = try Pigeon_Wire_V1_GroupRelayRegistration(serializedBytes: payload)
+    guard value.version == 1,
+      value.coordinationID == destination,
+      value.signature.count == 64,
+      !value.capabilities.isEmpty,
+      value.capabilities.allSatisfy({ $0.publicKey.count == 32 })
+    else {
+      throw PigeonCoreWireError.malformedRelayAction
+    }
+    return .registration(
+      PigeonGroupRelayRegistration(
+        coordinationID: value.coordinationID,
+        capabilities: value.capabilities.map(PigeonGroupRelayCapability.init(proto:)),
+        signature: value.signature))
+  }
+
+  private func decodeControl() throws -> PigeonCoreRelayAction {
+    let value = try Pigeon_Wire_V1_GroupRelayControl(serializedBytes: payload)
+    guard value.version == 1,
+      value.coordinationID == destination,
+      value.publicKey.count == 32
+    else {
+      throw PigeonCoreWireError.malformedRelayAction
+    }
+    return .control(PigeonGroupRelayControl(proto: value))
+  }
+
+  private func decodeCoordinatorAction() throws -> PigeonCoreRelayAction {
+    if let fetch = try? Pigeon_Wire_V1_GroupEpochFetch(serializedBytes: payload),
+      fetch.version == 1,
+      fetch.groupID.count == 32,
+      fetch.fromEpoch <= fetch.throughEpoch
+    {
+      return .coordinatorFetch(
+        PigeonGroupCoordinatorFetch(
+          coordinationID: destination, groupID: fetch.groupID,
+          fromEpoch: fetch.fromEpoch, throughEpoch: fetch.throughEpoch))
+    }
+    let submission = try Pigeon_Wire_V1_GroupCoordinatorSubmission(serializedBytes: payload)
+    guard submission.version == 1, !submission.candidate.isEmpty else {
+      throw PigeonCoreWireError.malformedRelayAction
+    }
+    return .coordinatorSubmission(
+      PigeonGroupCoordinatorSubmission(
+        coordinationID: destination, claimedBaseEpoch: submission.claimedBaseEpoch,
+        candidate: submission.candidate))
+  }
+}
+
+extension PigeonGroupRelayCapability {
+  init(proto: Pigeon_Wire_V1_GroupRelayCapability) {
+    self.init(
+      publicKey: proto.publicKey, canAppend: proto.canAppend,
+      canRead: proto.canRead, canControl: proto.canControl)
+  }
+}
+
+extension PigeonGroupRelayControl {
+  init(proto: Pigeon_Wire_V1_GroupRelayControl) {
+    self.init(
+      coordinationID: proto.coordinationID,
+      kind: PigeonGroupRelayControlKind(proto: proto.kind),
+      publicKey: proto.publicKey)
+  }
+}
+
+extension PigeonGroupRelayControlKind {
+  init(proto: Pigeon_Wire_V1_GroupRelayControlKind) {
+    switch proto {
+    case .unspecified: self = .unspecified
+    case .grant: self = .grant
+    case .revoke: self = .revoke
+    case .promoteAdmin: self = .promoteAdmin
+    case .demoteAdmin: self = .demoteAdmin
+    case .UNRECOGNIZED(let raw): self = .unknown(raw)
+    }
   }
 }
 

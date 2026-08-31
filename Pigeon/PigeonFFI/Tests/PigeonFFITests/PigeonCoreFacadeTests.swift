@@ -199,6 +199,105 @@ final class PigeonCoreFacadeTests: XCTestCase {
 }
 
 extension PigeonCoreFacadeTests {
+  func testOutboundRelayActionsDecodeIntoPublicTransportValues() throws {
+    var capability = Pigeon_Wire_V1_GroupRelayCapability()
+    capability.publicKey = Data(repeating: 1, count: 32)
+    capability.canAppend = true
+    capability.canRead = true
+    var registration = Pigeon_Wire_V1_GroupRelayRegistration()
+    registration.version = 1
+    registration.coordinationID = Data(repeating: 2, count: 32)
+    registration.capabilities = [capability]
+    registration.signature = Data(repeating: 3, count: 64)
+
+    var control = Pigeon_Wire_V1_GroupRelayControl()
+    control.version = 1
+    control.coordinationID = Data(repeating: 2, count: 32)
+    control.kind = .promoteAdmin
+    control.publicKey = Data(repeating: 4, count: 32)
+
+    var submission = Pigeon_Wire_V1_GroupCoordinatorSubmission()
+    submission.version = 1
+    submission.claimedBaseEpoch = 7
+    submission.candidate = Data([5, 6])
+
+    var fetch = Pigeon_Wire_V1_GroupEpochFetch()
+    fetch.version = 1
+    fetch.groupID = Data(repeating: 7, count: 32)
+    fetch.fromEpoch = 8
+    fetch.throughEpoch = 10
+
+    let coordinationID = Data(repeating: 2, count: 32)
+    let actions = try [
+      outbound(
+        kind: .groupRelayRegistration, destination: coordinationID,
+        payload: registration.serializedData()),
+      outbound(
+        kind: .groupRelayControl, destination: coordinationID,
+        payload: control.serializedData()),
+      outbound(
+        kind: .groupCoordinator, destination: coordinationID,
+        payload: submission.serializedData()),
+      outbound(
+        kind: .groupCoordinator, destination: coordinationID,
+        payload: fetch.serializedData()),
+      outbound(kind: .groupMessage, destination: coordinationID, payload: Data([8, 9])),
+    ].map { try PigeonCoreOutboundItem(proto: $0).relayAction() }
+
+    assertRelayActions(actions, coordinationID: coordinationID)
+  }
+
+  private func assertRelayActions(
+    _ actions: [PigeonCoreRelayAction],
+    coordinationID: Data
+  ) {
+    XCTAssertEqual(
+      actions[0],
+      .registration(
+        PigeonGroupRelayRegistration(
+          coordinationID: coordinationID,
+          capabilities: [
+            PigeonGroupRelayCapability(
+              publicKey: Data(repeating: 1, count: 32), canAppend: true,
+              canRead: true, canControl: false)
+          ],
+          signature: Data(repeating: 3, count: 64))))
+    XCTAssertEqual(
+      actions[1],
+      .control(
+        PigeonGroupRelayControl(
+          coordinationID: coordinationID, kind: .promoteAdmin,
+          publicKey: Data(repeating: 4, count: 32))))
+    XCTAssertEqual(
+      actions[2],
+      .coordinatorSubmission(
+        PigeonGroupCoordinatorSubmission(
+          coordinationID: coordinationID, claimedBaseEpoch: 7,
+          candidate: Data([5, 6]))))
+    XCTAssertEqual(
+      actions[3],
+      .coordinatorFetch(
+        PigeonGroupCoordinatorFetch(
+          coordinationID: coordinationID, groupID: Data(repeating: 7, count: 32),
+          fromEpoch: 8, throughEpoch: 10)))
+    XCTAssertEqual(
+      actions[4],
+      .append(PigeonGroupRelayAppend(coordinationID: coordinationID, ciphertext: Data([8, 9]))))
+  }
+
+  private func outbound(
+    kind: Pigeon_Wire_V1_OutboundKind,
+    destination: Data,
+    payload: Data
+  ) -> Pigeon_Wire_V1_OutboundItem {
+    var item = Pigeon_Wire_V1_OutboundItem()
+    item.kind = kind
+    item.relayURL = "https://relay.example"
+    item.destination = destination
+    item.payload = payload
+    return item
+  }
+
   func testPublicFacadeReadsSnapshotWithoutChangingGeneration() throws {
     let client = try PigeonCoreClient(identity: Identity(), store: Store())
 
