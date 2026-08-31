@@ -33,7 +33,7 @@ final class PigeonFFIRoundTripTests: XCTestCase {
       }
     }
 
-    func ensurePublicKey(purpose: IdentityPurposeRequest) throws -> Data {
+    func ensurePublicKey(purpose: IdentityPurposeRequest) -> Data {
       key(for: purpose).publicKey.rawRepresentation
     }
 
@@ -51,7 +51,7 @@ final class PigeonFFIRoundTripTests: XCTestCase {
       self.failReplacement = failReplacement
     }
 
-    func load() throws -> Checkpoint? {
+    func load() -> Checkpoint? {
       lock.withLock { checkpoint }
     }
 
@@ -197,7 +197,7 @@ final class PigeonFFIRoundTripTests: XCTestCase {
 
     XCTAssertEqual(output.checkpointGeneration, 1)
     XCTAssertEqual(output.outbound.count, 2)
-    XCTAssertEqual(try store.load()?.generation, 1)
+    XCTAssertEqual(store.load()?.generation, 1)
   }
 
   func testTransactionalClientReturnsNoOutputWhenPersistenceFails() throws {
@@ -207,4 +207,5 @@ final class PigeonFFIRoundTripTests: XCTestCase {
     XCTAssertThrowsError(try client.execute(createGroupCommand()))
     XCTAssertEqual(try client.checkpointGeneration(), 0)
   }
+
 }
