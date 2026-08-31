@@ -1,4 +1,5 @@
 import Foundation
+import SwiftProtobuf
 
 public enum PigeonCoreRelayAction: Equatable, Sendable {
   case append(PigeonGroupRelayAppend)
@@ -92,5 +93,58 @@ public struct PigeonGroupCoordinatorFetch: Equatable, Sendable {
     self.groupID = groupID
     self.fromEpoch = fromEpoch
     self.throughEpoch = throughEpoch
+  }
+}
+
+public struct PigeonCoordinatorReceipt: Equatable, Sendable {
+  public let coordinationID: Data
+  public let sequence: UInt64
+  public let priorReceiptHash: Data
+  public let claimedBaseEpoch: UInt64
+  public let entryHash: Data
+  public let signature: Data
+
+  public init(
+    coordinationID: Data, sequence: UInt64, priorReceiptHash: Data,
+    claimedBaseEpoch: UInt64, entryHash: Data, signature: Data
+  ) {
+    self.coordinationID = coordinationID
+    self.sequence = sequence
+    self.priorReceiptHash = priorReceiptHash
+    self.claimedBaseEpoch = claimedBaseEpoch
+    self.entryHash = entryHash
+    self.signature = signature
+  }
+}
+
+extension PigeonApplyInbound {
+  public static func coordinatorCandidate(
+    receipt: PigeonCoordinatorReceipt,
+    candidate: Data,
+    requestID: String
+  ) throws -> Self {
+    guard receipt.coordinationID.count == 32,
+      receipt.priorReceiptHash.count == 32,
+      receipt.entryHash.count == 32,
+      receipt.signature.count == 64,
+      !candidate.isEmpty
+    else {
+      throw PigeonCoreWireError.malformedRelayAction
+    }
+    var wireReceipt = Pigeon_Wire_V1_CoordinatorReceipt()
+    wireReceipt.version = 1
+    wireReceipt.coordinationID = receipt.coordinationID
+    wireReceipt.sequence = receipt.sequence
+    wireReceipt.priorReceiptHash = receipt.priorReceiptHash
+    wireReceipt.claimedBaseEpoch = receipt.claimedBaseEpoch
+    wireReceipt.entryHash = receipt.entryHash
+    wireReceipt.signature = receipt.signature
+    var wireCandidate = Pigeon_Wire_V1_CoordinatorCandidate()
+    wireCandidate.receipt = wireReceipt
+    wireCandidate.candidate = candidate
+    return try Self(
+      kind: .groupCoordinator,
+      payload: wireCandidate.serializedData(),
+      requestID: requestID)
   }
 }

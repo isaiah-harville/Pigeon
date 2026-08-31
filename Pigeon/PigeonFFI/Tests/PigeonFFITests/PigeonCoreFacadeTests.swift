@@ -320,6 +320,23 @@ extension PigeonCoreFacadeTests {
         nonce: Data(repeating: 2, count: 31)))
   }
 
+  func testCoordinatorCandidateFactoryBuildsCoreInboundWithoutPublicProtobuf() throws {
+    let receipt = PigeonCoordinatorReceipt(
+      coordinationID: Data(repeating: 1, count: 32), sequence: 2,
+      priorReceiptHash: Data(repeating: 3, count: 32), claimedBaseEpoch: 1,
+      entryHash: Data(repeating: 4, count: 32), signature: Data(repeating: 5, count: 64))
+    let inbound = try PigeonApplyInbound.coordinatorCandidate(
+      receipt: receipt, candidate: Data([6, 7]), requestID: "coordinator-2")
+
+    XCTAssertEqual(inbound.kind, .groupCoordinator)
+    XCTAssertEqual(inbound.requestID, "coordinator-2")
+    let decoded = try Pigeon_Wire_V1_CoordinatorCandidate(serializedBytes: inbound.payload)
+    XCTAssertEqual(decoded.receipt.coordinationID, receipt.coordinationID)
+    XCTAssertEqual(decoded.receipt.sequence, 2)
+    XCTAssertEqual(decoded.receipt.signature, receipt.signature)
+    XCTAssertEqual(decoded.candidate, Data([6, 7]))
+  }
+
   func testSnapshotMapsAuthenticatedGroupProjection() {
     var group = Pigeon_Wire_V1_GroupState()
     group.groupID = Data([1])
