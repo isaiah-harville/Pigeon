@@ -238,12 +238,12 @@ fn group_protocol_requires_current_version_negotiation() {
         gate_group_message(
             GroupClientMsg::Hello {
                 min_protocol_version: 1,
-                max_protocol_version: 3,
+                max_protocol_version: 4,
             },
             &mut negotiated
         ),
         GroupProtocolGate::Reply(GroupServerMsg::Compatible {
-            protocol_version: 3,
+            protocol_version: 4,
             ..
         })
     ));
@@ -381,5 +381,44 @@ fn capability_grants_enforce_controller_role_shape_and_group_cap() {
             },
         ),
         Err(StoreError::CapabilityLimit)
+    );
+}
+
+#[test]
+fn promoted_admin_controls_members_without_weakening_permanent_owner() {
+    let mut store = Store::bounded(config());
+    let group = store.register(registration(4)).unwrap();
+    store
+        .update_capability(&group.writer(0), [2; 32], true)
+        .unwrap();
+    let admin = group.writer(1);
+    store
+        .grant_capability(
+            &admin,
+            CapabilityRegistration {
+                public_key: [44; 32],
+                can_append: true,
+                can_read: true,
+                can_control: false,
+            },
+        )
+        .unwrap();
+    store.revoke_capability(&admin, [3; 32]).unwrap();
+    assert_eq!(
+        store.fetch(&group.reader(2), 0),
+        Err(StoreError::Unauthorized)
+    );
+    assert_eq!(
+        store.update_capability(&admin, [1; 32], false),
+        Err(StoreError::InvalidRegistration),
+        "the original owner controller is permanent"
+    );
+
+    store
+        .update_capability(&group.writer(0), [2; 32], false)
+        .unwrap();
+    assert_eq!(
+        store.revoke_capability(&admin, [4; 32]),
+        Err(StoreError::Unauthorized)
     );
 }

@@ -380,27 +380,27 @@ fn ordinary_member_leave_requires_their_signed_proposal_and_another_committer() 
             .is_err()
     );
     assert_eq!(
-        alice_group
-            .receive_leave_proposal(&mut alice_storage, &proposal)
+        bob_group
+            .receive_leave_proposal(&mut bob_storage, &proposal)
             .unwrap(),
         dave.root_public()
     );
-    bob_group
-        .receive_leave_proposal(&mut bob_storage, &proposal)
+    carol_group
+        .receive_leave_proposal(&mut carol_storage, &proposal)
         .unwrap();
 
-    let leave = carol_group
-        .stage_leave_candidate(&carol, &mut carol_storage, dave.root_public(), &proposal)
+    let leave = alice_group
+        .stage_leave_candidate(&alice, &mut alice_storage, dave.root_public(), &proposal)
         .unwrap();
-    let event = carol_group
-        .merge_canonical(&mut carol_storage, leave.commit())
+    let event = alice_group
+        .merge_canonical(&mut alice_storage, leave.commit())
         .unwrap();
     assert_eq!(event.kind, PolicyEventKind::MemberLeft);
     assert_eq!(event.actor, dave.root_public());
     assert_eq!(event.subject, Some(dave.root_public()));
     assert_eq!(
-        alice_group
-            .merge_canonical(&mut alice_storage, leave.commit())
+        carol_group
+            .merge_canonical(&mut carol_storage, leave.commit())
             .unwrap(),
         event
     );

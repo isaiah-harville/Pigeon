@@ -272,6 +272,22 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
                 });
                 reply(&tx, ok_or_error(result));
             }
+            GroupClientMsg::Update {
+                public_key,
+                can_control,
+            } => {
+                let result = authenticated.as_ref().map_or(Err(()), |controller| {
+                    let public_key = decode_public_key(&public_key).map_err(|_| ())?;
+                    state
+                        .service
+                        .store
+                        .lock()
+                        .unwrap()
+                        .update_capability(controller, public_key, can_control)
+                        .map_err(|_| ())
+                });
+                reply(&tx, ok_or_error(result));
+            }
             GroupClientMsg::Revoke { public_key } => {
                 let result = authenticated.as_ref().map_or(Err(()), |controller| {
                     let key = decode_public_key(&public_key).map_err(|_| ())?;

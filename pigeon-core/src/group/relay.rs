@@ -2,6 +2,7 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use prost::Message;
 
 use super::GroupId;
+use super::policy::RelayCapabilityDelta;
 use crate::Error;
 use crate::identity::{IdentityPurpose, SecureIdentity};
 use crate::wire::{MAX_GROUP_MEMBERS, MAX_MLS_OBJECT_BYTES, proto};
@@ -40,6 +41,8 @@ impl GroupRelayCapability {
 pub enum GroupRelayControlKind {
     Grant,
     Revoke,
+    PromoteAdmin,
+    DemoteAdmin,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,12 +59,13 @@ impl GroupRelayControl {
         event: &super::PolicyEvent,
     ) -> Result<Option<Self>, super::PolicyError> {
         prior.relay_capability_delta(next, event).map(|delta| {
-            delta.map(|(grant, public_key)| Self {
+            delta.map(|(change, public_key)| Self {
                 coordination_id: next.coordination_id(),
-                kind: if grant {
-                    GroupRelayControlKind::Grant
-                } else {
-                    GroupRelayControlKind::Revoke
+                kind: match change {
+                    RelayCapabilityDelta::Grant => GroupRelayControlKind::Grant,
+                    RelayCapabilityDelta::Revoke => GroupRelayControlKind::Revoke,
+                    RelayCapabilityDelta::PromoteAdmin => GroupRelayControlKind::PromoteAdmin,
+                    RelayCapabilityDelta::DemoteAdmin => GroupRelayControlKind::DemoteAdmin,
                 },
                 public_key,
             })
@@ -87,6 +91,12 @@ impl GroupRelayControl {
             kind: match self.kind {
                 GroupRelayControlKind::Grant => proto::GroupRelayControlKind::Grant as i32,
                 GroupRelayControlKind::Revoke => proto::GroupRelayControlKind::Revoke as i32,
+                GroupRelayControlKind::PromoteAdmin => {
+                    proto::GroupRelayControlKind::PromoteAdmin as i32
+                }
+                GroupRelayControlKind::DemoteAdmin => {
+                    proto::GroupRelayControlKind::DemoteAdmin as i32
+                }
             },
             public_key: self.public_key.to_vec(),
         }
@@ -109,6 +119,8 @@ impl GroupRelayControl {
         {
             proto::GroupRelayControlKind::Grant => GroupRelayControlKind::Grant,
             proto::GroupRelayControlKind::Revoke => GroupRelayControlKind::Revoke,
+            proto::GroupRelayControlKind::PromoteAdmin => GroupRelayControlKind::PromoteAdmin,
+            proto::GroupRelayControlKind::DemoteAdmin => GroupRelayControlKind::DemoteAdmin,
             proto::GroupRelayControlKind::Unspecified => return Err(Error::Serialization),
         };
         Ok(Self {

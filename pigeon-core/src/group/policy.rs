@@ -15,6 +15,13 @@ const PROTOCOL_VERSION: u32 = 1;
 const POLICY_VERSION: u32 = 2;
 const MIN_GROUP_MEMBERS: usize = 3;
 
+pub(crate) enum RelayCapabilityDelta {
+    Grant,
+    Revoke,
+    PromoteAdmin,
+    DemoteAdmin,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PigeonGroupPolicy {
     protocol_version: u32,
@@ -277,7 +284,7 @@ impl PigeonGroupPolicy {
 
     pub(crate) fn can_leave(&self, actor: [u8; 32]) -> Result<(), PolicyError> {
         let committer = self
-            .members
+            .admins
             .iter()
             .copied()
             .find(|member| *member != actor)
@@ -301,7 +308,7 @@ impl PigeonGroupPolicy {
         &self,
         next: &Self,
         event: &PolicyEvent,
-    ) -> Result<Option<(bool, [u8; 32])>, PolicyError> {
+    ) -> Result<Option<(RelayCapabilityDelta, [u8; 32])>, PolicyError> {
         if self.group_id != next.group_id
             || self.coordination_id != next.coordination_id
             || event.revision != next.revision
@@ -367,13 +374,23 @@ impl PigeonGroupPolicy {
         }
         match event.kind {
             PolicyEventKind::MemberAdded => Ok(Some((
-                true,
+                RelayCapabilityDelta::Grant,
                 next.member_capability_key(event.subject.ok_or(PolicyError::UnexpectedTransition)?)
                     .ok_or(PolicyError::UnexpectedTransition)?,
             ))),
             PolicyEventKind::MemberRemoved | PolicyEventKind::MemberLeft => Ok(Some((
-                false,
+                RelayCapabilityDelta::Revoke,
                 self.member_capability_key(event.subject.ok_or(PolicyError::UnexpectedTransition)?)
+                    .ok_or(PolicyError::UnexpectedTransition)?,
+            ))),
+            PolicyEventKind::AdminPromoted => Ok(Some((
+                RelayCapabilityDelta::PromoteAdmin,
+                next.member_capability_key(event.subject.ok_or(PolicyError::UnexpectedTransition)?)
+                    .ok_or(PolicyError::UnexpectedTransition)?,
+            ))),
+            PolicyEventKind::AdminDemoted => Ok(Some((
+                RelayCapabilityDelta::DemoteAdmin,
+                next.member_capability_key(event.subject.ok_or(PolicyError::UnexpectedTransition)?)
                     .ok_or(PolicyError::UnexpectedTransition)?,
             ))),
             _ => Ok(None),
@@ -553,7 +570,7 @@ fn transition_body(
             if *actor == prior.owner
                 || actor == committer
                 || !prior.has_member(actor)
-                || !prior.has_member(committer)
+                || !prior.has_admin(committer)
             {
                 return Err(PolicyError::Unauthorized);
             }

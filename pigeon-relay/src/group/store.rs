@@ -104,6 +104,7 @@ struct CapabilityState {
 #[derive(Debug)]
 struct StoredGroup {
     capabilities: HashMap<[u8; CAPABILITY_KEY_BYTES], CapabilityState>,
+    permanent_controller: [u8; CAPABILITY_KEY_BYTES],
     entries: VecDeque<GroupEntry>,
     next_sequence: u64,
 }
@@ -190,6 +191,12 @@ impl Store {
         {
             return Err(StoreError::InvalidRegistration);
         }
+        let permanent_controller = registration
+            .capabilities
+            .iter()
+            .find(|capability| capability.can_control)
+            .map(|capability| capability.public_key)
+            .ok_or(StoreError::InvalidRegistration)?;
         let capabilities = registration
             .capabilities
             .iter()
@@ -209,6 +216,7 @@ impl Store {
             registration.coordination_id,
             StoredGroup {
                 capabilities,
+                permanent_controller,
                 entries: VecDeque::new(),
                 next_sequence: 1,
             },
@@ -361,7 +369,38 @@ impl Store {
                 cursor: old.cursor,
             },
         );
+        if old_public_key == group.permanent_controller {
+            group.permanent_controller = replacement.public_key;
+        }
         self.total_bytes = self.total_bytes.saturating_sub(group.collect_garbage());
+        Ok(())
+    }
+
+    pub fn update_capability(
+        &mut self,
+        controller: &GroupCapability,
+        public_key: [u8; CAPABILITY_KEY_BYTES],
+        can_control: bool,
+    ) -> Result<(), StoreError> {
+        let group = self
+            .groups
+            .get_mut(&controller.coordination_id)
+            .ok_or(StoreError::Unauthorized)?;
+        if !group
+            .capabilities
+            .get(&controller.public_key)
+            .is_some_and(|capability| capability.can_control)
+        {
+            return Err(StoreError::Unauthorized);
+        }
+        if public_key == group.permanent_controller && !can_control {
+            return Err(StoreError::InvalidRegistration);
+        }
+        let capability = group
+            .capabilities
+            .get_mut(&public_key)
+            .ok_or(StoreError::Unauthorized)?;
+        capability.can_control = can_control;
         Ok(())
     }
 
@@ -420,7 +459,7 @@ impl Store {
             .capabilities
             .get(&public_key)
             .ok_or(StoreError::Unauthorized)?;
-        if removed.can_control
+        if public_key == group.permanent_controller
             || (removed.can_read
                 && group
                     .capabilities

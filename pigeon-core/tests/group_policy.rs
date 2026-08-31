@@ -99,7 +99,7 @@ fn policy_role_matrix_is_fail_closed() {
         four_members
             .apply(&GroupAction::Leave {
                 actor: root(3),
-                committer: root(4),
+                committer: root(2),
             })
             .is_ok()
     );
@@ -209,6 +209,29 @@ fn roster_bounds_and_duplicates_are_rejected() {
 
 #[test]
 fn membership_transitions_derive_exact_relay_capability_changes() {
+    let initial = new_policy(vec![member_keys(1), member_keys(2), member_keys(3)]).unwrap();
+    let (promoted, promoted_event) = initial
+        .apply(&GroupAction::Promote {
+            actor: root(1),
+            subject: root(2),
+        })
+        .unwrap();
+    let promote = GroupRelayControl::for_transition(&initial, &promoted, &promoted_event)
+        .unwrap()
+        .unwrap();
+    assert_eq!(promote.kind(), GroupRelayControlKind::PromoteAdmin);
+    assert_eq!(promote.public_key(), member_keys(2).capability_public_key());
+    let (demoted, demoted_event) = promoted
+        .apply(&GroupAction::Demote {
+            actor: root(1),
+            subject: root(2),
+        })
+        .unwrap();
+    let demote = GroupRelayControl::for_transition(&promoted, &demoted, &demoted_event)
+        .unwrap()
+        .unwrap();
+    assert_eq!(demote.kind(), GroupRelayControlKind::DemoteAdmin);
+
     let prior = policy();
     let dave_keys = member_keys(4);
     let dave_capability = dave_keys.capability_public_key();
