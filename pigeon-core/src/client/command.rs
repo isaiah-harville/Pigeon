@@ -197,6 +197,17 @@ impl ClientCommand {
         )
     }
 
+    pub fn leave_group(command_id: impl Into<String>, group_id: GroupId) -> Result<Self, Error> {
+        Self::change_group_policy(
+            command_id,
+            group_id,
+            proto::GroupPolicyChangeKind::MemberLeft,
+            Vec::new(),
+            String::new(),
+            false,
+        )
+    }
+
     fn member_policy_change(
         command_id: impl Into<String>,
         group_id: GroupId,
@@ -282,6 +293,17 @@ impl ClientCommand {
         candidate: Vec<u8>,
     ) -> Result<Self, Error> {
         Self::apply_group_input(command_id, proto::OutboundKind::GroupCoordinator, candidate)
+    }
+
+    pub fn apply_group_leave_proposal(
+        command_id: impl Into<String>,
+        proposal: Vec<u8>,
+    ) -> Result<Self, Error> {
+        Self::apply_group_input(
+            command_id,
+            proto::OutboundKind::GroupLeaveProposal,
+            proposal,
+        )
     }
 
     fn apply_group_input(

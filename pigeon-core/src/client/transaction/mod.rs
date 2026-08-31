@@ -132,6 +132,9 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             proto::OutboundKind::GroupCoordinator => {
                 self.stage_apply_group_coordinator(command_id, inbound, candidate, output)
             }
+            proto::OutboundKind::GroupLeaveProposal => {
+                self.stage_apply_group_leave_proposal(command_id, inbound, candidate, output)
+            }
             _ => Err(Error::MalformedBundle),
         }
     }

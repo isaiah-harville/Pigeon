@@ -6,8 +6,8 @@ use super::checkpoint::stored_group;
 use crate::Error;
 use crate::client::{AppEvent, ClientOutput, OutboundItem};
 use crate::group::{
-    CoordinatorBinding, GroupCreationConfig, GroupEngine, GroupId, GroupRelayRegistration,
-    PigeonGroupPolicy,
+    CoordinatorBinding, GroupCreationConfig, GroupEngine, GroupId, GroupMutationCandidate,
+    GroupRelayRegistration, PigeonGroupPolicy,
 };
 use crate::identity::{GroupJoinMaterial, GroupJoinRequest, IdentityPurpose, SecureIdentity};
 use crate::storage::{StateStore, TransactionalOpenMlsStorage};
@@ -279,7 +279,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 payload: proto::GroupCoordinatorSubmission {
                     version: PROTOCOL_VERSION,
                     claimed_base_epoch: 0,
-                    candidate: initial_commit,
+                    candidate: GroupMutationCandidate::new(Vec::new(), initial_commit)?.encode(),
                 }
                 .encode_to_vec(),
             },

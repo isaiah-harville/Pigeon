@@ -1,8 +1,8 @@
 use ed25519_dalek::{Signer, SigningKey};
 use pigeon_core::{
     ClientCommand, CoordinatorReceipt, Error, GroupId, GroupJoinMaterial, GroupJoinRequest,
-    GroupRelayControl, GroupRelayControlKind, GroupRelayRegistration, IdentityError,
-    IdentityPurpose, MemoryStateStore, PigeonClient, SecureIdentity, StateStore,
+    GroupMutationCandidate, GroupRelayControl, GroupRelayControlKind, GroupRelayRegistration,
+    IdentityError, IdentityPurpose, MemoryStateStore, PigeonClient, SecureIdentity, StateStore,
     TransactionalOpenMlsStorage, coordinator_receipt_transcript, wire_proto,
 };
 use prost::Message;
@@ -122,12 +122,15 @@ fn coordinator_candidate(
     .encode_to_vec()
 }
 
-fn create_anchored_group() -> (
-    PigeonClient<MemoryStateStore, TestIdentity>,
-    GroupId,
-    [u8; 32],
-    [u8; 32],
-) {
+struct AnchoredGroup {
+    owner: PigeonClient<MemoryStateStore, TestIdentity>,
+    group_id: GroupId,
+    coordination_id: [u8; 32],
+    receipt_head: [u8; 32],
+    initial_candidate: Vec<u8>,
+}
+
+fn create_anchored_group() -> AnchoredGroup {
     let mut client = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(1)).unwrap();
     let pending = client.execute(create_group()).unwrap();
     let requests: Vec<_> = pending
@@ -181,10 +184,113 @@ fn create_anchored_group() -> (
         .receipt_hash();
     client
         .execute(
-            ClientCommand::apply_group_coordinator_candidate("anchor-receipt", candidate).unwrap(),
+            ClientCommand::apply_group_coordinator_candidate("anchor-receipt", candidate.clone())
+                .unwrap(),
         )
         .unwrap();
-    (client, group_id, coordination_id, receipt_hash)
+    AnchoredGroup {
+        owner: client,
+        group_id,
+        coordination_id,
+        receipt_head: receipt_hash,
+        initial_candidate: candidate,
+    }
+}
+
+struct GroupWithDave {
+    owner: PigeonClient<MemoryStateStore, TestIdentity>,
+    dave: PigeonClient<MemoryStateStore, TestIdentity>,
+    group_id: GroupId,
+    coordination_id: [u8; 32],
+    receipt_head: [u8; 32],
+}
+
+fn create_group_with_dave() -> GroupWithDave {
+    let anchored = create_anchored_group();
+    let mut owner = anchored.owner;
+    let group_id = anchored.group_id;
+    let coordination_id = anchored.coordination_id;
+    let receipt_head = anchored.receipt_head;
+    let invited = owner
+        .execute(
+            ClientCommand::add_group_member(
+                "helper-invite-dave",
+                group_id,
+                TestIdentity::new(4).root_public(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let request =
+        wire_proto::OutboundItem::decode(invited.outbound[0].encode().as_slice()).unwrap();
+    let mut dave = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(4)).unwrap();
+    let material_output = dave
+        .execute(
+            ClientCommand::apply_group_join_request(
+                "helper-dave-material",
+                request.item_id.clone(),
+                request.payload,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let material =
+        wire_proto::OutboundItem::decode(material_output.outbound[0].encode().as_slice()).unwrap();
+    let staged = owner
+        .execute(
+            ClientCommand::apply_group_join_material(
+                "helper-apply-dave",
+                request.item_id,
+                material.payload,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let submission_item =
+        wire_proto::OutboundItem::decode(staged.outbound[0].encode().as_slice()).unwrap();
+    let submission =
+        wire_proto::GroupCoordinatorSubmission::decode(submission_item.payload.as_slice()).unwrap();
+    let canonical = coordinator_candidate(&submission, 2, receipt_head, coordination_id);
+    let receipt_head = CoordinatorReceipt::decode_candidate(&canonical)
+        .unwrap()
+        .0
+        .receipt_hash();
+    let merged = owner
+        .execute(
+            ClientCommand::apply_group_coordinator_candidate(
+                "helper-merge-dave",
+                canonical.clone(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let welcome = merged
+        .outbound
+        .iter()
+        .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
+        .find(|item| item.kind == wire_proto::OutboundKind::GroupWelcome as i32)
+        .unwrap();
+    dave.execute(ClientCommand::apply_group_welcome("helper-join-dave", welcome.payload).unwrap())
+        .unwrap();
+    dave.execute(
+        ClientCommand::apply_group_coordinator_candidate(
+            "helper-anchor-initial",
+            anchored.initial_candidate,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    dave.execute(
+        ClientCommand::apply_group_coordinator_candidate("helper-anchor-add", canonical).unwrap(),
+    )
+    .unwrap();
+    GroupWithDave {
+        owner,
+        dave,
+        group_id,
+        coordination_id,
+        receipt_head,
+    }
 }
 
 #[test]
@@ -506,8 +612,53 @@ fn policy_change_persists_before_releasing_a_coordinator_submission() {
 }
 
 #[test]
+fn coordinator_equivocation_is_durably_frozen_and_reported() {
+    let anchored = create_anchored_group();
+    let mut client = anchored.owner;
+    let coordination_id = anchored.coordination_id;
+    let accepted = anchored.initial_candidate;
+    let fork_submission = wire_proto::GroupCoordinatorSubmission {
+        version: 1,
+        claimed_base_epoch: 0,
+        candidate: GroupMutationCandidate::new(Vec::new(), b"conflicting commit".to_vec())
+            .unwrap()
+            .encode(),
+    };
+    let fork = coordinator_candidate(&fork_submission, 1, [0; 32], coordination_id);
+    let generation = client.checkpoint_generation();
+
+    let frozen = client
+        .execute(ClientCommand::apply_group_coordinator_candidate("observe-fork", fork).unwrap())
+        .unwrap();
+
+    assert_eq!(frozen.checkpoint_generation, generation + 1);
+    assert_eq!(frozen.events.len(), 1);
+    assert!(frozen.outbound.is_empty());
+    let event = wire_proto::AppEvent::decode(frozen.events[0].encode().as_slice()).unwrap();
+    let wire_proto::app_event::Body::GroupSecurityWarning(warning) = event.body.unwrap() else {
+        panic!("expected coordinator security warning");
+    };
+    assert_eq!(warning.code, 1);
+    assert_eq!(warning.epoch, 1);
+
+    assert!(
+        client
+            .execute(
+                ClientCommand::apply_group_coordinator_candidate("candidate-after-fork", accepted,)
+                    .unwrap(),
+            )
+            .is_err()
+    );
+    assert_eq!(client.checkpoint_generation(), generation + 1);
+}
+
+#[test]
 fn membership_changes_release_relay_controls_and_welcome_only_after_canonical_merge() {
-    let (mut owner_client, group_id, coordination_id, receipt_head) = create_anchored_group();
+    let anchored = create_anchored_group();
+    let mut owner_client = anchored.owner;
+    let group_id = anchored.group_id;
+    let coordination_id = anchored.coordination_id;
+    let receipt_head = anchored.receipt_head;
     let dave = TestIdentity::new(4);
     let invited = owner_client
         .execute(
@@ -637,4 +788,78 @@ fn membership_changes_release_relay_controls_and_welcome_only_after_canonical_me
         revoke.public_key(),
         TestIdentity::new(4).capability.verifying_key().to_bytes()
     );
+}
+
+#[test]
+fn ordinary_member_leave_is_committed_by_an_online_admin() {
+    let group = create_group_with_dave();
+    let mut owner = group.owner;
+    let mut dave = group.dave;
+    let group_id = group.group_id;
+    let coordination_id = group.coordination_id;
+    let receipt_head = group.receipt_head;
+
+    let proposed = dave
+        .execute(ClientCommand::leave_group("dave-leaves", group_id).unwrap())
+        .unwrap();
+    assert!(proposed.events.is_empty());
+    assert_eq!(proposed.outbound.len(), 1);
+    let proposal =
+        wire_proto::OutboundItem::decode(proposed.outbound[0].encode().as_slice()).unwrap();
+    assert_eq!(
+        proposal.kind,
+        wire_proto::OutboundKind::GroupLeaveProposal as i32
+    );
+    let leave = wire_proto::GroupLeaveProposal::decode(proposal.payload.as_slice()).unwrap();
+    assert_eq!(leave.departing_identity, TestIdentity::new(4).root_public());
+
+    let staged = owner
+        .execute(
+            ClientCommand::apply_group_leave_proposal("owner-commits-leave", proposal.payload)
+                .unwrap(),
+        )
+        .unwrap();
+    assert!(staged.events.is_empty());
+    assert_eq!(staged.outbound.len(), 1);
+    let submission_item =
+        wire_proto::OutboundItem::decode(staged.outbound[0].encode().as_slice()).unwrap();
+    let submission =
+        wire_proto::GroupCoordinatorSubmission::decode(submission_item.payload.as_slice()).unwrap();
+    let mutation = GroupMutationCandidate::decode(&submission.candidate).unwrap();
+    assert_eq!(mutation.proposals().len(), 1);
+    assert_eq!(mutation.proposals()[0], leave.proposal);
+
+    let canonical = coordinator_candidate(&submission, 3, receipt_head, coordination_id);
+    let merged = owner
+        .execute(
+            ClientCommand::apply_group_coordinator_candidate("merge-dave-leave", canonical.clone())
+                .unwrap(),
+        )
+        .unwrap();
+    let event = wire_proto::AppEvent::decode(merged.events[0].encode().as_slice()).unwrap();
+    let wire_proto::app_event::Body::GroupPolicyChanged(change) = event.body.unwrap() else {
+        panic!("expected member-left policy event");
+    };
+    assert_eq!(
+        change.kind,
+        wire_proto::GroupPolicyChangeKind::MemberLeft as i32
+    );
+    assert_eq!(change.subject_identity, TestIdentity::new(4).root_public());
+    let revoke_item =
+        wire_proto::OutboundItem::decode(merged.outbound[0].encode().as_slice()).unwrap();
+    let revoke = GroupRelayControl::decode(&revoke_item.payload).unwrap();
+    assert_eq!(revoke.kind(), GroupRelayControlKind::Revoke);
+    assert_eq!(
+        revoke.public_key(),
+        TestIdentity::new(4).capability.verifying_key().to_bytes()
+    );
+
+    let departed = dave
+        .execute(
+            ClientCommand::apply_group_coordinator_candidate("observe-own-leave", canonical)
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(departed.events.len(), 1);
+    assert!(departed.outbound.is_empty());
 }

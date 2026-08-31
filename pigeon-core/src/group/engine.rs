@@ -4,7 +4,8 @@ use tls_codec::{Deserialize, Serialize};
 
 use super::{
     AuthenticatedGroupMessage, CoordinatorBinding, GroupAction, GroupApplication, GroupCiphertext,
-    GroupId, GroupMessageId, PendingMutation, PigeonGroupPolicy, PolicyEvent,
+    GroupId, GroupMessageId, GroupMutationCandidate, PendingMutation, PigeonGroupPolicy,
+    PolicyEvent,
 };
 use crate::Error;
 use crate::identity::{
@@ -411,6 +412,9 @@ impl GroupEngine {
         let signer = PlatformMlsSigner(identity);
         let provider = storage.provider();
         let mut group = load_group(provider, self.group_id)?;
+        if group.has_pending_proposals() {
+            return Err(Error::Mls("unrelated proposal already pending"));
+        }
         if queue_self_remove(&mut group, provider, proposal)? != departing {
             return Err(Error::InvalidSignature);
         }
@@ -458,27 +462,45 @@ impl GroupEngine {
         storage: &mut TransactionalOpenMlsStorage,
         commit: &[u8],
     ) -> Result<PolicyEvent, Error> {
-        if commit.len() > MAX_MLS_OBJECT_BYTES {
-            return Err(Error::ResourceLimit("MLS commit bytes"));
-        }
+        let candidate = GroupMutationCandidate::new(Vec::new(), commit.to_vec())?;
+        self.merge_canonical_candidate(storage, &candidate)
+    }
+
+    pub fn merge_canonical_candidate(
+        &mut self,
+        storage: &mut TransactionalOpenMlsStorage,
+        candidate: &GroupMutationCandidate,
+    ) -> Result<PolicyEvent, Error> {
         let provider = storage.provider();
         let mut group = load_group(provider, self.group_id)?;
+        let mut discarded_local_commit = false;
         if let Some(pending) = self.pending.take() {
-            if pending.commit != commit {
-                self.pending = Some(pending);
-                return Err(Error::InvalidSignature);
+            if pending.commit == candidate.commit() {
+                group
+                    .merge_pending_commit(provider)
+                    .map_err(|_| Error::Mls("merge local canonical commit"))?;
+                verify_group_policy(&group, &pending.policy)?;
+                self.policy = pending.policy;
+                self.epoch = group.epoch().as_u64();
+                return Ok(pending.event);
             }
             group
-                .merge_pending_commit(provider)
-                .map_err(|_| Error::Mls("merge local canonical commit"))?;
-            verify_group_policy(&group, &pending.policy)?;
-            self.policy = pending.policy;
-            self.epoch = group.epoch().as_u64();
-            return Ok(pending.event);
+                .clear_pending_commit(provider.storage())
+                .map_err(|_| Error::Mls("discard non-canonical local commit"))?;
+            discarded_local_commit = true;
         }
 
-        let message =
-            MlsMessageIn::tls_deserialize_exact(commit).map_err(|_| Error::Serialization)?;
+        if discarded_local_commit || !group.has_pending_proposals() {
+            group
+                .clear_pending_proposals(provider.storage())
+                .map_err(|_| Error::Mls("clear non-canonical proposals"))?;
+            for proposal in candidate.proposals() {
+                queue_self_remove(&mut group, provider, proposal)?;
+            }
+        }
+
+        let message = MlsMessageIn::tls_deserialize_exact(candidate.commit())
+            .map_err(|_| Error::Serialization)?;
         let protocol_message = message
             .try_into_protocol_message()
             .map_err(|_| Error::Serialization)?;
@@ -675,9 +697,6 @@ fn queue_self_remove(
     provider: &impl OpenMlsProvider,
     proposal: &[u8],
 ) -> Result<[u8; 32], Error> {
-    if group.has_pending_proposals() {
-        return Err(Error::Mls("unrelated proposal already pending"));
-    }
     let message =
         MlsMessageIn::tls_deserialize_exact(proposal).map_err(|_| Error::Serialization)?;
     let protocol_message = message

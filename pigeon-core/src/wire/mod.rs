@@ -89,6 +89,7 @@ pub(crate) fn validate_client_command(command: &proto::ClientCommand) -> Result<
                         | proto::OutboundKind::GroupWelcome
                         | proto::OutboundKind::GroupMessage
                         | proto::OutboundKind::GroupCoordinator
+                        | proto::OutboundKind::GroupLeaveProposal
                 )
             {
                 return Err(Error::MalformedBundle);

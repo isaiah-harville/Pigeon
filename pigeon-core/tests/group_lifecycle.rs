@@ -1,7 +1,8 @@
 use ed25519_dalek::{Signer, SigningKey};
 use pigeon_core::{
     CoordinatorBinding, GroupAction, GroupCreationConfig, GroupEngine, GroupId, GroupJoinMaterial,
-    IdentityError, IdentityPurpose, PolicyEventKind, SecureIdentity, TransactionalOpenMlsStorage,
+    GroupMutationCandidate, IdentityError, IdentityPurpose, PolicyEventKind, SecureIdentity,
+    TransactionalOpenMlsStorage,
 };
 
 struct TestIdentity {
@@ -379,36 +380,27 @@ fn ordinary_member_leave_requires_their_signed_proposal_and_another_committer() 
             .stage_leave_candidate(&carol, &mut carol_storage, dave.root_public(), &tampered)
             .is_err()
     );
-    assert_eq!(
-        bob_group
-            .receive_leave_proposal(&mut bob_storage, &proposal)
-            .unwrap(),
-        dave.root_public()
-    );
-    carol_group
-        .receive_leave_proposal(&mut carol_storage, &proposal)
-        .unwrap();
-
     let leave = alice_group
         .stage_leave_candidate(&alice, &mut alice_storage, dave.root_public(), &proposal)
         .unwrap();
+    let canonical = GroupMutationCandidate::new(vec![proposal], leave.commit().to_vec()).unwrap();
     let event = alice_group
-        .merge_canonical(&mut alice_storage, leave.commit())
+        .merge_canonical_candidate(&mut alice_storage, &canonical)
         .unwrap();
     assert_eq!(event.kind, PolicyEventKind::MemberLeft);
     assert_eq!(event.actor, dave.root_public());
     assert_eq!(event.subject, Some(dave.root_public()));
     assert_eq!(
         carol_group
-            .merge_canonical(&mut carol_storage, leave.commit())
+            .merge_canonical_candidate(&mut carol_storage, &canonical)
             .unwrap(),
         event
     );
     bob_group
-        .merge_canonical(&mut bob_storage, leave.commit())
+        .merge_canonical_candidate(&mut bob_storage, &canonical)
         .unwrap();
     dave_group
-        .merge_canonical(&mut dave_storage, leave.commit())
+        .merge_canonical_candidate(&mut dave_storage, &canonical)
         .unwrap();
     assert_eq!(alice_group.policy().members().len(), 3);
 }
@@ -486,6 +478,83 @@ fn owner_settings_and_dissolution_are_canonical_mls_epochs() {
             )
             .is_err()
     );
+}
+
+#[test]
+fn canonical_remote_commit_replaces_a_losing_local_candidate() {
+    let alice = TestIdentity::new(41);
+    let bob = TestIdentity::new(42);
+    let carol = TestIdentity::new(43);
+    let group_id = GroupId::from_bytes([41; 32]);
+    let coordination_id = [42; 32];
+    let mut alice_storage = TransactionalOpenMlsStorage::new();
+    let mut bob_storage = TransactionalOpenMlsStorage::new();
+    let mut carol_storage = TransactionalOpenMlsStorage::new();
+    let bob_material = join_material(&bob, &alice, group_id, coordination_id, &mut bob_storage);
+    let carol_material = join_material(
+        &carol,
+        &alice,
+        group_id,
+        coordination_id,
+        &mut carol_storage,
+    );
+    let (mut alice_group, welcome) = GroupEngine::create(
+        &alice,
+        &mut alice_storage,
+        creation(group_id, coordination_id, "Original"),
+        vec![bob_material, carol_material],
+    )
+    .unwrap();
+    let mut bob_group = GroupEngine::join_welcome(&bob, &mut bob_storage, &welcome).unwrap();
+    let promote = alice_group
+        .stage_candidate(
+            &alice,
+            &mut alice_storage,
+            GroupAction::Promote {
+                actor: alice.root_public(),
+                subject: bob.root_public(),
+            },
+            None,
+        )
+        .unwrap();
+    alice_group
+        .merge_canonical(&mut alice_storage, promote.commit())
+        .unwrap();
+    bob_group
+        .merge_canonical(&mut bob_storage, promote.commit())
+        .unwrap();
+
+    let winner = alice_group
+        .stage_candidate(
+            &alice,
+            &mut alice_storage,
+            GroupAction::Promote {
+                actor: alice.root_public(),
+                subject: carol.root_public(),
+            },
+            None,
+        )
+        .unwrap();
+    bob_group
+        .stage_candidate(
+            &bob,
+            &mut bob_storage,
+            GroupAction::Promote {
+                actor: bob.root_public(),
+                subject: carol.root_public(),
+            },
+            None,
+        )
+        .unwrap();
+    let canonical = GroupMutationCandidate::new(Vec::new(), winner.commit().to_vec()).unwrap();
+
+    let event = bob_group
+        .merge_canonical_candidate(&mut bob_storage, &canonical)
+        .unwrap();
+
+    assert_eq!(event.kind, PolicyEventKind::AdminPromoted);
+    assert_eq!(event.actor, alice.root_public());
+    assert!(bob_group.policy().is_admin(carol.root_public()));
 }
 
 #[test]

@@ -69,6 +69,7 @@ enum OutboundKind {
   OUTBOUND_KIND_GROUP_WELCOME = 7;
   OUTBOUND_KIND_GROUP_RELAY_REGISTRATION = 8;
   OUTBOUND_KIND_GROUP_RELAY_CONTROL = 9;
+  OUTBOUND_KIND_GROUP_LEAVE_PROPOSAL = 10;
 }
 
 message OutboundItem {
@@ -146,6 +147,7 @@ message PendingGroupMutation {
   bytes subject_identity = 7;
   bytes welcome = 8;
   bytes welcome_destination = 9;
+  bytes coordinator_candidate = 10;
 }
 
 message PendingGroupAddition {

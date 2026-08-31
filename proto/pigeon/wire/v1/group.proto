@@ -178,6 +178,21 @@ message GroupCoordinatorSubmission {
   bytes candidate = 3;
 }
 
+// The opaque value sequenced by the coordinator. Referenced MLS proposals must
+// accompany the commit so every member can queue them before processing it.
+message GroupMutationCandidate {
+  uint32 version = 1;
+  repeated bytes proposals = 2;
+  bytes commit = 3;
+}
+
+message GroupLeaveProposal {
+  uint32 version = 1;
+  bytes group_id = 2;
+  bytes proposal = 3;
+  bytes departing_identity = 4;
+}
+
 message CoordinatorChainEntry {
   uint64 sequence = 1;
   bytes prior_receipt_hash = 2;

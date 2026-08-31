@@ -2,6 +2,7 @@
 
 mod action;
 mod buffer;
+mod candidate;
 mod coordinator;
 mod delivery;
 mod engine;
@@ -13,6 +14,7 @@ mod relay;
 
 pub use action::{Actor, GroupAction, PolicyEvent, PolicyEventKind};
 pub use buffer::{BufferDisposition, EpochBuffer};
+pub use candidate::GroupMutationCandidate;
 pub use coordinator::{
     CanonicalCandidate, CoordinatorBinding, CoordinatorChain, CoordinatorChainError,
     CoordinatorReceipt, coordinator_receipt_transcript, select_canonical_candidate,

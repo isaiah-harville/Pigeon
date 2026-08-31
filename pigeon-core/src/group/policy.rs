@@ -297,6 +297,10 @@ impl PigeonGroupPolicy {
         &self.members
     }
 
+    pub fn is_admin(&self, identity: [u8; 32]) -> bool {
+        self.admins.binary_search(&identity).is_ok()
+    }
+
     pub fn member_capability_key(&self, identity: [u8; 32]) -> Option<[u8; 32]> {
         self.member_keys
             .binary_search_by_key(&identity, GroupMemberKeys::member_identity)
@@ -336,7 +340,7 @@ impl PigeonGroupPolicy {
             PolicyEventKind::MemberLeft => {
                 let departing = event.subject.ok_or(PolicyError::UnexpectedTransition)?;
                 let committer = next
-                    .members
+                    .admins
                     .iter()
                     .find(|identity| **identity != departing)
                     .copied()
