@@ -98,6 +98,10 @@ final class SessionManager {
 
   /// Locked until the vault is unlocked with Face ID / Touch ID.
   private(set) var isUnlocked = false
+
+  func markUnlockedAfterRestore() {
+    isUnlocked = true
+  }
   /// False after any persistence failure. Processing stays frozen for the rest
   /// of the run so the live ratchet can never advance farther than sealed state.
   var isPersistenceHealthy = true

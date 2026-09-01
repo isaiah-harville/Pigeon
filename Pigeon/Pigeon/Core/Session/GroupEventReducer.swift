@@ -14,34 +14,47 @@ enum GroupEventReducer {
     case .groupMessageReceived(let value):
       try reduceMessage(value, into: &conversation, localIdentity: localIdentity)
     case .groupReactionReceived(let value):
-      try requireGroup(value.groupID, in: conversation)
-      guard
-        let index = conversation.messages.firstIndex(where: { message in
-          message.id == value.targetMessageID
-        })
-      else {
-        throw GroupEventReductionError.missingTargetMessage
-      }
-      conversation.messages[index].reactions[value.senderIdentity] = value.reaction
+      try reduceReaction(value, into: &conversation)
     case .groupPolicyChanged(let value):
       try reducePolicy(value, eventID: event.id, into: &conversation, localIdentity: localIdentity)
     case .groupDeliveryChanged(let value):
-      try requireGroup(value.groupID, in: conversation)
-      guard
-        let index = conversation.messages.firstIndex(where: { message in
-          message.id == value.messageID
-        })
-      else {
-        throw GroupEventReductionError.missingTargetMessage
-      }
-      conversation.messages[index].delivery = GroupDeliverySummary(
-        state: try delivery(from: value.state),
-        deliveredCount: value.deliveredCount,
-        intendedCount: value.intendedCount)
+      try reduceDelivery(value, into: &conversation)
     case .groupSecurityWarning(let value):
       try reduceWarning(value, eventID: event.id, into: &conversation)
     }
     conversation.markProcessed(event.id)
+  }
+
+  private static func reduceReaction(
+    _ event: PigeonGroupReactionReceivedEvent,
+    into conversation: inout GroupConversation
+  ) throws {
+    try requireGroup(event.groupID, in: conversation)
+    guard isCanonicalMessageID(event.messageID), isCanonicalMessageID(event.targetMessageID) else {
+      throw GroupEventReductionError.invalidMessageID
+    }
+    guard let index = conversation.messages.firstIndex(where: { $0.id == event.targetMessageID })
+    else {
+      throw GroupEventReductionError.missingTargetMessage
+    }
+    conversation.messages[index].reactions[event.senderIdentity] = event.reaction
+  }
+
+  private static func reduceDelivery(
+    _ event: PigeonGroupDeliveryChangedEvent,
+    into conversation: inout GroupConversation
+  ) throws {
+    try requireGroup(event.groupID, in: conversation)
+    guard isCanonicalMessageID(event.messageID) else {
+      throw GroupEventReductionError.invalidMessageID
+    }
+    guard let index = conversation.messages.firstIndex(where: { $0.id == event.messageID }) else {
+      throw GroupEventReductionError.missingTargetMessage
+    }
+    conversation.messages[index].delivery = GroupDeliverySummary(
+      state: try delivery(from: event.state),
+      deliveredCount: event.deliveredCount,
+      intendedCount: event.intendedCount)
   }
 
   private static func reduceCreated(
@@ -66,7 +79,7 @@ enum GroupEventReducer {
     localIdentity: Data
   ) throws {
     try requireGroup(event.groupID, in: conversation)
-    guard UUID(uuidString: event.messageID) != nil else {
+    guard isCanonicalMessageID(event.messageID) else {
       throw GroupEventReductionError.invalidMessageID
     }
     guard let text = String(data: event.body, encoding: .utf8) else {
@@ -81,6 +94,14 @@ enum GroupEventReducer {
           content: .message(text, replyToMessageID: event.replyToMessageID),
           epoch: event.epoch))
     }
+  }
+
+  private static func isCanonicalMessageID(_ value: String) -> Bool {
+    value.utf8.count == 32
+      && value.utf8.allSatisfy { byte in
+        (UInt8(ascii: "0")...UInt8(ascii: "9")).contains(byte)
+          || (UInt8(ascii: "a")...UInt8(ascii: "f")).contains(byte)
+      }
   }
 
   private static func reducePolicy(

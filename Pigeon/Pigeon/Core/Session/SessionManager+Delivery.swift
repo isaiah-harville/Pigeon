@@ -28,7 +28,7 @@ extension SessionManager {
     lastInitiationIn = loaded.lastInitiationIn
     acceptedInitiationDigests = loaded.acceptedInitiationDigests
     fallbackRotatedAt = loaded.fallbackRotatedAt
-    isUnlocked = true
+    markUnlockedAfterRestore()
     isPersistenceHealthy = true
     lockedInbox.reset()
   }

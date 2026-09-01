@@ -34,7 +34,9 @@ final class GroupEventReducerTests: XCTestCase {
 
   func testMessageReactionAndDeliveryReduceByAuthenticatedIdentifiers() throws {
     var conversation = GroupConversation(id: groupID)
-    let messageID = UUID().uuidString
+    // Core serializes its authenticated 16-byte MLS message identifier as
+    // exactly 32 lowercase hexadecimal characters.
+    let messageID = "00112233445566778899aabbccddeeff"
     let message = PigeonCoreEvent(
       id: "message-event",
       body: .groupMessageReceived(
@@ -50,7 +52,7 @@ final class GroupEventReducerTests: XCTestCase {
       body: .groupReactionReceived(
         PigeonGroupReactionReceivedEvent(
           groupID: groupID,
-          messageID: UUID().uuidString,
+          messageID: "ffeeddccbbaa99887766554433221100",
           senderIdentity: alice,
           targetMessageID: messageID,
           reaction: "👍",
@@ -95,5 +97,45 @@ final class GroupEventReducerTests: XCTestCase {
     try GroupEventReducer.reduce(event, into: &conversation, localIdentity: alice)
 
     XCTAssertEqual(conversation.messages.count, 1)
+  }
+
+  func testReactionRejectsNoncanonicalTargetMessageIDBeforeLookup() {
+    var conversation = GroupConversation(id: groupID)
+    let event = PigeonCoreEvent(
+      id: "reaction-event",
+      body: .groupReactionReceived(
+        PigeonGroupReactionReceivedEvent(
+          groupID: groupID,
+          messageID: "ffeeddccbbaa99887766554433221100",
+          senderIdentity: alice,
+          targetMessageID: "00112233445566778899AABBCCDDEEFF",
+          reaction: "👍",
+          epoch: 3)))
+
+    XCTAssertThrowsError(
+      try GroupEventReducer.reduce(event, into: &conversation, localIdentity: alice)
+    ) { error in
+      XCTAssertEqual(error as? GroupEventReductionError, .invalidMessageID)
+    }
+  }
+
+  func testDeliveryRejectsNoncanonicalMessageIDBeforeLookup() {
+    var conversation = GroupConversation(id: groupID)
+    let event = PigeonCoreEvent(
+      id: "delivery-event",
+      body: .groupDeliveryChanged(
+        PigeonGroupDeliveryChangedEvent(
+          groupID: groupID,
+          messageID: UUID().uuidString,
+          state: .delivered,
+          epoch: 3,
+          deliveredCount: 2,
+          intendedCount: 2)))
+
+    XCTAssertThrowsError(
+      try GroupEventReducer.reduce(event, into: &conversation, localIdentity: alice)
+    ) { error in
+      XCTAssertEqual(error as? GroupEventReductionError, .invalidMessageID)
+    }
   }
 }
