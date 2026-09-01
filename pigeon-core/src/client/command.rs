@@ -63,6 +63,46 @@ impl ClientCommand {
         Ok(Self { inner })
     }
 
+    pub fn register_pairwise_contact(
+        command_id: impl Into<String>,
+        prekey_bundle: Vec<u8>,
+        relay_url: impl Into<String>,
+    ) -> Result<Self, Error> {
+        let inner = proto::ClientCommand {
+            version: PROTOCOL_VERSION,
+            command_id: command_id.into(),
+            body: Some(proto::client_command::Body::RegisterPairwiseContact(
+                proto::RegisterPairwiseContact {
+                    prekey_bundle,
+                    relay_url: relay_url.into(),
+                },
+            )),
+        };
+        wire::validate_client_command(&inner)?;
+        Ok(Self { inner })
+    }
+
+    pub fn send_pairwise_control(
+        command_id: impl Into<String>,
+        recipient_identity: [u8; 32],
+        content_kind: proto::OutboundKind,
+        payload: Vec<u8>,
+    ) -> Result<Self, Error> {
+        let inner = proto::ClientCommand {
+            version: PROTOCOL_VERSION,
+            command_id: command_id.into(),
+            body: Some(proto::client_command::Body::SendPairwiseControl(
+                proto::SendPairwiseControl {
+                    recipient_identity: recipient_identity.to_vec(),
+                    content_kind: content_kind as i32,
+                    payload,
+                },
+            )),
+        };
+        wire::validate_client_command(&inner)?;
+        Ok(Self { inner })
+    }
+
     pub fn acknowledge_effects(
         command_id: impl Into<String>,
         outbound_item_ids: Vec<String>,
@@ -105,6 +145,19 @@ impl ClientCommand {
             request_id,
             proto::OutboundKind::GroupJoinMaterial,
             material,
+        )
+    }
+
+    pub fn apply_pairwise_control(
+        command_id: impl Into<String>,
+        envelope: Vec<u8>,
+    ) -> Result<Self, Error> {
+        let command_id = command_id.into();
+        Self::apply_inbound(
+            command_id.clone(),
+            command_id,
+            proto::OutboundKind::Pairwise,
+            envelope,
         )
     }
 

@@ -2,6 +2,7 @@ mod checkpoint;
 mod group_creation;
 mod group_messaging;
 mod group_policy;
+mod pairwise;
 
 use checkpoint::{decode_checkpoint, encode_checkpoint};
 
@@ -40,6 +41,8 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 pending_events: Vec::new(),
                 pairwise_account_state: Vec::new(),
                 pairwise_fallback_key: Vec::new(),
+                pairwise_contacts: Vec::new(),
+                pairwise_sessions: Vec::new(),
             },
         };
         Ok(Self {
@@ -118,6 +121,17 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 } else {
                     pairwise_account(&candidate)?;
                 }
+            }
+            proto::client_command::Body::RegisterPairwiseContact(register) => {
+                self.stage_register_pairwise_contact(register, &mut candidate)?;
+            }
+            proto::client_command::Body::SendPairwiseControl(send) => {
+                self.stage_send_pairwise_control(
+                    &command.inner.command_id,
+                    send,
+                    &mut candidate,
+                    &mut output,
+                )?;
             }
         }
 
@@ -268,6 +282,29 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         output: &mut ClientOutput,
     ) -> Result<(), Error> {
         match proto::OutboundKind::try_from(inbound.kind).map_err(|_| Error::MalformedBundle)? {
+            proto::OutboundKind::Pairwise => {
+                let control = self.stage_apply_pairwise_control(inbound, candidate)?;
+                let inner = proto::ApplyInbound {
+                    kind: i32::try_from(control.content_kind)
+                        .map_err(|_| Error::MalformedBundle)?,
+                    payload: control.payload,
+                    request_id: inbound.request_id.clone(),
+                };
+                match proto::OutboundKind::try_from(inner.kind)
+                    .map_err(|_| Error::MalformedBundle)?
+                {
+                    proto::OutboundKind::GroupJoinRequest => {
+                        self.stage_apply_group_join_request(command_id, &inner, candidate, output)
+                    }
+                    proto::OutboundKind::GroupJoinMaterial => {
+                        self.stage_apply_group_join_material(command_id, &inner, candidate, output)
+                    }
+                    proto::OutboundKind::GroupWelcome => {
+                        self.stage_apply_group_welcome(command_id, &inner, candidate, output)
+                    }
+                    _ => Err(Error::MalformedBundle),
+                }
+            }
             proto::OutboundKind::GroupJoinRequest => {
                 self.stage_apply_group_join_request(command_id, inbound, candidate, output)
             }

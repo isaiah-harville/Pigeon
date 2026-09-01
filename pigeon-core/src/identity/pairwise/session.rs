@@ -13,7 +13,7 @@ use vodozemac::olm::{OlmMessage, Session as OlmSession, SessionConfig, SessionPi
 use crate::error::Error;
 use crate::identity::root::IdentityBundle;
 
-use super::account::Account;
+use super::account::{Account, PlatformAccount};
 use super::prekey::PrekeyBundle;
 
 /// What an initiator sends ahead of (and including) its first message so the
@@ -35,6 +35,89 @@ pub struct Session {
     /// verified out of band. The host app compares this against the contact's
     /// safety number — the same role the Swift `remoteStaticKey` played.
     remote_identity_key: [u8; 32],
+}
+
+/// Ratchet state owned by the high-level client. It accepts root-identity
+/// operations only through [`crate::identity::SecureIdentity`] and remains
+/// private to `pigeon-core`.
+pub(crate) struct PlatformSession {
+    olm: OlmSession,
+    remote_identity_key: [u8; 32],
+}
+
+impl PlatformSession {
+    pub(crate) fn establish_outbound<I: crate::identity::SecureIdentity + ?Sized>(
+        local: &PlatformAccount,
+        identity: &I,
+        peer: &PrekeyBundle,
+        first_plaintext: &[u8],
+    ) -> Result<(Self, Initiation), Error> {
+        peer.verify()?;
+        let mut olm = local.olm().create_outbound_session(
+            SessionConfig::default(),
+            peer.identity.curve25519(),
+            vodozemac::Curve25519PublicKey::from_bytes(peer.prekey),
+        )?;
+        let message = olm.encrypt(first_plaintext)?;
+        Ok((
+            Self {
+                olm,
+                remote_identity_key: peer.identity.identity_key,
+            },
+            Initiation {
+                identity: local.identity_bundle(identity)?,
+                message,
+            },
+        ))
+    }
+
+    pub(crate) fn establish_inbound(
+        local: &mut PlatformAccount,
+        identity: &IdentityBundle,
+        message: &OlmMessage,
+    ) -> Result<(Self, Vec<u8>), Error> {
+        identity.verify()?;
+        let OlmMessage::PreKey(prekey_message) = message else {
+            return Err(Error::NotAPreKeyMessage);
+        };
+        let result = local.olm_mut().create_inbound_session(
+            SessionConfig::default(),
+            identity.curve25519(),
+            prekey_message,
+        )?;
+        Ok((
+            Self {
+                olm: result.session,
+                remote_identity_key: identity.identity_key,
+            },
+            result.plaintext,
+        ))
+    }
+
+    pub(crate) fn encrypt(&mut self, plaintext: &[u8]) -> Result<OlmMessage, Error> {
+        Ok(self.olm.encrypt(plaintext)?)
+    }
+
+    pub(crate) fn decrypt(&mut self, message: &OlmMessage) -> Result<Vec<u8>, Error> {
+        Ok(self.olm.decrypt(message)?)
+    }
+
+    pub(crate) fn export(&self) -> Result<Vec<u8>, Error> {
+        serde_json::to_vec(&self.olm.pickle()).map_err(|_| Error::Serialization)
+    }
+
+    pub(crate) fn import(state: &[u8], remote_identity_key: [u8; 32]) -> Result<Self, Error> {
+        let pickle: SessionPickle =
+            serde_json::from_slice(state).map_err(|_| Error::Serialization)?;
+        Ok(Self {
+            olm: OlmSession::from_pickle(pickle),
+            remote_identity_key,
+        })
+    }
+
+    pub(crate) fn remote_identity_key(&self) -> [u8; 32] {
+        self.remote_identity_key
+    }
 }
 
 impl Session {
@@ -156,5 +239,83 @@ impl Session {
     /// Olm's session id (stable, shared by both ends once converged).
     pub fn session_id(&self) -> String {
         self.olm.session_id()
+    }
+}
+
+#[cfg(test)]
+mod platform_session_tests {
+    use ed25519_dalek::{Signer, SigningKey};
+
+    use super::PlatformSession;
+    use crate::identity::pairwise::PlatformAccount;
+    use crate::identity::{IdentityError, IdentityPurpose, SecureIdentity};
+
+    struct TestIdentity(SigningKey);
+
+    impl SecureIdentity for TestIdentity {
+        fn ensure_public_key(&self, purpose: IdentityPurpose) -> Result<[u8; 32], IdentityError> {
+            assert_eq!(purpose, IdentityPurpose::Root);
+            Ok(self.0.verifying_key().to_bytes())
+        }
+
+        fn sign(
+            &self,
+            purpose: IdentityPurpose,
+            message: &[u8],
+        ) -> Result<[u8; 64], IdentityError> {
+            assert_eq!(purpose, IdentityPurpose::Root);
+            Ok(self.0.sign(message).to_bytes())
+        }
+    }
+
+    #[test]
+    fn platform_sessions_establish_without_exporting_identity_seeds() {
+        let alice_identity = TestIdentity(SigningKey::from_bytes(&[1; 32]));
+        let bob_identity = TestIdentity(SigningKey::from_bytes(&[2; 32]));
+        let alice = PlatformAccount::new();
+        let mut bob = PlatformAccount::new();
+        let bob_prekey = bob.signed_prekey_bundle(&bob_identity).unwrap();
+
+        let (mut alice_session, initiation) = PlatformSession::establish_outbound(
+            &alice,
+            &alice_identity,
+            &bob_prekey,
+            b"group bootstrap",
+        )
+        .unwrap();
+        let (mut bob_session, plaintext) =
+            PlatformSession::establish_inbound(&mut bob, &initiation.identity, &initiation.message)
+                .unwrap();
+
+        assert_eq!(plaintext, b"group bootstrap");
+        let reply = bob_session.encrypt(b"accepted").unwrap();
+        assert_eq!(alice_session.decrypt(&reply).unwrap(), b"accepted");
+    }
+
+    #[test]
+    fn platform_session_state_round_trip_keeps_ratcheting() {
+        let alice_identity = TestIdentity(SigningKey::from_bytes(&[3; 32]));
+        let bob_identity = TestIdentity(SigningKey::from_bytes(&[4; 32]));
+        let alice = PlatformAccount::new();
+        let mut bob = PlatformAccount::new();
+        let bob_prekey = bob.signed_prekey_bundle(&bob_identity).unwrap();
+        let (mut alice_session, initiation) =
+            PlatformSession::establish_outbound(&alice, &alice_identity, &bob_prekey, b"first")
+                .unwrap();
+        let (mut bob_session, _) =
+            PlatformSession::establish_inbound(&mut bob, &initiation.identity, &initiation.message)
+                .unwrap();
+        let reply = bob_session.encrypt(b"settle").unwrap();
+        alice_session.decrypt(&reply).unwrap();
+
+        let alice_remote = alice_session.remote_identity_key();
+        let bob_remote = bob_session.remote_identity_key();
+        let mut alice_restored =
+            PlatformSession::import(&alice_session.export().unwrap(), alice_remote).unwrap();
+        let mut bob_restored =
+            PlatformSession::import(&bob_session.export().unwrap(), bob_remote).unwrap();
+
+        let message = alice_restored.encrypt(b"after reload").unwrap();
+        assert_eq!(bob_restored.decrypt(&message).unwrap(), b"after reload");
     }
 }

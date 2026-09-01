@@ -348,6 +348,149 @@ fn pairwise_account_is_persisted_before_its_public_prekey_is_exposed() {
     );
 }
 
+#[test]
+fn pairwise_control_ratchet_is_persisted_before_envelopes_are_released() {
+    let mut bob = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(2)).unwrap();
+    bob.execute(ClientCommand::ensure_pairwise_account("bob-pairwise").unwrap())
+        .unwrap();
+    let bob_snapshot =
+        wire_proto::ClientSnapshot::decode(bob.snapshot().unwrap().encode().as_slice()).unwrap();
+
+    let mut alice = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(1)).unwrap();
+    alice
+        .execute(ClientCommand::ensure_pairwise_account("alice-pairwise").unwrap())
+        .unwrap();
+    alice
+        .execute(
+            ClientCommand::register_pairwise_contact(
+                "register-bob",
+                bob_snapshot.pairwise_prekey_bundle,
+                "https://bob-relay.example",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let first = alice
+        .execute(
+            ClientCommand::send_pairwise_control(
+                "send-first",
+                TestIdentity::new(2).root_public(),
+                wire_proto::OutboundKind::GroupJoinRequest,
+                b"first control".to_vec(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(first.outbound.len(), 1);
+    let first_item =
+        wire_proto::OutboundItem::decode(first.outbound[0].encode().as_slice()).unwrap();
+    assert_eq!(first_item.kind, wire_proto::OutboundKind::Pairwise as i32);
+    assert_eq!(first_item.destination, TestIdentity::new(2).root_public());
+    assert_eq!(first_item.relay_url, "https://bob-relay.example");
+    let first_envelope =
+        wire_proto::PairwiseEnvelope::decode(first_item.payload.as_slice()).unwrap();
+    assert!(matches!(
+        first_envelope.body,
+        Some(wire_proto::pairwise_envelope::Body::Initiation(_))
+    ));
+
+    let second = alice
+        .execute(
+            ClientCommand::send_pairwise_control(
+                "send-second",
+                TestIdentity::new(2).root_public(),
+                wire_proto::OutboundKind::GroupWelcome,
+                b"second control".to_vec(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let second_item =
+        wire_proto::OutboundItem::decode(second.outbound[0].encode().as_slice()).unwrap();
+    let second_envelope =
+        wire_proto::PairwiseEnvelope::decode(second_item.payload.as_slice()).unwrap();
+    assert!(matches!(
+        second_envelope.body,
+        Some(wire_proto::pairwise_envelope::Body::Message(_))
+    ));
+}
+
+#[test]
+fn inbound_pairwise_control_is_decrypted_and_dispatched_inside_one_transaction() {
+    let mut alice = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(1)).unwrap();
+    let mut bob = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(2)).unwrap();
+    alice
+        .execute(ClientCommand::ensure_pairwise_account("alice-account").unwrap())
+        .unwrap();
+    bob.execute(ClientCommand::ensure_pairwise_account("bob-account").unwrap())
+        .unwrap();
+    let alice_prekey =
+        wire_proto::ClientSnapshot::decode(alice.snapshot().unwrap().encode().as_slice())
+            .unwrap()
+            .pairwise_prekey_bundle;
+    let bob_prekey =
+        wire_proto::ClientSnapshot::decode(bob.snapshot().unwrap().encode().as_slice())
+            .unwrap()
+            .pairwise_prekey_bundle;
+    alice
+        .execute(
+            ClientCommand::register_pairwise_contact(
+                "alice-registers-bob",
+                bob_prekey,
+                "https://bob-relay.example",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    bob.execute(
+        ClientCommand::register_pairwise_contact(
+            "bob-registers-alice",
+            alice_prekey,
+            "https://alice-relay.example",
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    let draft = alice.execute(create_group()).unwrap();
+    let request = draft
+        .outbound
+        .iter()
+        .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
+        .find(|item| item.destination == TestIdentity::new(2).root_public())
+        .unwrap();
+    let encrypted = alice
+        .execute(
+            ClientCommand::send_pairwise_control(
+                "encrypt-bob-request",
+                TestIdentity::new(2).root_public(),
+                wire_proto::OutboundKind::GroupJoinRequest,
+                request.payload,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let envelope =
+        wire_proto::OutboundItem::decode(encrypted.outbound[0].encode().as_slice()).unwrap();
+
+    let decrypted = bob
+        .execute(
+            ClientCommand::apply_pairwise_control("bob-decrypts-request", envelope.payload)
+                .unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(decrypted.outbound.len(), 1);
+    let material =
+        wire_proto::OutboundItem::decode(decrypted.outbound[0].encode().as_slice()).unwrap();
+    assert_eq!(
+        material.kind,
+        wire_proto::OutboundKind::GroupJoinMaterial as i32
+    );
+    assert_eq!(material.destination, TestIdentity::new(1).root_public());
+}
+
 struct CheckpointFixtureStore {
     checkpoint: Option<pigeon_core::SealedCheckpoint>,
 }

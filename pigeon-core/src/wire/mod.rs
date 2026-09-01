@@ -84,7 +84,8 @@ pub(crate) fn validate_client_command(command: &proto::ClientCommand) -> Result<
             if inbound.request_id.is_empty()
                 || !matches!(
                     kind,
-                    proto::OutboundKind::GroupJoinRequest
+                    proto::OutboundKind::Pairwise
+                        | proto::OutboundKind::GroupJoinRequest
                         | proto::OutboundKind::GroupJoinMaterial
                         | proto::OutboundKind::GroupWelcome
                         | proto::OutboundKind::GroupMessage
@@ -131,6 +132,40 @@ pub(crate) fn validate_client_command(command: &proto::ClientCommand) -> Result<
             }
         }
         proto::client_command::Body::EnsurePairwiseAccount(_) => {}
+        proto::client_command::Body::RegisterPairwiseContact(register) => {
+            check_bytes(
+                register.prekey_bundle.len(),
+                MAX_MLS_OBJECT_BYTES,
+                "pairwise prekey bundle",
+            )?;
+            check_bytes(register.relay_url.len(), MAX_RELAY_URL_BYTES, "relay url")?;
+            if register.prekey_bundle.is_empty() || register.relay_url.is_empty() {
+                return Err(Error::MalformedBundle);
+            }
+        }
+        proto::client_command::Body::SendPairwiseControl(send) => {
+            if send.recipient_identity.len() != IDENTITY_KEY_BYTES {
+                return Err(Error::InvalidKey);
+            }
+            let kind = proto::OutboundKind::try_from(send.content_kind)
+                .map_err(|_| Error::MalformedBundle)?;
+            if !matches!(
+                kind,
+                proto::OutboundKind::GroupJoinRequest
+                    | proto::OutboundKind::GroupJoinMaterial
+                    | proto::OutboundKind::GroupWelcome
+            ) {
+                return Err(Error::MalformedBundle);
+            }
+            check_bytes(
+                send.payload.len(),
+                MAX_MLS_OBJECT_BYTES,
+                "pairwise control payload",
+            )?;
+            if send.payload.is_empty() {
+                return Err(Error::MalformedBundle);
+            }
+        }
     }
     Ok(())
 }

@@ -93,6 +93,14 @@ impl PlatformAccount {
     pub(crate) fn export_fallback_key(&self) -> [u8; 32] {
         self.fallback_key
     }
+
+    pub(super) fn olm(&self) -> &OlmAccount {
+        &self.olm
+    }
+
+    pub(super) fn olm_mut(&mut self) -> &mut OlmAccount {
+        &mut self.olm
+    }
 }
 
 impl Account {

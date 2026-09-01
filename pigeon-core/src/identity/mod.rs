@@ -14,8 +14,8 @@ pub use boundary::{IdentityError, IdentityPurpose, SecureIdentity};
 pub use group::{GroupJoinMaterial, GroupJoinRequest, GroupMemberKeys};
 pub(crate) use mls::{CIPHERSUITE, POLICY_EXTENSION_TYPE_ID, PlatformMlsSigner};
 pub use mls::{KeyPackagePool, MlsIdentityBinding, ReservedKeyPackage};
-pub(crate) use pairwise::PlatformAccount;
 pub use pairwise::{
     Account, Initiation, PrekeyBundle, Session, decode_olm_message, encode_olm_message,
 };
+pub(crate) use pairwise::{PlatformAccount, PlatformSession};
 pub use root::{IdentityBundle, IdentityKeypair};

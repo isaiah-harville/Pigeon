@@ -14,6 +14,24 @@ message Initiation {
   OlmMessage message = 2;
 }
 
+message PairwiseEnvelope {
+  uint32 version = 1;
+  bytes sender_identity = 2;
+  bytes recipient_identity = 3;
+  oneof body {
+    bytes initiation = 10;
+    bytes message = 11;
+  }
+}
+
+message PairwiseControlPayload {
+  uint32 version = 1;
+  bytes sender_identity = 2;
+  bytes recipient_identity = 3;
+  uint32 content_kind = 4;
+  bytes payload = 5;
+}
+
 message X3DHPrekeyBundle {
   IdentityBundle identity = 1;
   uint32 signed_prekey_id = 2;

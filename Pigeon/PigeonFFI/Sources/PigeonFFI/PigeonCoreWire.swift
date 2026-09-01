@@ -44,13 +44,7 @@ extension PigeonCoreCommand {
     command.commandID = id
     switch body {
     case .createGroup(let value):
-      var body = Pigeon_Wire_V1_CreateGroup()
-      body.name = value.name
-      body.memberIdentities = value.memberIdentities
-      body.relayURL = value.relayURL
-      body.meshEnabled = value.meshEnabled
-      body.coordinatorPublicKey = value.coordinatorPublicKey
-      command.createGroup = body
+      command.createGroup = value.proto()
     case .sendGroupMessage(let value):
       var body = Pigeon_Wire_V1_SendGroupMessage()
       body.groupID = value.groupID
@@ -77,8 +71,24 @@ extension PigeonCoreCommand {
       command.acknowledgeEffects = value.proto()
     case .ensurePairwiseAccount:
       command.ensurePairwiseAccount = Pigeon_Wire_V1_EnsurePairwiseAccount()
+    case .registerPairwiseContact(let value):
+      command.registerPairwiseContact = value.proto()
+    case .sendPairwiseControl(let value):
+      command.sendPairwiseControl = try value.proto()
     }
     return command
+  }
+}
+
+extension PigeonCreateGroup {
+  func proto() -> Pigeon_Wire_V1_CreateGroup {
+    var body = Pigeon_Wire_V1_CreateGroup()
+    body.name = name
+    body.memberIdentities = memberIdentities
+    body.relayURL = relayURL
+    body.meshEnabled = meshEnabled
+    body.coordinatorPublicKey = coordinatorPublicKey
+    return body
   }
 }
 

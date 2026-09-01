@@ -274,6 +274,8 @@ fn relay_and_mesh_copies_emit_one_received_event_and_one_acknowledgement() {
         pending_events: Vec::new(),
         pairwise_account_state: Vec::new(),
         pairwise_fallback_key: Vec::new(),
+        pairwise_contacts: Vec::new(),
+        pairwise_sessions: Vec::new(),
     };
     let bytes = bob_checkpoint.encode_to_vec();
     let bob_store = SwitchableStore::with_checkpoint(SealedCheckpoint {

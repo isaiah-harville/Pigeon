@@ -213,6 +213,30 @@ final class PigeonFFIRoundTripTests: XCTestCase {
     XCTAssertNoThrow(try PigeonPrekeyBundle(decoding: snapshot.pairwisePrekeyBundle))
   }
 
+  func testPairwiseControlCommandsEncodeWithoutExposingRatchetObjects() throws {
+    let prekey = Data([1, 2, 3])
+    let register = try PigeonCoreCommand(
+      id: "register",
+      body: .registerPairwiseContact(
+        PigeonRegisterPairwiseContact(
+          prekeyBundle: prekey, relayURL: "https://relay.example"))
+    )
+    .proto()
+    XCTAssertEqual(register.registerPairwiseContact.prekeyBundle, prekey)
+
+    let recipient = Data(repeating: 7, count: 32)
+    let send = try PigeonCoreCommand(
+      id: "send",
+      body: .sendPairwiseControl(
+        PigeonSendPairwiseControl(
+          recipientIdentity: recipient, contentKind: .groupWelcome,
+          payload: Data([4, 5, 6])))
+    )
+    .proto()
+    XCTAssertEqual(send.sendPairwiseControl.recipientIdentity, recipient)
+    XCTAssertEqual(send.sendPairwiseControl.contentKind, .groupWelcome)
+  }
+
   func testTransactionalClientReturnsNoOutputWhenPersistenceFails() throws {
     let client = try PigeonCoreClient(
       identity: TestPlatformIdentity(), store: TestCheckpointStore(failReplacement: true))
