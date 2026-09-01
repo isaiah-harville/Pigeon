@@ -460,23 +460,11 @@ fn inbound_pairwise_control_is_decrypted_and_dispatched_inside_one_transaction()
         .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
         .find(|item| item.destination == TestIdentity::new(2).root_public())
         .unwrap();
-    let encrypted = alice
-        .execute(
-            ClientCommand::send_pairwise_control(
-                "encrypt-bob-request",
-                TestIdentity::new(2).root_public(),
-                wire_proto::OutboundKind::GroupJoinRequest,
-                request.payload,
-            )
-            .unwrap(),
-        )
-        .unwrap();
-    let envelope =
-        wire_proto::OutboundItem::decode(encrypted.outbound[0].encode().as_slice()).unwrap();
+    assert_eq!(request.kind, wire_proto::OutboundKind::Pairwise as i32);
 
     let decrypted = bob
         .execute(
-            ClientCommand::apply_pairwise_control("bob-decrypts-request", envelope.payload.clone())
+            ClientCommand::apply_pairwise_control("bob-decrypts-request", request.payload.clone())
                 .unwrap(),
         )
         .unwrap();
@@ -484,23 +472,67 @@ fn inbound_pairwise_control_is_decrypted_and_dispatched_inside_one_transaction()
     assert_eq!(decrypted.outbound.len(), 1);
     let material =
         wire_proto::OutboundItem::decode(decrypted.outbound[0].encode().as_slice()).unwrap();
-    assert_eq!(
-        material.kind,
-        wire_proto::OutboundKind::GroupJoinMaterial as i32
-    );
+    assert_eq!(material.kind, wire_proto::OutboundKind::Pairwise as i32);
     assert_eq!(material.destination, TestIdentity::new(1).root_public());
 
     let replay = bob
         .execute(
             ClientCommand::apply_pairwise_control(
                 "bob-receives-republished-request",
-                envelope.payload,
+                request.payload,
             )
             .unwrap(),
         )
         .unwrap();
     assert!(replay.events.is_empty());
     assert!(replay.outbound.is_empty());
+}
+
+#[test]
+fn registering_a_contact_wraps_already_pending_group_controls() {
+    let mut bob = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(2)).unwrap();
+    bob.execute(ClientCommand::ensure_pairwise_account("bob-account").unwrap())
+        .unwrap();
+    let bob_prekey =
+        wire_proto::ClientSnapshot::decode(bob.snapshot().unwrap().encode().as_slice())
+            .unwrap()
+            .pairwise_prekey_bundle;
+    let mut alice = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(1)).unwrap();
+    alice
+        .execute(ClientCommand::ensure_pairwise_account("alice-account").unwrap())
+        .unwrap();
+
+    let draft = alice.execute(create_group()).unwrap();
+    let direct = draft
+        .outbound
+        .iter()
+        .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
+        .find(|item| item.destination == TestIdentity::new(2).root_public())
+        .unwrap();
+    assert_eq!(
+        direct.kind,
+        wire_proto::OutboundKind::GroupJoinRequest as i32
+    );
+
+    alice
+        .execute(
+            ClientCommand::register_pairwise_contact(
+                "register-bob-late",
+                bob_prekey,
+                "https://bob-relay.example",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let snapshot =
+        wire_proto::ClientSnapshot::decode(alice.snapshot().unwrap().encode().as_slice()).unwrap();
+    let wrapped = snapshot
+        .pending_outbound
+        .iter()
+        .find(|item| item.item_id == direct.item_id)
+        .unwrap();
+    assert_eq!(wrapped.kind, wire_proto::OutboundKind::Pairwise as i32);
+    assert_eq!(wrapped.relay_url, "https://bob-relay.example");
 }
 
 struct CheckpointFixtureStore {

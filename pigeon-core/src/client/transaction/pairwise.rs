@@ -52,6 +52,76 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             .as_slice()
             .try_into()
             .map_err(|_| Error::InvalidKey)?;
+        let item = self.stage_pairwise_item(
+            command_id,
+            recipient,
+            send.content_kind,
+            send.payload.clone(),
+            candidate,
+        )?;
+        output.outbound.push(OutboundItem { inner: item });
+        Ok(())
+    }
+
+    pub(super) fn stage_wrap_addressed_controls(
+        &self,
+        candidate: &mut proto::ClientCheckpoint,
+        output: &mut ClientOutput,
+    ) -> Result<(), Error> {
+        let pending = std::mem::take(&mut candidate.pending_outbound);
+        candidate.pending_outbound = pending
+            .into_iter()
+            .map(|item| self.wrap_addressed_control(item, candidate))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let released = std::mem::take(&mut output.outbound);
+        output.outbound = released
+            .into_iter()
+            .map(|item| {
+                self.wrap_addressed_control(item.inner, candidate)
+                    .map(|inner| OutboundItem { inner })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(())
+    }
+
+    fn wrap_addressed_control(
+        &self,
+        item: proto::OutboundItem,
+        candidate: &mut proto::ClientCheckpoint,
+    ) -> Result<proto::OutboundItem, Error> {
+        let Ok(kind) = proto::OutboundKind::try_from(item.kind) else {
+            return Ok(item);
+        };
+        if !matches!(
+            kind,
+            proto::OutboundKind::GroupJoinRequest
+                | proto::OutboundKind::GroupJoinMaterial
+                | proto::OutboundKind::GroupWelcome
+        ) {
+            return Ok(item);
+        }
+        let Ok(recipient) = item.destination.as_slice().try_into() else {
+            return Ok(item);
+        };
+        if !candidate
+            .pairwise_contacts
+            .iter()
+            .any(|contact| contact.identity.as_slice() == recipient)
+        {
+            return Ok(item);
+        }
+        self.stage_pairwise_item(&item.item_id, recipient, item.kind, item.payload, candidate)
+    }
+
+    fn stage_pairwise_item(
+        &self,
+        item_id: &str,
+        recipient: [u8; 32],
+        content_kind: i32,
+        payload: Vec<u8>,
+        candidate: &mut proto::ClientCheckpoint,
+    ) -> Result<proto::OutboundItem, Error> {
         let contact = candidate
             .pairwise_contacts
             .iter()
@@ -65,11 +135,10 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             version: PROTOCOL_VERSION,
             sender_identity: local_identity.to_vec(),
             recipient_identity: recipient.to_vec(),
-            content_kind: send
-                .content_kind
+            content_kind: content_kind
                 .try_into()
                 .map_err(|_| Error::MalformedBundle)?,
-            payload: send.payload.clone(),
+            payload,
         }
         .encode_to_vec();
 
@@ -96,22 +165,19 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             proto::pairwise_envelope::Body::Initiation(Initiation::encode(&initiation))
         };
 
-        output.outbound.push(OutboundItem {
-            inner: proto::OutboundItem {
-                item_id: command_id.to_owned(),
-                kind: proto::OutboundKind::Pairwise as i32,
-                relay_url: contact.relay_url,
-                destination: recipient.to_vec(),
-                payload: proto::PairwiseEnvelope {
-                    version: PROTOCOL_VERSION,
-                    sender_identity: local_identity.to_vec(),
-                    recipient_identity: recipient.to_vec(),
-                    body: Some(body),
-                }
-                .encode_to_vec(),
-            },
-        });
-        Ok(())
+        Ok(proto::OutboundItem {
+            item_id: item_id.to_owned(),
+            kind: proto::OutboundKind::Pairwise as i32,
+            relay_url: contact.relay_url,
+            destination: recipient.to_vec(),
+            payload: proto::PairwiseEnvelope {
+                version: PROTOCOL_VERSION,
+                sender_identity: local_identity.to_vec(),
+                recipient_identity: recipient.to_vec(),
+                body: Some(body),
+            }
+            .encode_to_vec(),
+        })
     }
 
     pub(super) fn stage_apply_pairwise_control(

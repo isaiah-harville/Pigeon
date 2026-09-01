@@ -137,6 +137,8 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             }
         }
 
+        self.stage_wrap_addressed_controls(&mut candidate, &mut output)?;
+
         if candidate.pending_outbound.len() + output.outbound.len()
             > crate::MAX_PENDING_OUTBOUND_ENTRIES
             || candidate.pending_events.len() + output.events.len()
