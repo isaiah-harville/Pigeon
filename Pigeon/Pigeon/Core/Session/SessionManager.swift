@@ -211,6 +211,7 @@ final class SessionManager {
     self.coreClient = coreClient
     applyCoreSnapshot(coreSnapshot)
     restoreLoadedState(loaded)
+    try registerPairwiseContacts()
     guard purgeExpiredIncomingRequests(now: Date()) else {
       throw SessionPersistenceError.unreadableStore
     }

@@ -39,6 +39,8 @@ struct SessionCryptoExporter {
 /// including building the bound Olm account. Not `@Observable`: persistence is a
 /// side effect, not observable UI state.
 @MainActor
+// Contact and crypto codecs intentionally remain colocated with their store boundary.
+// swiftlint:disable:next type_body_length
 final class SessionPersistence {
 
   /// The bulk store (contacts + conversations), set at unlock. `nil` (and every
@@ -172,6 +174,7 @@ final class SessionPersistence {
       relayURLs: contact.relayURLs.map(\.absoluteString),
       preferredRelayURL: contact.preferredRelayURL?.absoluteString,
       prekeyBundle: contact.prekeyBundle?.encoded,
+      pairwiseControlPrekeyBundle: contact.pairwiseControlPrekeyBundle?.encoded,
       verifiedInPerson: contact.verifiedInPerson,
       requestState: contact.requestState,
       introductionSent: contact.introductionSent ? 1 : 0,
@@ -180,6 +183,8 @@ final class SessionPersistence {
   }
 
   private static func decodeContacts(_ persisted: [PersistedContact]) throws -> [Contact] {
+    // Each contact validates the identity plus two independently signed prekey bundles.
+    // swiftlint:disable:next closure_body_length
     try persisted.map { persisted in
       // Decoding a PigeonIdentityBundle verifies its binding signature; an
       // invalid one yields nil and the contact is dropped.
@@ -197,11 +202,21 @@ final class SessionPersistence {
       } else {
         prekeyBundle = nil
       }
+      let pairwiseControlPrekeyBundle: PigeonPrekeyBundle?
+      if let encoded = persisted.pairwiseControlPrekeyBundle {
+        guard let decoded = try? PigeonPrekeyBundle(decoding: encoded),
+          decoded.identityKey == bundle.identityKey
+        else { throw SessionPersistenceError.unreadableStore }
+        pairwiseControlPrekeyBundle = decoded
+      } else {
+        pairwiseControlPrekeyBundle = nil
+      }
       return Contact(
         bundle: bundle, displayName: persisted.name,
         relayURLs: persisted.relayURLs.compactMap { URL(string: $0) },
         preferredRelayURL: persisted.preferredRelayURL.flatMap { URL(string: $0) },
         prekeyBundle: prekeyBundle,
+        pairwiseControlPrekeyBundle: pairwiseControlPrekeyBundle,
         verifiedInPerson: persisted.verifiedInPerson,
         requestState: persisted.requestState ?? .none,
         introductionSent: persisted.introductionSent == 1,

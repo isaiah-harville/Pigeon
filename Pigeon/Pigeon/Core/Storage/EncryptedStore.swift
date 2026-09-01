@@ -37,6 +37,8 @@ struct PersistedContact: Codable {
   /// The contact's published Olm prekey bundle, as its wire encoding. `nil` for
   /// contacts / cards without prekeys. Defaults nil so older stores decode.
   var prekeyBundle: Data?
+  /// Optional for stores written before core-owned pairwise controls.
+  var pairwiseControlPrekeyBundle: Data?
   /// Whether the contact was verified in person (scanned vs pasted). Defaults
   /// true so contacts saved before this field read as verified (§5.7 trust UX).
   var verifiedInPerson: Bool = true

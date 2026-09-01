@@ -231,6 +231,35 @@ final class SessionCoreIntegrationTests: XCTestCase {
   }
 }
 
+extension SessionCoreIntegrationTests {
+  func testAddingContactRegistersCorePairwiseControlPrekey() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    try fixture.manager.attachStore(fixture.store)
+    let peer = try PigeonAccount.fromIdentitySeed(seed: Data(repeating: 32, count: 32))
+    let peerBundle = try PigeonIdentityBundle(decoding: peer.identityBundle())
+    let peerPrekey = try PigeonPrekeyBundle(decoding: peer.signedPrekeyBundle())
+    let relay = try XCTUnwrap(URL(string: "wss://relay.example/ws"))
+
+    XCTAssertTrue(
+      fixture.manager.addContact(
+        peerBundle, name: "Peer", relayURLs: [relay],
+        prekeys: ContactPrekeyBundles(chat: nil, control: peerPrekey),
+        admission: .outgoingRequest))
+    let output = try fixture.manager.executeCore(
+      PigeonCoreCommand(
+        id: "send-registered-control",
+        body: .sendPairwiseControl(
+          PigeonSendPairwiseControl(
+            recipientIdentity: peerBundle.identityKey,
+            contentKind: .groupWelcome,
+            payload: Data("opaque welcome".utf8)))))
+
+    XCTAssertEqual(output.outbound.map(\.kind), [.pairwise])
+    XCTAssertEqual(output.outbound.first?.relayURL, relay.absoluteString)
+  }
+}
+
 @MainActor
 private final class SessionCoreNoopTransport: Transport {
   let kind: TransportKind? = .relay

@@ -41,6 +41,20 @@ final class ContactCardTests: XCTestCase {
     XCTAssertEqual(decoded?.relayURLs, [])
   }
 
+  func testCorePairwiseControlPrekeyRoundTripsIndependently() throws {
+    let account = try PigeonAccount.generate()
+    let bundle = try PigeonIdentityBundle(decoding: account.identityBundle())
+    let prekey = try PigeonPrekeyBundle(decoding: account.signedPrekeyBundle())
+    let card = ContactCard(
+      name: "Alice", bundle: bundle, relayURLs: [], relaySignature: Data(),
+      prekeyBundle: nil, pairwiseControlPrekeyBundle: prekey)
+
+    let decoded = try XCTUnwrap(ContactCard(scanned: card.encoded()))
+
+    XCTAssertNil(decoded.prekeyBundle)
+    XCTAssertEqual(decoded.pairwiseControlPrekeyBundle, prekey)
+  }
+
   func testSignedRelayURLsAreHonoured() throws {
     let (idKey, bundle) = try makeIdentity()
     let urls = [URL(string: "wss://a.example/ws")!, URL(string: "wss://b.example/ws")!]

@@ -63,6 +63,7 @@ public struct PigeonContactCardPayload: Equatable, Sendable {
   public var relayURLs: [String]
   public var relaySignature: Data
   public var prekeyBundle: Data
+  public var pairwiseControlPrekeyBundle: Data
 
   public init(
     version: UInt32,
@@ -70,7 +71,8 @@ public struct PigeonContactCardPayload: Equatable, Sendable {
     name: String,
     relayURLs: [String],
     relaySignature: Data,
-    prekeyBundle: Data
+    prekeyBundle: Data,
+    pairwiseControlPrekeyBundle: Data = Data()
   ) {
     self.version = version
     self.identityBundle = identityBundle
@@ -78,6 +80,7 @@ public struct PigeonContactCardPayload: Equatable, Sendable {
     self.relayURLs = relayURLs
     self.relaySignature = relaySignature
     self.prekeyBundle = prekeyBundle
+    self.pairwiseControlPrekeyBundle = pairwiseControlPrekeyBundle
   }
 }
 
@@ -93,6 +96,7 @@ public func encodeContactCardPayload(_ payload: PigeonContactCardPayload) throws
   card.relayUrls = payload.relayURLs
   card.relaySignature = payload.relaySignature
   card.prekeyBundle = payload.prekeyBundle
+  card.pairwiseControlPrekeyBundle = payload.pairwiseControlPrekeyBundle
   return try card.serializedData()
 }
 
@@ -107,7 +111,8 @@ public func decodeContactCardPayload(_ data: Data) throws -> PigeonContactCardPa
     name: card.name,
     relayURLs: card.relayUrls,
     relaySignature: card.relaySignature,
-    prekeyBundle: card.prekeyBundle
+    prekeyBundle: card.prekeyBundle,
+    pairwiseControlPrekeyBundle: card.pairwiseControlPrekeyBundle
   )
 }
 

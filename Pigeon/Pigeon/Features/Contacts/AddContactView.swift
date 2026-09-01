@@ -252,7 +252,8 @@ extension AddContactView {
     let wasAlreadyKnown = session.contacts.contains { $0.id == card.bundle.identityKey }
     if session.addContact(
       card.bundle, name: name, relayURLs: card.relayURLs,
-      prekeyBundle: card.prekeyBundle,
+      prekeys: ContactPrekeyBundles(
+        chat: card.prekeyBundle, control: card.pairwiseControlPrekeyBundle),
       admission: verifiedInPerson ? .verifiedInPerson : .outgoingRequest)
     {
       error = nil

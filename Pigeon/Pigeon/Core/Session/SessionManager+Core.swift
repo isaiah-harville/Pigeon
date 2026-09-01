@@ -3,6 +3,29 @@ import Foundation
 import PigeonFFI
 
 extension SessionManager {
+  func registerPairwiseContacts() throws {
+    for contact in contacts {
+      try registerPairwiseContactIfAvailable(contact)
+    }
+  }
+
+  func registerPairwiseContactIfAvailable(_ contact: Contact) throws {
+    guard let prekey = contact.pairwiseControlPrekeyBundle,
+      let relayURL = contact.preferredRelayURL ?? contact.relayURLs.first
+    else { return }
+    let transcript = contact.id + prekey.encoded + Data(relayURL.absoluteString.utf8)
+    let commandID = SHA256.hash(data: transcript)
+      .map { String(format: "%02x", $0) }
+      .joined()
+    try executeCore(
+      PigeonCoreCommand(
+        id: "register-pairwise-contact:\(commandID)",
+        body: .registerPairwiseContact(
+          PigeonRegisterPairwiseContact(
+            prekeyBundle: prekey.encoded,
+            relayURL: relayURL.absoluteString))))
+  }
+
   func makeGroupRelay() -> GroupRelayTransport {
     let transport = GroupRelayTransport { [weak self] groupID, nonce in
       guard let coreClient = self?.coreClient else {

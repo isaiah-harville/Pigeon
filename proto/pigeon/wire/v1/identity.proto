@@ -67,4 +67,5 @@ message ContactCard {
   repeated string relay_urls = 4;
   bytes relay_signature = 5;
   bytes prekey_bundle = 6;
+  bytes pairwise_control_prekey_bundle = 7;
 }
