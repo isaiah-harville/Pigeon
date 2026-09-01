@@ -18,9 +18,12 @@ final class SessionCoreIntegrationTests: XCTestCase {
     try fixture.manager.attachStore(fixture.store)
 
     XCTAssertTrue(fixture.manager.isUnlocked)
-    XCTAssertEqual(try fixture.manager.coreClient?.checkpointGeneration(), 0)
-    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, 0)
+    XCTAssertEqual(try fixture.manager.coreClient?.checkpointGeneration(), 1)
+    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, 1)
     XCTAssertEqual(fixture.manager.groups, [])
+    XCTAssertFalse(
+      try XCTUnwrap(fixture.manager.coreClient?.stateSnapshot())
+        .pairwisePrekeyBundle.isEmpty)
   }
 
   func testCoreSnapshotAtomicallyReplacesGroupProjectionAndRejectsRollback() throws {
@@ -43,31 +46,34 @@ final class SessionCoreIntegrationTests: XCTestCase {
     let fixture = try makeFixture()
     defer { wipe(fixture.store) }
     try fixture.manager.attachStore(fixture.store)
+    let initialGeneration = fixture.manager.coreSnapshotGeneration
 
     let output = try fixture.manager.executeCore(
       PigeonCoreCommand(
         id: "ack-empty-effects",
         body: .acknowledgeEffects(PigeonAcknowledgeEffects())))
 
-    XCTAssertEqual(output.checkpointGeneration, 1)
-    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, 1)
+    XCTAssertEqual(output.checkpointGeneration, initialGeneration + 1)
+    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, initialGeneration + 1)
   }
 
   func testInvalidGroupRelayMessageDoesNotAdvanceCoreState() throws {
     let fixture = try makeFixture()
     defer { wipe(fixture.store) }
     try fixture.manager.attachStore(fixture.store)
+    let initialGeneration = fixture.manager.coreSnapshotGeneration
 
     XCTAssertFalse(
       fixture.manager.consumeGroupRelayMessage(
         Data("not an MLS message".utf8), requestID: "relay-entry-1"))
-    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, 0)
+    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, initialGeneration)
   }
 
   func testCoreEventIsAcknowledgedOnlyAfterGroupHistoryPersists() throws {
     let fixture = try makeFixture()
     defer { wipe(fixture.store) }
     try fixture.manager.attachStore(fixture.store)
+    let initialGeneration = fixture.manager.coreSnapshotGeneration
     let groupID = Data(repeating: 41, count: 32)
     let event = PigeonCoreEvent(
       id: "created-event",
@@ -84,7 +90,7 @@ final class SessionCoreIntegrationTests: XCTestCase {
     try fixture.manager.absorbCoreEvents([event])
 
     XCTAssertEqual(fixture.manager.groupConversations[groupID]?.messages.count, 1)
-    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, 1)
+    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, initialGeneration + 1)
 
     let restored = SessionManager(
       identity: fixture.manager.identity,
@@ -114,6 +120,7 @@ final class SessionCoreIntegrationTests: XCTestCase {
       mesh: MeshService(transport: SessionCoreNoopTransport()))
     defer { wipe(store) }
     try manager.attachStore(store)
+    let initialGeneration = try manager.coreClient?.checkpointGeneration()
     let event = PigeonCoreEvent(
       id: "must-remain-pending",
       body: .groupCreated(
@@ -128,7 +135,7 @@ final class SessionCoreIntegrationTests: XCTestCase {
 
     failWrites = true
     XCTAssertThrowsError(try manager.absorbCoreEvents([event]))
-    XCTAssertEqual(try manager.coreClient?.checkpointGeneration(), 0)
+    XCTAssertEqual(try manager.coreClient?.checkpointGeneration(), initialGeneration)
   }
 
   func testCorruptCoreCheckpointKeepsSessionLocked() throws {
@@ -146,6 +153,47 @@ final class SessionCoreIntegrationTests: XCTestCase {
     XCTAssertFalse(fixture.manager.isUnlocked)
     XCTAssertNil(fixture.manager.account)
     XCTAssertNil(fixture.manager.coreClient)
+  }
+
+  func testPairwiseAccountPersistenceFailureKeepsSessionLocked() throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("pigeon-core-account-failure-\(UUID().uuidString).store")
+    let store = EncryptedStore(
+      key: SymmetricKey(size: .bits256),
+      url: url,
+      io: EncryptedStoreIO(
+        write: { _, _, _ in throw InjectedFailure.write },
+        remove: { try FileManager.default.removeItem(at: $0) }))
+    let identity = try IdentityManager(
+      store: InMemoryKeyStore(seed: Data(repeating: 30, count: 32)))
+    let manager = SessionManager(
+      identity: identity,
+      mesh: MeshService(transport: SessionCoreNoopTransport()))
+    defer { wipe(store) }
+
+    XCTAssertThrowsError(try manager.attachStore(store))
+    XCTAssertFalse(manager.isUnlocked)
+    XCTAssertNil(manager.coreClient)
+  }
+
+  func testMalformedCorePairwiseEnvelopeIsRetainedForRetryWithoutAdvancingState() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    try fixture.manager.attachStore(fixture.store)
+    let initialGeneration = try fixture.manager.coreClient?.checkpointGeneration()
+    let peer = try PigeonAccount.fromIdentitySeed(seed: Data(repeating: 31, count: 32))
+    let peerBundle = try PigeonIdentityBundle(decoding: peer.identityBundle())
+    fixture.manager.contacts = [Contact(bundle: peerBundle, displayName: "Peer")]
+    let envelope = SessionEnvelope(
+      type: .pairwise,
+      sender: peerBundle.identityKey,
+      recipient: fixture.manager.myID,
+      payload: Data("malformed pairwise ciphertext".utf8))
+
+    let disposition = fixture.manager.handleInbound(envelope.encoded(), channel: .bluetooth)
+
+    XCTAssertEqual(disposition, .retryAfterRestart)
+    XCTAssertEqual(try fixture.manager.coreClient?.checkpointGeneration(), initialGeneration)
   }
 
   private func makeFixture() throws -> (manager: SessionManager, store: EncryptedStore) {

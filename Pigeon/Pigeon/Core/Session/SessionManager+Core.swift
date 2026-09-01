@@ -84,6 +84,23 @@ extension SessionManager {
     }
   }
 
+  func consumePairwiseMessage(_ ciphertext: Data, requestID: String) -> Bool {
+    guard isUnlocked, isPersistenceHealthy else { return false }
+    do {
+      try executeCore(
+        PigeonCoreCommand(
+          id: "pairwise-message:\(requestID)",
+          body: .applyInbound(
+            PigeonApplyInbound(
+              kind: .pairwise,
+              payload: ciphertext,
+              requestID: requestID))))
+      return true
+    } catch {
+      return false
+    }
+  }
+
   func consumeCoordinatorCandidate(
     _ receipt: PigeonCoordinatorReceipt,
     candidate: Data,

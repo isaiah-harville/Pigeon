@@ -47,6 +47,9 @@ pub enum EnvelopeType {
     /// metadata) sent by the initiator ahead of the first `message`, so a peer
     /// who was offline can reconstruct the session.
     X3dhInit = 6,
+    /// Opaque pairwise ciphertext produced and consumed by `pigeon-core`.
+    /// Hosts may route it but never inspect or advance its ratchet.
+    Pairwise = 7,
 }
 
 impl EnvelopeType {
@@ -58,6 +61,7 @@ impl EnvelopeType {
             4 => Some(Self::Ack),
             5 => Some(Self::Control),
             6 => Some(Self::X3dhInit),
+            7 => Some(Self::Pairwise),
             _ => None,
         }
     }
@@ -150,6 +154,21 @@ mod tests {
     }
 
     #[test]
+    fn round_trip_core_owned_pairwise_ciphertext() {
+        let env = SessionEnvelope::new(
+            EnvelopeType::Pairwise,
+            id(0x31),
+            id(0x42),
+            b"opaque core ciphertext".to_vec(),
+        );
+
+        let decoded = SessionEnvelope::decode(&env.encode()).unwrap();
+
+        assert_eq!(decoded, env);
+        assert_eq!(decoded.kind, EnvelopeType::Pairwise);
+    }
+
+    #[test]
     fn empty_payload_is_valid() {
         let env = SessionEnvelope::new(EnvelopeType::Handshake, id(1), id(2), Vec::new());
         let decoded = SessionEnvelope::decode(&env.encode()).unwrap();
@@ -180,7 +199,7 @@ mod tests {
     fn decode_rejects_bad_type() {
         let mut bytes =
             SessionEnvelope::new(EnvelopeType::Message, id(1), id(2), Vec::new()).encode();
-        bytes[1] = 0x07; // not a valid EnvelopeType
+        bytes[1] = 0x08; // not a valid EnvelopeType
         assert_eq!(
             SessionEnvelope::decode(&bytes),
             Err(EnvelopeError::MalformedEnvelope)

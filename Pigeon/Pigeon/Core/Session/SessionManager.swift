@@ -201,6 +201,10 @@ final class SessionManager {
     let coreClient = try PigeonCoreClient(
       identity: coreIdentityProvider,
       store: coreCheckpointStore)
+    _ = try coreClient.execute(
+      PigeonCoreCommand(
+        id: "ensure-pairwise-account-v1",
+        body: .ensurePairwiseAccount))
     let coreSnapshot = try coreClient.stateSnapshot()
     self.coreIdentityProvider = coreIdentityProvider
     self.coreCheckpointStore = coreCheckpointStore

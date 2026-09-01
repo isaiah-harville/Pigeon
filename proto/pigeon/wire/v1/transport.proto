@@ -10,6 +10,7 @@ enum EnvelopeType {
   ENVELOPE_TYPE_ACK = 4;
   ENVELOPE_TYPE_CONTROL = 5;
   ENVELOPE_TYPE_X3DH_INIT = 6;
+  ENVELOPE_TYPE_PAIRWISE = 7;
 }
 
 message SessionEnvelope {

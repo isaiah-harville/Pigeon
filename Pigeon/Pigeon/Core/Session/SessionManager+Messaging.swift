@@ -66,6 +66,10 @@ extension SessionManager {
       return isPersistenceHealthy
     case .ack: return handleAck(envelope.payload, from: contact)
     case .control: return handleControl(envelope.payload, from: contact)
+    case .pairwise:
+      return consumePairwiseMessage(
+        envelope.payload,
+        requestID: "pairwise-\(InitiationReplayLedger.digest(envelope.encoded()).hexEncoded)")
     // Olm is async-first: there is no interactive Noise handshake anymore, so a
     // `.handshake` envelope (only ever sent by the old protocol) is ignored.
     case .handshake: return true
