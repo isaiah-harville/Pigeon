@@ -5,6 +5,7 @@ mod group_policy;
 mod pairwise;
 
 use checkpoint::{decode_checkpoint, encode_checkpoint};
+use sha2::{Digest, Sha256};
 
 use crate::Error;
 use crate::client::{ClientCommand, ClientOutput, ClientSnapshot};
@@ -43,6 +44,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 pairwise_fallback_key: Vec::new(),
                 pairwise_contacts: Vec::new(),
                 pairwise_sessions: Vec::new(),
+                consumed_pairwise_envelope_hashes: Vec::new(),
             },
         };
         Ok(Self {
@@ -283,6 +285,13 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
     ) -> Result<(), Error> {
         match proto::OutboundKind::try_from(inbound.kind).map_err(|_| Error::MalformedBundle)? {
             proto::OutboundKind::Pairwise => {
+                let envelope_hash = Sha256::digest(&inbound.payload).to_vec();
+                if candidate
+                    .consumed_pairwise_envelope_hashes
+                    .contains(&envelope_hash)
+                {
+                    return Ok(());
+                }
                 let control = self.stage_apply_pairwise_control(inbound, candidate)?;
                 let inner = proto::ApplyInbound {
                     kind: i32::try_from(control.content_kind)
@@ -303,7 +312,16 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                         self.stage_apply_group_welcome(command_id, &inner, candidate, output)
                     }
                     _ => Err(Error::MalformedBundle),
+                }?;
+                if candidate.consumed_pairwise_envelope_hashes.len()
+                    >= crate::MAX_PENDING_OUTBOUND_ENTRIES
+                {
+                    candidate.consumed_pairwise_envelope_hashes.remove(0);
                 }
+                candidate
+                    .consumed_pairwise_envelope_hashes
+                    .push(envelope_hash);
+                Ok(())
             }
             proto::OutboundKind::GroupJoinRequest => {
                 self.stage_apply_group_join_request(command_id, inbound, candidate, output)

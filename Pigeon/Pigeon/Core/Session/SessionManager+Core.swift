@@ -3,6 +3,14 @@ import Foundation
 import PigeonFFI
 
 extension SessionManager {
+  func makePairwiseRelay() -> PairwiseRelayTransport {
+    let transport = PairwiseRelayTransport(sender: myID)
+    transport.onEffectDelivered = { [weak self] itemID in
+      self?.acknowledgeCoreOutbound(itemID) ?? false
+    }
+    return transport
+  }
+
   func registerPairwiseContacts() throws {
     for contact in contacts {
       try registerPairwiseContactIfAvailable(contact)
@@ -68,7 +76,9 @@ extension SessionManager {
     }
     applyCoreSnapshot(snapshot)
     try absorbCoreEvents(snapshot.pendingEvents)
-    groupRelay.reconfigure(snapshot: try coreClient.stateSnapshot())
+    let refreshed = try coreClient.stateSnapshot()
+    groupRelay.reconfigure(snapshot: refreshed)
+    if relay != nil { pairwiseRelay.reconfigure(snapshot: refreshed) }
     return output
   }
 

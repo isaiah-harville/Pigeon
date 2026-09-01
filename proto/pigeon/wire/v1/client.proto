@@ -157,6 +157,7 @@ message ClientCheckpoint {
   bytes pairwise_fallback_key = 16;
   repeated StoredPairwiseContact pairwise_contacts = 17;
   repeated StoredPairwiseSession pairwise_sessions = 18;
+  repeated bytes consumed_pairwise_envelope_hashes = 19;
 }
 
 message StoredPairwiseContact {

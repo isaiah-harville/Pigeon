@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use crate::Error;
 use crate::group::{CoordinatorChain, GroupEngine, GroupId};
 use crate::storage::{SealedCheckpoint, StorageError};
-use crate::wire::{PROTOCOL_VERSION, proto};
+use crate::wire::{MAX_PENDING_OUTBOUND_ENTRIES, PROTOCOL_VERSION, proto};
 
 pub(super) fn encode_message_id(bytes: &[u8; 16]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
@@ -123,7 +123,14 @@ pub(super) fn decode_checkpoint(
     }
     let state = proto::ClientCheckpoint::decode(checkpoint.bytes.as_slice())
         .map_err(|_| Error::Persistence(StorageError::Corrupt))?;
-    if state.version != PROTOCOL_VERSION || state.generation != checkpoint.generation {
+    if state.version != PROTOCOL_VERSION
+        || state.generation != checkpoint.generation
+        || state.consumed_pairwise_envelope_hashes.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state
+            .consumed_pairwise_envelope_hashes
+            .iter()
+            .any(|hash| hash.len() != 32)
+    {
         return Err(Error::Persistence(StorageError::Corrupt));
     }
     Ok(state)

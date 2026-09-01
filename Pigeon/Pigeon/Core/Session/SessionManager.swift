@@ -118,6 +118,7 @@ final class SessionManager {
   private var coreIdentityProvider: CoreIdentityProvider?
   private var coreCheckpointStore: CoreCheckpointStore?
   @ObservationIgnored private(set) lazy var groupRelay = makeGroupRelay()
+  @ObservationIgnored private(set) lazy var pairwiseRelay = makePairwiseRelay()
   /// Authenticated group projection rebuilt from the Rust checkpoint. It is
   /// never persisted separately, so it cannot drift across a crash boundary.
   var groups: [PigeonGroupState] = []
@@ -217,6 +218,7 @@ final class SessionManager {
     }
     try absorbCoreEvents(coreSnapshot.pendingEvents)
     groupRelay.reconfigure(snapshot: try coreClient.stateSnapshot())
+    if relay != nil { pairwiseRelay.reconfigure(snapshot: try coreClient.stateSnapshot()) }
     refreshRelay()  // pick up loaded contacts' relays
     // Drain anything buffered while locked *before* re-driving establishment, so
     // a buffered initiation/rehandshake stands up the session itself and the

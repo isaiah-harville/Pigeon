@@ -476,7 +476,7 @@ fn inbound_pairwise_control_is_decrypted_and_dispatched_inside_one_transaction()
 
     let decrypted = bob
         .execute(
-            ClientCommand::apply_pairwise_control("bob-decrypts-request", envelope.payload)
+            ClientCommand::apply_pairwise_control("bob-decrypts-request", envelope.payload.clone())
                 .unwrap(),
         )
         .unwrap();
@@ -489,6 +489,18 @@ fn inbound_pairwise_control_is_decrypted_and_dispatched_inside_one_transaction()
         wire_proto::OutboundKind::GroupJoinMaterial as i32
     );
     assert_eq!(material.destination, TestIdentity::new(1).root_public());
+
+    let replay = bob
+        .execute(
+            ClientCommand::apply_pairwise_control(
+                "bob-receives-republished-request",
+                envelope.payload,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert!(replay.events.is_empty());
+    assert!(replay.outbound.is_empty());
 }
 
 struct CheckpointFixtureStore {
