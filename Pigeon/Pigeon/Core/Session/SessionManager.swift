@@ -117,6 +117,7 @@ final class SessionManager {
   /// Authenticated group projection rebuilt from the Rust checkpoint. It is
   /// never persisted separately, so it cannot drift across a crash boundary.
   var groups: [PigeonGroupState] = []
+  var groupConversations: [Data: GroupConversation] = [:]
   var coreSnapshotGeneration: UInt64 = 0
 
   /// Configured relay endpoints, mirrored here so the value is observable —
@@ -201,30 +202,12 @@ final class SessionManager {
     self.coreCheckpointStore = coreCheckpointStore
     self.coreClient = coreClient
     applyCoreSnapshot(coreSnapshot)
-    account = loaded.account
-    contacts = loaded.contacts
-    conversationStore.load(loaded.conversations)  // in-memory view starts from disk
-    ephemeralContactIDs = loaded.ephemeralContactIDs
-    bluetoothChatIDs = loaded.bluetoothChatIDs
-    activeConversationIDs = loaded.activeConversationIDs
-    blockedContacts = loaded.blockedContacts
-    myName = loaded.myName
-    // Restore established sessions so a relaunch continues the conversation
-    // instead of re-handshaking. A contact with a restored session is, by
-    // definition, established (the two are kept in lockstep everywhere else).
-    sessions = loaded.sessions
-    establishedContactIDs = Set(loaded.sessions.keys)
-    pendingInitiation = loaded.pendingInitiation
-    lastInitiationIn = loaded.lastInitiationIn
-    acceptedInitiationDigests = loaded.acceptedInitiationDigests
-    fallbackRotatedAt = loaded.fallbackRotatedAt
-    isUnlocked = true
-    isPersistenceHealthy = true
-    lockedInbox.reset()
+    restoreLoadedState(loaded)
     guard purgeExpiredIncomingRequests(now: Date()) else {
       throw SessionPersistenceError.unreadableStore
     }
-    groupRelay.reconfigure(snapshot: coreSnapshot)
+    try absorbCoreEvents(coreSnapshot.pendingEvents)
+    groupRelay.reconfigure(snapshot: try coreClient.stateSnapshot())
     refreshRelay()  // pick up loaded contacts' relays
     // Drain anything buffered while locked *before* re-driving establishment, so
     // a buffered initiation/rehandshake stands up the session itself and the

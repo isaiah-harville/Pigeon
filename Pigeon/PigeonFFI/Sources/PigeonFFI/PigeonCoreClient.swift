@@ -230,6 +230,11 @@ public struct PigeonCoreEvent: Equatable, Sendable {
 
   public let id: String
   public let body: Body
+
+  public init(id: String, body: Body) {
+    self.id = id
+    self.body = body
+  }
 }
 
 public struct PigeonGroupCreatedEvent: Equatable, Sendable {

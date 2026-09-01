@@ -7,6 +7,10 @@ import XCTest
 
 @MainActor
 final class SessionCoreIntegrationTests: XCTestCase {
+  private enum InjectedFailure: Error {
+    case write
+  }
+
   func testAttachStoreBuildsTransactionalCoreBeforeUnlockCompletes() throws {
     let fixture = try makeFixture()
     defer { wipe(fixture.store) }
@@ -58,6 +62,73 @@ final class SessionCoreIntegrationTests: XCTestCase {
       fixture.manager.consumeGroupRelayMessage(
         Data("not an MLS message".utf8), requestID: "relay-entry-1"))
     XCTAssertEqual(fixture.manager.coreSnapshotGeneration, 0)
+  }
+
+  func testCoreEventIsAcknowledgedOnlyAfterGroupHistoryPersists() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    try fixture.manager.attachStore(fixture.store)
+    let groupID = Data(repeating: 41, count: 32)
+    let event = PigeonCoreEvent(
+      id: "created-event",
+      body: .groupCreated(
+        PigeonGroupCreatedEvent(
+          groupID: groupID,
+          ownerIdentity: fixture.manager.myID,
+          name: "Birds",
+          relayURL: "https://relay.example",
+          meshEnabled: false,
+          epoch: 1,
+          policyRevision: 1)))
+
+    try fixture.manager.absorbCoreEvents([event])
+
+    XCTAssertEqual(fixture.manager.groupConversations[groupID]?.messages.count, 1)
+    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, 1)
+
+    let restored = SessionManager(
+      identity: fixture.manager.identity,
+      mesh: MeshService(transport: SessionCoreNoopTransport()))
+    try restored.attachStore(fixture.store)
+    XCTAssertEqual(restored.groupConversations[groupID]?.messages.count, 1)
+  }
+
+  func testCoreEventRemainsUnacknowledgedWhenGroupHistorySaveFails() throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("pigeon-core-event-failure-\(UUID().uuidString).store")
+    let key = SymmetricKey(size: .bits256)
+    var failWrites = false
+    let store = EncryptedStore(
+      key: key,
+      url: url,
+      io: EncryptedStoreIO(
+        write: { data, destination, options in
+          if failWrites { throw InjectedFailure.write }
+          try data.write(to: destination, options: options)
+        },
+        remove: { try FileManager.default.removeItem(at: $0) }))
+    let identity = try IdentityManager(
+      store: InMemoryKeyStore(seed: Data(repeating: 29, count: 32)))
+    let manager = SessionManager(
+      identity: identity,
+      mesh: MeshService(transport: SessionCoreNoopTransport()))
+    defer { wipe(store) }
+    try manager.attachStore(store)
+    let event = PigeonCoreEvent(
+      id: "must-remain-pending",
+      body: .groupCreated(
+        PigeonGroupCreatedEvent(
+          groupID: Data(repeating: 42, count: 32),
+          ownerIdentity: manager.myID,
+          name: "Birds",
+          relayURL: "https://relay.example",
+          meshEnabled: false,
+          epoch: 1,
+          policyRevision: 1)))
+
+    failWrites = true
+    XCTAssertThrowsError(try manager.absorbCoreEvents([event]))
+    XCTAssertEqual(try manager.coreClient?.checkpointGeneration(), 0)
   }
 
   func testCorruptCoreCheckpointKeepsSessionLocked() throws {

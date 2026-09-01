@@ -65,6 +65,7 @@ final class SessionPersistence {
     var account: PigeonAccount?
     var contacts: [Contact]
     var conversations: [Data: [ChatMessage]]
+    var groupConversations: [Data: GroupConversation]
     var ephemeralContactIDs: Set<Data>
     var bluetoothChatIDs: Set<Data>
     var activeConversationIDs: Set<Data>
@@ -84,6 +85,7 @@ final class SessionPersistence {
   struct Snapshot {
     var contacts: [Contact]
     var conversations: [Data: [ChatMessage]]
+    var groupConversations: [Data: GroupConversation] = [:]
     var ephemeralContactIDs: Set<Data>
     var bluetoothChatIDs: Set<Data>
     var activeConversationIDs: Set<Data> = []
@@ -128,6 +130,7 @@ final class SessionPersistence {
       account: Self.buildAccount(seed: identitySeed, crypto: crypto),
       contacts: Self.decodeContacts(bulk.contacts),
       conversations: Self.decodeConversations(bulk.conversations),
+      groupConversations: try Self.decodeGroupConversations(bulk.groupConversations),
       ephemeralContactIDs: Self.decodeIDs(bulk.ephemeralContactIDs),
       bluetoothChatIDs: Self.decodeIDs(bulk.bluetoothContactIDs),
       activeConversationIDs: Self.decodeIDs(bulk.activeConversationIDs),
@@ -255,6 +258,19 @@ final class SessionPersistence {
     return loaded
   }
 
+  private static func decodeGroupConversations(
+    _ stored: [String: GroupConversation]
+  ) throws -> [Data: GroupConversation] {
+    var loaded: [Data: GroupConversation] = [:]
+    for (key, conversation) in stored {
+      guard let id = Data(base64Encoded: key), id == conversation.id else {
+        throw SessionPersistenceError.unreadableStore
+      }
+      loaded[id] = conversation
+    }
+    return loaded
+  }
+
   private static func decodeIDs(_ stored: [String]) throws -> Set<Data> {
     var ids: Set<Data> = []
     for encoded in stored {
@@ -326,9 +342,15 @@ extension SessionPersistence {
     for (id, messages) in snapshot.conversations {
       conversationsByKey[id.base64EncodedString()] = messages
     }
+    var groupConversationsByKey: [String: GroupConversation] = [:]
+    for (id, conversation) in snapshot.groupConversations {
+      guard id == conversation.id else { return false }
+      groupConversationsByKey[id.base64EncodedString()] = conversation
+    }
     let bulk = PersistedState(
       contacts: snapshot.contacts.map(Self.encodeContact),
       conversations: conversationsByKey,
+      groupConversations: groupConversationsByKey,
       ephemeralContactIDs: snapshot.ephemeralContactIDs.map { $0.base64EncodedString() },
       bluetoothContactIDs: snapshot.bluetoothChatIDs.map { $0.base64EncodedString() },
       activeConversationIDs: snapshot.activeConversationIDs.map { $0.base64EncodedString() },

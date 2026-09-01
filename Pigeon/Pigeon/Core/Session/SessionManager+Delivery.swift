@@ -12,6 +12,27 @@ import PigeonFFI
 
 extension SessionManager {
 
+  func restoreLoadedState(_ loaded: SessionPersistence.Loaded) {
+    account = loaded.account
+    contacts = loaded.contacts
+    conversationStore.load(loaded.conversations)
+    groupConversations = loaded.groupConversations
+    ephemeralContactIDs = loaded.ephemeralContactIDs
+    bluetoothChatIDs = loaded.bluetoothChatIDs
+    activeConversationIDs = loaded.activeConversationIDs
+    blockedContacts = loaded.blockedContacts
+    myName = loaded.myName
+    sessions = loaded.sessions
+    establishedContactIDs = Set(loaded.sessions.keys)
+    pendingInitiation = loaded.pendingInitiation
+    lastInitiationIn = loaded.lastInitiationIn
+    acceptedInitiationDigests = loaded.acceptedInitiationDigests
+    fallbackRotatedAt = loaded.fallbackRotatedAt
+    isUnlocked = true
+    isPersistenceHealthy = true
+    lockedInbox.reset()
+  }
+
   // MARK: - Connectivity-driven delivery
 
   /// Re-drives every contact when a link comes up: (re)establish stalled sessions
@@ -219,6 +240,7 @@ extension SessionManager {
     SessionPersistence.Snapshot(
       contacts: contacts,
       conversations: conversationStore.persistedConversations,
+      groupConversations: groupConversations,
       ephemeralContactIDs: ephemeralContactIDs,
       bluetoothChatIDs: bluetoothChatIDs,
       activeConversationIDs: activeConversationIDs,

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import PigeonFFI
 
@@ -43,8 +44,27 @@ extension SessionManager {
       throw PlatformError.InvalidOutput
     }
     applyCoreSnapshot(snapshot)
-    groupRelay.reconfigure(snapshot: snapshot)
+    try absorbCoreEvents(snapshot.pendingEvents)
+    groupRelay.reconfigure(snapshot: try coreClient.stateSnapshot())
     return output
+  }
+
+  /// Reduces replayable core events into encrypted app history, saves that
+  /// history, and only then removes the events from the core checkpoint.
+  func absorbCoreEvents(_ events: [PigeonCoreEvent]) throws {
+    guard !events.isEmpty else { return }
+    var candidate = groupConversations
+    for event in events {
+      let groupID = groupID(for: event)
+      var conversation = candidate[groupID] ?? GroupConversation(id: groupID)
+      try GroupEventReducer.reduce(event, into: &conversation, localIdentity: myID)
+      candidate[groupID] = conversation
+    }
+    if candidate != groupConversations {
+      groupConversations = candidate
+      guard persist() else { throw PlatformError.Unavailable }
+    }
+    try acknowledgeCoreEvents(events.map(\.id))
   }
 
   func consumeGroupRelayMessage(_ ciphertext: Data, requestID: String) -> Bool {
@@ -96,6 +116,31 @@ extension SessionManager {
       return true
     } catch {
       return false
+    }
+  }
+
+  private func acknowledgeCoreEvents(_ eventIDs: [String]) throws {
+    guard let coreClient else { throw PlatformError.Unavailable }
+    let encodedIDs = try JSONEncoder().encode(eventIDs)
+    let digest = SHA256.hash(data: encodedIDs)
+      .map { String(format: "%02x", $0) }
+      .joined()
+    _ = try coreClient.execute(
+      PigeonCoreCommand(
+        id: "ack-events:\(digest)",
+        body: .acknowledgeEffects(
+          PigeonAcknowledgeEffects(eventIDs: eventIDs))))
+    applyCoreSnapshot(try coreClient.stateSnapshot())
+  }
+
+  private func groupID(for event: PigeonCoreEvent) -> Data {
+    switch event.body {
+    case .groupCreated(let value): value.groupID
+    case .groupMessageReceived(let value): value.groupID
+    case .groupReactionReceived(let value): value.groupID
+    case .groupPolicyChanged(let value): value.groupID
+    case .groupDeliveryChanged(let value): value.groupID
+    case .groupSecurityWarning(let value): value.groupID
     }
   }
 }
