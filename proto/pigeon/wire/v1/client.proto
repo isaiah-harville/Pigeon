@@ -13,8 +13,14 @@ message ClientCommand {
     ApplyInbound apply_inbound = 12;
     ChangeGroupPolicy change_group_policy = 13;
     AcknowledgeEffects acknowledge_effects = 14;
+    EnsurePairwiseAccount ensure_pairwise_account = 15;
   }
 }
+
+// Creates the core-owned Olm account if it does not already exist. The public
+// signed prekey is exposed only through ClientSnapshot after this transaction
+// has durably persisted the matching private account state.
+message EnsurePairwiseAccount {}
 
 message CreateGroup {
   string name = 1;
@@ -100,6 +106,7 @@ message ClientSnapshot {
   repeated GroupState groups = 2;
   repeated OutboundItem pending_outbound = 3;
   repeated AppEvent pending_events = 4;
+  bytes pairwise_prekey_bundle = 5;
 }
 
 message GroupState {
@@ -133,6 +140,8 @@ message ClientCheckpoint {
   repeated PendingGroupAddition pending_group_additions = 12;
   repeated OutboundItem pending_outbound = 13;
   repeated AppEvent pending_events = 14;
+  bytes pairwise_account_state = 15;
+  bytes pairwise_fallback_key = 16;
 }
 
 message PendingGroupCreation {

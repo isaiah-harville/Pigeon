@@ -75,6 +75,8 @@ extension PigeonCoreCommand {
       command.changeGroupPolicy = body
     case .acknowledgeEffects(let value):
       command.acknowledgeEffects = value.proto()
+    case .ensurePairwiseAccount:
+      command.ensurePairwiseAccount = Pigeon_Wire_V1_EnsurePairwiseAccount()
     }
     return command
   }

@@ -306,6 +306,83 @@ fn failed_checkpoint_releases_no_event_or_outbound() {
 }
 
 #[test]
+fn pairwise_account_is_persisted_before_its_public_prekey_is_exposed() {
+    let identity = TestIdentity::new(1);
+    let expected_identity = identity.root_public();
+    let mut client = PigeonClient::new(MemoryStateStore::default(), identity).unwrap();
+
+    let output = client
+        .execute(ClientCommand::ensure_pairwise_account("pairwise-setup").unwrap())
+        .unwrap();
+    assert_eq!(output.checkpoint_generation, 1);
+    let snapshot =
+        wire_proto::ClientSnapshot::decode(client.snapshot().unwrap().encode().as_slice()).unwrap();
+    let published = pigeon_core::PrekeyBundle::decode(&snapshot.pairwise_prekey_bundle).unwrap();
+    published.verify().unwrap();
+    assert_eq!(published.identity.identity_key, expected_identity);
+
+    let stored = client.store().load().unwrap().unwrap();
+    let mut reloaded = PigeonClient::new(
+        CheckpointFixtureStore::from_checkpoint(stored),
+        TestIdentity::new(1),
+    )
+    .unwrap();
+    let reloaded_snapshot =
+        wire_proto::ClientSnapshot::decode(reloaded.snapshot().unwrap().encode().as_slice())
+            .unwrap();
+    assert_eq!(
+        reloaded_snapshot.pairwise_prekey_bundle,
+        snapshot.pairwise_prekey_bundle
+    );
+
+    let duplicate = reloaded
+        .execute(ClientCommand::ensure_pairwise_account("pairwise-setup-again").unwrap())
+        .unwrap();
+    assert_eq!(duplicate.checkpoint_generation, 2);
+    let duplicate_snapshot =
+        wire_proto::ClientSnapshot::decode(reloaded.snapshot().unwrap().encode().as_slice())
+            .unwrap();
+    assert_eq!(
+        duplicate_snapshot.pairwise_prekey_bundle,
+        snapshot.pairwise_prekey_bundle
+    );
+}
+
+struct CheckpointFixtureStore {
+    checkpoint: Option<pigeon_core::SealedCheckpoint>,
+}
+
+impl CheckpointFixtureStore {
+    fn from_checkpoint(checkpoint: pigeon_core::SealedCheckpoint) -> Self {
+        Self {
+            checkpoint: Some(checkpoint),
+        }
+    }
+}
+
+impl StateStore for CheckpointFixtureStore {
+    fn load(&self) -> Result<Option<pigeon_core::SealedCheckpoint>, pigeon_core::StorageError> {
+        Ok(self.checkpoint.clone())
+    }
+
+    fn replace(
+        &mut self,
+        expected_generation: u64,
+        next: pigeon_core::SealedCheckpoint,
+    ) -> Result<(), pigeon_core::StorageError> {
+        let current = self
+            .checkpoint
+            .as_ref()
+            .map_or(0, |checkpoint| checkpoint.generation);
+        if current != expected_generation || next.generation != expected_generation + 1 {
+            return Err(pigeon_core::StorageError::Conflict);
+        }
+        self.checkpoint = Some(next);
+        Ok(())
+    }
+}
+
+#[test]
 fn output_is_released_only_after_the_checkpoint_advances() {
     let store = MemoryStateStore::default();
     let mut client = PigeonClient::new(store, TestIdentity::new(1)).unwrap();

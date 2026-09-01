@@ -8,6 +8,7 @@ use checkpoint::{decode_checkpoint, encode_checkpoint};
 use crate::Error;
 use crate::client::{ClientCommand, ClientOutput, ClientSnapshot};
 use crate::group::{PigeonGroupPolicy, group_relay_challenge_transcript};
+use crate::identity::PlatformAccount;
 use crate::identity::{IdentityPurpose, SecureIdentity};
 use crate::storage::StateStore;
 use crate::wire::{PROTOCOL_VERSION, proto};
@@ -37,6 +38,8 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 pending_group_additions: Vec::new(),
                 pending_outbound: Vec::new(),
                 pending_events: Vec::new(),
+                pairwise_account_state: Vec::new(),
+                pairwise_fallback_key: Vec::new(),
             },
         };
         Ok(Self {
@@ -104,6 +107,17 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                         .iter()
                         .any(|id| id == &event.event_id)
                 });
+            }
+            proto::client_command::Body::EnsurePairwiseAccount(_) => {
+                if candidate.pairwise_account_state.is_empty()
+                    && candidate.pairwise_fallback_key.is_empty()
+                {
+                    let account = PlatformAccount::new();
+                    candidate.pairwise_account_state = account.export_state()?;
+                    candidate.pairwise_fallback_key = account.export_fallback_key().to_vec();
+                } else {
+                    pairwise_account(&candidate)?;
+                }
             }
         }
 
@@ -190,12 +204,17 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 })
             })
             .collect::<Result<Vec<_>, Error>>()?;
+        let pairwise_prekey_bundle = pairwise_account(&self.state)?
+            .map(|account| account.signed_prekey_bundle(&self.identity))
+            .transpose()?
+            .map_or_else(Vec::new, |bundle| bundle.encode());
         Ok(ClientSnapshot {
             inner: proto::ClientSnapshot {
                 checkpoint_generation: self.state.generation,
                 groups,
                 pending_outbound: self.state.pending_outbound.clone(),
                 pending_events: self.state.pending_events.clone(),
+                pairwise_prekey_bundle,
             },
         })
     }
@@ -269,5 +288,26 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             }
             _ => Err(Error::MalformedBundle),
         }
+    }
+}
+
+fn pairwise_account(state: &proto::ClientCheckpoint) -> Result<Option<PlatformAccount>, Error> {
+    match (
+        state.pairwise_account_state.is_empty(),
+        state.pairwise_fallback_key.is_empty(),
+    ) {
+        (true, true) => Ok(None),
+        (false, false) => {
+            let fallback_key = state
+                .pairwise_fallback_key
+                .as_slice()
+                .try_into()
+                .map_err(|_| Error::Serialization)?;
+            Ok(Some(PlatformAccount::import(
+                &state.pairwise_account_state,
+                fallback_key,
+            )?))
+        }
+        _ => Err(Error::Serialization),
     }
 }

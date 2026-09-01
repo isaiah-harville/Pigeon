@@ -130,6 +130,7 @@ pub(crate) fn validate_client_command(command: &proto::ClientCommand) -> Result<
                 check_bytes(id.len(), MAX_STABLE_ID_BYTES, "effect id")?;
             }
         }
+        proto::client_command::Body::EnsurePairwiseAccount(_) => {}
     }
     Ok(())
 }

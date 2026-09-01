@@ -19,7 +19,7 @@ const BINDING_CONTEXT: &[u8] = b"Pigeon.IdentityBinding.v1";
 /// (replay-defended) to the fallback or vice versa.
 const PREKEY_CONTEXT: &[u8] = b"Pigeon.Prekey.v1";
 
-fn binding_message(curve_identity_key: &[u8; 32]) -> Vec<u8> {
+pub(crate) fn binding_message(curve_identity_key: &[u8; 32]) -> Vec<u8> {
     let mut message = BINDING_CONTEXT.to_vec();
     message.extend_from_slice(curve_identity_key);
     message

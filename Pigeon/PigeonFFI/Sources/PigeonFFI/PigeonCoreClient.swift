@@ -7,6 +7,7 @@ public struct PigeonCoreCommand: Equatable, Sendable {
     case applyInbound(PigeonApplyInbound)
     case changeGroupPolicy(PigeonChangeGroupPolicy)
     case acknowledgeEffects(PigeonAcknowledgeEffects)
+    case ensurePairwiseAccount
   }
 
   public let id: String
@@ -158,17 +159,22 @@ public struct PigeonCoreSnapshot: Equatable, Sendable {
   public let groups: [PigeonGroupState]
   public let pendingOutbound: [PigeonCoreOutboundItem]
   public let pendingEvents: [PigeonCoreEvent]
+  /// Verified public bundle for async pairwise establishment. Empty until the
+  /// matching core-owned account has been durably initialized.
+  public let pairwisePrekeyBundle: Data
 
   public init(
     checkpointGeneration: UInt64,
     groups: [PigeonGroupState],
     pendingOutbound: [PigeonCoreOutboundItem] = [],
-    pendingEvents: [PigeonCoreEvent] = []
+    pendingEvents: [PigeonCoreEvent] = [],
+    pairwisePrekeyBundle: Data = Data()
   ) {
     self.checkpointGeneration = checkpointGeneration
     self.groups = groups
     self.pendingOutbound = pendingOutbound
     self.pendingEvents = pendingEvents
+    self.pairwisePrekeyBundle = pairwisePrekeyBundle
   }
 }
 

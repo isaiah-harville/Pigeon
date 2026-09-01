@@ -200,6 +200,19 @@ final class PigeonFFIRoundTripTests: XCTestCase {
     XCTAssertEqual(store.load()?.generation, 1)
   }
 
+  func testPairwiseSetupPersistsBeforeSnapshotExposesThePublicBundle() throws {
+    let client = try PigeonCoreClient(
+      identity: TestPlatformIdentity(), store: TestCheckpointStore())
+
+    let output = try client.execute(
+      PigeonCoreCommand(id: "pairwise-setup", body: .ensurePairwiseAccount))
+    let snapshot = try client.stateSnapshot()
+
+    XCTAssertEqual(output.checkpointGeneration, 1)
+    XCTAssertFalse(snapshot.pairwisePrekeyBundle.isEmpty)
+    XCTAssertNoThrow(try PigeonPrekeyBundle(decoding: snapshot.pairwisePrekeyBundle))
+  }
+
   func testTransactionalClientReturnsNoOutputWhenPersistenceFails() throws {
     let client = try PigeonCoreClient(
       identity: TestPlatformIdentity(), store: TestCheckpointStore(failReplacement: true))

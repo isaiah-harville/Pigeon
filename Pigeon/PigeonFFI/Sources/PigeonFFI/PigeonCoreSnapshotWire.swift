@@ -4,7 +4,8 @@ extension PigeonCoreSnapshot {
       checkpointGeneration: proto.checkpointGeneration,
       groups: proto.groups.map(PigeonGroupState.init(proto:)),
       pendingOutbound: proto.pendingOutbound.map(PigeonCoreOutboundItem.init(proto:)),
-      pendingEvents: proto.pendingEvents.map(PigeonCoreEvent.init(proto:)))
+      pendingEvents: proto.pendingEvents.map(PigeonCoreEvent.init(proto:)),
+      pairwisePrekeyBundle: proto.pairwisePrekeyBundle)
   }
 }
 

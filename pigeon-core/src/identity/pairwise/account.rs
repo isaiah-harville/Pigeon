@@ -4,7 +4,8 @@
 use vodozemac::olm::{Account as OlmAccount, AccountPickle};
 
 use crate::error::Error;
-use crate::identity::root::{IdentityBundle, IdentityKeypair};
+use crate::identity::boundary::{IdentityPurpose, SecureIdentity};
+use crate::identity::root::{IdentityBundle, IdentityKeypair, binding_message, prekey_message};
 
 use super::prekey::PrekeyBundle;
 
@@ -24,6 +25,74 @@ pub struct Account {
     /// goes empty after publishing and cannot be recovered after a pickle
     /// round-trip. These bytes are public, so persisting them is safe.
     fallback_key: [u8; 32],
+}
+
+/// Olm account state owned by the high-level client. Root identity operations
+/// stay behind [`SecureIdentity`], so this type never receives private seed
+/// bytes and cannot export them through bindings.
+pub(crate) struct PlatformAccount {
+    olm: OlmAccount,
+    fallback_key: [u8; 32],
+}
+
+impl PlatformAccount {
+    pub(crate) fn new() -> Self {
+        let mut olm = OlmAccount::new();
+        let count = INITIAL_ONE_TIME_KEYS.min(olm.max_number_of_one_time_keys());
+        olm.generate_one_time_keys(count);
+        olm.generate_fallback_key();
+        let fallback_key = current_fallback_key(&olm);
+        Self { olm, fallback_key }
+    }
+
+    pub(crate) fn import(state: &[u8], fallback_key: [u8; 32]) -> Result<Self, Error> {
+        let pickle: AccountPickle =
+            serde_json::from_slice(state).map_err(|_| Error::Serialization)?;
+        Ok(Self {
+            olm: OlmAccount::from_pickle(pickle),
+            fallback_key,
+        })
+    }
+
+    pub(crate) fn identity_bundle<I: SecureIdentity + ?Sized>(
+        &self,
+        identity: &I,
+    ) -> Result<IdentityBundle, Error> {
+        let identity_key = identity.ensure_public_key(IdentityPurpose::Root)?;
+        let curve_identity_key = self.olm.curve25519_key().to_bytes();
+        let binding_signature =
+            identity.sign(IdentityPurpose::Root, &binding_message(&curve_identity_key))?;
+        Ok(IdentityBundle {
+            identity_key,
+            curve_identity_key,
+            binding_signature,
+        })
+    }
+
+    pub(crate) fn signed_prekey_bundle<I: SecureIdentity + ?Sized>(
+        &self,
+        identity: &I,
+    ) -> Result<PrekeyBundle, Error> {
+        let identity_bundle = self.identity_bundle(identity)?;
+        let prekey_signature = identity.sign(
+            IdentityPurpose::Root,
+            &prekey_message(false, &self.fallback_key),
+        )?;
+        Ok(PrekeyBundle {
+            identity: identity_bundle,
+            prekey: self.fallback_key,
+            prekey_signature,
+            one_time: false,
+        })
+    }
+
+    pub(crate) fn export_state(&self) -> Result<Vec<u8>, Error> {
+        serde_json::to_vec(&self.olm.pickle()).map_err(|_| Error::Serialization)
+    }
+
+    pub(crate) fn export_fallback_key(&self) -> [u8; 32] {
+        self.fallback_key
+    }
 }
 
 impl Account {
@@ -186,4 +255,61 @@ fn current_fallback_key(olm: &OlmAccount) -> [u8; 32] {
         .next()
         .expect("a fallback key was just generated and not yet published")
         .to_bytes()
+}
+
+#[cfg(test)]
+mod platform_account_tests {
+    use ed25519_dalek::{Signer, SigningKey};
+
+    use super::PlatformAccount;
+    use crate::identity::{IdentityError, IdentityPurpose, SecureIdentity};
+
+    struct TestIdentity(SigningKey);
+
+    impl SecureIdentity for TestIdentity {
+        fn ensure_public_key(&self, purpose: IdentityPurpose) -> Result<[u8; 32], IdentityError> {
+            assert_eq!(purpose, IdentityPurpose::Root);
+            Ok(self.0.verifying_key().to_bytes())
+        }
+
+        fn sign(
+            &self,
+            purpose: IdentityPurpose,
+            message: &[u8],
+        ) -> Result<[u8; 64], IdentityError> {
+            assert_eq!(purpose, IdentityPurpose::Root);
+            Ok(self.0.sign(message).to_bytes())
+        }
+    }
+
+    #[test]
+    fn platform_account_binds_olm_keys_without_receiving_the_root_seed() {
+        let identity = TestIdentity(SigningKey::from_bytes(&[7; 32]));
+        let account = PlatformAccount::new();
+
+        let identity_bundle = account.identity_bundle(&identity).unwrap();
+        let prekey_bundle = account.signed_prekey_bundle(&identity).unwrap();
+
+        identity_bundle.verify().unwrap();
+        prekey_bundle.verify().unwrap();
+        assert_eq!(
+            identity_bundle.identity_key,
+            identity.0.verifying_key().to_bytes()
+        );
+    }
+
+    #[test]
+    fn platform_account_state_round_trip_preserves_the_olm_identity() {
+        let identity = TestIdentity(SigningKey::from_bytes(&[9; 32]));
+        let account = PlatformAccount::new();
+        let expected = account.identity_bundle(&identity).unwrap();
+
+        let restored = PlatformAccount::import(
+            &account.export_state().unwrap(),
+            account.export_fallback_key(),
+        )
+        .unwrap();
+
+        assert_eq!(restored.identity_bundle(&identity).unwrap(), expected);
+    }
 }

@@ -48,6 +48,21 @@ impl ClientCommand {
         self.inner.encode_to_vec()
     }
 
+    /// Durably creates the core-owned Olm account when absent. Its public
+    /// signed prekey becomes available in [`crate::ClientSnapshot`] only after
+    /// this command commits successfully.
+    pub fn ensure_pairwise_account(command_id: impl Into<String>) -> Result<Self, Error> {
+        let inner = proto::ClientCommand {
+            version: PROTOCOL_VERSION,
+            command_id: command_id.into(),
+            body: Some(proto::client_command::Body::EnsurePairwiseAccount(
+                proto::EnsurePairwiseAccount {},
+            )),
+        };
+        wire::validate_client_command(&inner)?;
+        Ok(Self { inner })
+    }
+
     pub fn acknowledge_effects(
         command_id: impl Into<String>,
         outbound_item_ids: Vec<String>,
