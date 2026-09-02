@@ -224,6 +224,17 @@ public struct PigeonCoreOutboundItem: Equatable, Sendable {
   public let relayURL: String
   public let destination: Data
   public let payload: Data
+
+  public init(
+    id: String, kind: PigeonCoreOutboundKind, relayURL: String,
+    destination: Data, payload: Data
+  ) {
+    self.id = id
+    self.kind = kind
+    self.relayURL = relayURL
+    self.destination = destination
+    self.payload = payload
+  }
 }
 
 public struct PigeonCoreEvent: Equatable, Sendable {

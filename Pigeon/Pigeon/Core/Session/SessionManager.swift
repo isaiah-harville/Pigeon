@@ -125,6 +125,9 @@ final class SessionManager {
   var groups: [PigeonGroupState] = []
   var groupConversations: [Data: GroupConversation] = [:]
   var coreSnapshotGeneration: UInt64 = 0
+  /// Group relay effects already copied onto the best-effort local mesh during
+  /// this process. The relay effect remains pending until the relay confirms it.
+  var meshedCoreOutboundIDs: Set<String> = []
 
   /// Configured relay endpoints, mirrored here so the value is observable —
   /// changing it refreshes anything that depends on it (e.g. the QR card, which
@@ -218,8 +221,10 @@ final class SessionManager {
       throw SessionPersistenceError.unreadableStore
     }
     try absorbCoreEvents(coreSnapshot.pendingEvents)
-    groupRelay.reconfigure(snapshot: try coreClient.stateSnapshot())
-    if relay != nil { pairwiseRelay.reconfigure(snapshot: try coreClient.stateSnapshot()) }
+    let refreshedCoreSnapshot = try coreClient.stateSnapshot()
+    groupRelay.reconfigure(snapshot: refreshedCoreSnapshot)
+    fanOutGroupMesh(snapshot: refreshedCoreSnapshot)
+    if relay != nil { pairwiseRelay.reconfigure(snapshot: refreshedCoreSnapshot) }
     refreshRelay()  // pick up loaded contacts' relays
     // Drain anything buffered while locked *before* re-driving establishment, so
     // a buffered initiation/rehandshake stands up the session itself and the

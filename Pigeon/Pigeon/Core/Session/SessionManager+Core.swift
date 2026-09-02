@@ -195,6 +195,7 @@ extension SessionManager {
     try absorbCoreEvents(snapshot.pendingEvents)
     let refreshed = try coreClient.stateSnapshot()
     groupRelay.reconfigure(snapshot: refreshed)
+    fanOutGroupMesh(snapshot: refreshed)
     if relay != nil { pairwiseRelay.reconfigure(snapshot: refreshed) }
     return output
   }

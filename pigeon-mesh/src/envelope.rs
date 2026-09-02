@@ -50,6 +50,11 @@ pub enum EnvelopeType {
     /// Opaque pairwise ciphertext produced and consumed by `pigeon-core`.
     /// Hosts may route it but never inspect or advance its ratchet.
     Pairwise = 7,
+    /// Opaque MLS application ciphertext produced and consumed by
+    /// `pigeon-core`. The recipient field carries an untrusted group-id routing
+    /// hint; core authenticates the group inside the MLS payload. Non-members
+    /// can relay the envelope but cannot inspect its payload.
+    GroupMls = 8,
 }
 
 impl EnvelopeType {
@@ -62,6 +67,7 @@ impl EnvelopeType {
             5 => Some(Self::Control),
             6 => Some(Self::X3dhInit),
             7 => Some(Self::Pairwise),
+            8 => Some(Self::GroupMls),
             _ => None,
         }
     }
@@ -169,6 +175,21 @@ mod tests {
     }
 
     #[test]
+    fn round_trip_core_owned_group_ciphertext() {
+        let env = SessionEnvelope::new(
+            EnvelopeType::GroupMls,
+            id(0x51),
+            id(0x62),
+            b"opaque MLS ciphertext".to_vec(),
+        );
+
+        let decoded = SessionEnvelope::decode(&env.encode()).unwrap();
+
+        assert_eq!(decoded, env);
+        assert_eq!(decoded.kind, EnvelopeType::GroupMls);
+    }
+
+    #[test]
     fn empty_payload_is_valid() {
         let env = SessionEnvelope::new(EnvelopeType::Handshake, id(1), id(2), Vec::new());
         let decoded = SessionEnvelope::decode(&env.encode()).unwrap();
@@ -199,7 +220,7 @@ mod tests {
     fn decode_rejects_bad_type() {
         let mut bytes =
             SessionEnvelope::new(EnvelopeType::Message, id(1), id(2), Vec::new()).encode();
-        bytes[1] = 0x08; // not a valid EnvelopeType
+        bytes[1] = 0xFF; // not a valid EnvelopeType
         assert_eq!(
             SessionEnvelope::decode(&bytes),
             Err(EnvelopeError::MalformedEnvelope)
