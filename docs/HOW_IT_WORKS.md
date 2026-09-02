@@ -265,7 +265,51 @@ stealing one key can never unlock your whole history.
 
 ---
 
-## Step 4 — The couriers (transports)
+## Step 4 — Group chats with MLS
+
+Direct chats use one Olm Double Ratchet per pair. Group chats use the IETF
+**Messaging Layer Security** protocol ([MLS, RFC 9420][rfc9420]), implemented by
+OpenMLS inside `pigeon-core`. MLS maintains a shared group key schedule while
+updating membership in logarithmic rather than linear work. Swift, the FFI, the
+relay, and transports handle typed commands, public policy, and opaque
+ciphertext; they never manipulate MLS secrets.
+
+![Creating an MLS group without requiring simultaneous presence](diagrams/pigeon_07_group_mls.svg)
+
+The owner selects one configured relay for the group. That deployment exposes
+both the ciphertext mailbox and the MLS coordinator. The coordinator serializes
+concurrent membership and policy commits and signs its receipts, but it is not a
+group authority: every client verifies the receipt, the MLS commit, and Pigeon's
+authenticated policy before changing state. It has no plaintext or group keys.
+After creation, the owner can be offline; invitations travel through existing
+pairwise-encrypted control channels and the selected relay completes coordination.
+
+Pigeon groups have these product rules:
+
+- 3–128 members, with mutable membership.
+- A permanent owner who cannot be demoted or removed. Admins can add/remove
+  members and promote/demote other admins; no admin can demote themself.
+- Members other than the owner can leave while at least three members remain.
+  The owner can permanently dissolve the group.
+- Only the owner can change the shared name, selected relay, or local-mesh opt-in.
+  Mesh is off by default for every group.
+- Membership and policy changes appear as status entries in the conversation,
+  while verification failures appear as prominent security warnings.
+
+![MLS epochs prevent new or former members from reading outside their membership window](diagrams/pigeon_08_group_epoch.svg)
+
+MLS advances the group to a new **epoch** after membership changes. A new member
+receives the current epoch secrets, not the keys for earlier messages. A removed
+or departed member does not receive later epoch secrets. Pigeon therefore shows
+new members only messages sent after they joined; the relay cannot bridge that
+cryptographic boundary.
+
+Application messages are encrypted once for the MLS group and uploaded to the
+group mailbox. This avoids pairwise fan-out for ordinary group traffic. Pairwise
+encryption remains intentionally limited to bootstrapping invitations before a
+new member can authenticate to the group mailbox.
+
+## Step 5 — The couriers (transports)
 
 Everything above produces **ciphertext** — the locked box. It then travels over
 whatever connection is available; multiple transports can run at once, and none
@@ -326,7 +370,7 @@ optional Tor) is on the [Roadmap](ROADMAP.md).
 
 ---
 
-## Step 5 — Notifications without leaking
+## Step 6 — Notifications without leaking
 
 A locked phone is the hard case. To *decrypt*, Pigeon must open its on-device
 message store, which is sealed behind Face ID / your passcode — and you can't do
@@ -478,13 +522,13 @@ Foundational papers:
 - **K. Cohn-Gordon, C. Cremers, L. Garratt**, *On Post-Compromise Security*, IEEE
   CSF 2016. <https://eprint.iacr.org/2016/221>
 
-*The diagrams are generated from
-[`docs/diagrams/generate_diagrams.py`](diagrams/generate_diagrams.py) — run
-`uv run docs/diagrams/generate_diagrams.py` to regenerate them after a protocol
-change.*
+*The direct-message diagrams are generated from
+[`docs/diagrams/generate_diagrams.py`](diagrams/generate_diagrams.py). The MLS
+figures are maintained as accessible SVGs alongside them.*
 
 [rfc7748]: https://www.rfc-editor.org/rfc/rfc7748
 [rfc8032]: https://www.rfc-editor.org/rfc/rfc8032
+[rfc9420]: https://www.rfc-editor.org/rfc/rfc9420
 [rfc5869]: https://www.rfc-editor.org/rfc/rfc5869
 [fips180]: https://csrc.nist.gov/pubs/fips/180-4/upd1/final
 [fips197]: https://csrc.nist.gov/pubs/fips/197/final

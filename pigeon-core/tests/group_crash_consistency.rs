@@ -188,7 +188,20 @@ fn failed_send_checkpoint_releases_no_ciphertext_and_retry_is_durable() {
     store.set_fail_replace(false);
     let output = client.execute(send).unwrap();
     assert_eq!(output.checkpoint_generation, 4);
-    assert_eq!(output.events.len(), 1);
+    assert_eq!(output.events.len(), 2);
+    let message_event = wire_proto::AppEvent::decode(output.events[0].encode().as_slice()).unwrap();
+    let wire_proto::app_event::Body::GroupMessageReceived(message) = message_event.body.unwrap()
+    else {
+        panic!("expected sender-local GroupMessageReceived before delivery state");
+    };
+    assert_eq!(message.body, b"hello");
+    assert_eq!(message.sender_identity, TestIdentity::new(1).root_public());
+    let delivery_event =
+        wire_proto::AppEvent::decode(output.events[1].encode().as_slice()).unwrap();
+    assert!(matches!(
+        delivery_event.body,
+        Some(wire_proto::app_event::Body::GroupDeliveryChanged(_))
+    ));
     assert_eq!(output.outbound.len(), 1);
     let outbound =
         wire_proto::OutboundItem::decode(output.outbound[0].encode().as_slice()).unwrap();

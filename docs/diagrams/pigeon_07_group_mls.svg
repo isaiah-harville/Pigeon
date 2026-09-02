@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
+  <title id="title">Pigeon MLS group creation</title>
+  <desc id="desc">The owner creates an MLS group, pairwise encrypted invitations reach each member, and the selected relay stores only ciphertext and coordinates ordered membership commits.</desc>
+  <defs>
+    <style>.bg{fill:#f8fafc}.card{fill:#fff;stroke:#2563eb;stroke-width:3}.relay{fill:#eff6ff;stroke:#1d4ed8;stroke-width:3}.title{font:700 25px system-ui;fill:#0f172a}.text{font:17px system-ui;fill:#334155}.small{font:15px system-ui;fill:#475569}.arrow{stroke:#2563eb;stroke-width:4;fill:none;marker-end:url(#head)}.key{fill:#fee2e2;stroke:#dc2626;stroke-width:2}</style>
+    <marker id="head" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#2563eb"/></marker>
+  </defs>
+  <rect class="bg" width="1200" height="620" rx="24"/>
+  <text class="title" x="40" y="50">Create once; join asynchronously</text>
+  <rect class="card" x="55" y="110" width="270" height="320" rx="22"/>
+  <text class="title" x="105" y="155">Alice · owner</text>
+  <text class="text" x="85" y="205">1. Creates MLS group</text>
+  <text class="text" x="85" y="240">2. Sets name + relay</text>
+  <text class="text" x="85" y="275">3. Adds Bob and Carol</text>
+  <rect class="key" x="85" y="325" width="210" height="70" rx="12"/>
+  <text class="small" x="105" y="355">Private MLS state</text>
+  <text class="small" x="105" y="380">stays in pigeon-core</text>
+  <rect class="relay" x="455" y="95" width="290" height="350" rx="22"/>
+  <text class="title" x="505" y="140">Selected relay</text>
+  <text class="text" x="495" y="190">Group ciphertext mailbox</text>
+  <text class="text" x="495" y="225">MLS commit coordinator</text>
+  <text class="text" x="495" y="260">Signed ordering receipts</text>
+  <text class="text" x="495" y="315">No plaintext</text>
+  <text class="text" x="495" y="350">No MLS secrets</text>
+  <text class="text" x="495" y="385">No creator dependency</text>
+  <rect class="card" x="875" y="90" width="270" height="160" rx="22"/>
+  <text class="title" x="950" y="135">Bob</text>
+  <text class="text" x="910" y="180">Pairwise-encrypted invite</text>
+  <text class="small" x="910" y="215">No simultaneous presence needed</text>
+  <rect class="card" x="875" y="300" width="270" height="160" rx="22"/>
+  <text class="title" x="945" y="345">Carol</text>
+  <text class="text" x="910" y="390">Pairwise-encrypted invite</text>
+  <text class="small" x="910" y="425">No simultaneous presence needed</text>
+  <path class="arrow" d="M325 220 C375 220 405 200 455 200"/>
+  <path class="arrow" d="M745 180 C800 180 820 165 875 165"/>
+  <path class="arrow" d="M745 330 C800 330 820 375 875 375"/>
+  <text class="small" x="430" y="520">Contact-card control prekeys establish pairwise channels for invitations.</text>
+  <text class="small" x="430" y="550">The relay coordinates commits, but authenticated MLS policy decides what is valid.</text>
+</svg>

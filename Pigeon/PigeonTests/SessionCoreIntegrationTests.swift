@@ -232,6 +232,89 @@ final class SessionCoreIntegrationTests: XCTestCase {
 }
 
 extension SessionCoreIntegrationTests {
+  func testCreateGroupResolvesCoordinatorKeyAndStagesPairwiseInvitations() async throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    try fixture.manager.attachStore(fixture.store)
+    let relay = try XCTUnwrap(URL(string: "wss://relay.example/ws"))
+    let peers = try [33, 34].map { seed -> Contact in
+      let account = try PigeonAccount.fromIdentitySeed(
+        seed: Data(repeating: UInt8(seed), count: 32))
+      let bundle = try PigeonIdentityBundle(decoding: account.identityBundle())
+      let prekey = try PigeonPrekeyBundle(decoding: account.signedPrekeyBundle())
+      XCTAssertTrue(
+        fixture.manager.addContact(
+          bundle, name: "Peer \(seed)", relayURLs: [relay],
+          prekeys: ContactPrekeyBundles(chat: nil, control: prekey),
+          admission: .verifiedInPerson))
+      return try XCTUnwrap(fixture.manager.contacts.first { $0.id == bundle.identityKey })
+    }
+    let coordinatorKey = fixture.manager.myID
+    fixture.manager.resolveGroupCoordinatorKey = { requestedRelay in
+      XCTAssertEqual(requestedRelay, relay)
+      return coordinatorKey
+    }
+
+    let output = try await fixture.manager.createGroup(
+      name: "Bird Friends", memberIDs: Set(peers.map(\.id)), relayURL: relay,
+      meshEnabled: false)
+
+    XCTAssertEqual(output.outbound.count, 2)
+    XCTAssertTrue(output.outbound.allSatisfy { $0.kind == .pairwise })
+    XCTAssertEqual(Set(output.outbound.map(\.relayURL)), [relay.absoluteString])
+  }
+
+  func testCreateGroupRejectsContactsWithoutCoreControlPrekeys() async throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    try fixture.manager.attachStore(fixture.store)
+    let relay = try XCTUnwrap(URL(string: "wss://relay.example/ws"))
+    let peers = try [35, 36].map { seed -> Contact in
+      let account = try PigeonAccount.fromIdentitySeed(
+        seed: Data(repeating: UInt8(seed), count: 32))
+      let bundle = try PigeonIdentityBundle(decoding: account.identityBundle())
+      return Contact(bundle: bundle, displayName: "Peer \(seed)", relayURLs: [relay])
+    }
+    fixture.manager.contacts = peers
+    fixture.manager.resolveGroupCoordinatorKey = { _ in
+      XCTFail("invalid draft must not contact the relay")
+      return Data()
+    }
+
+    do {
+      _ = try await fixture.manager.createGroup(
+        name: "Bird Friends", memberIDs: Set(peers.map(\.id)), relayURL: relay,
+        meshEnabled: false)
+      XCTFail("Expected unreachable member error")
+    } catch {
+      XCTAssertEqual(error as? SessionManager.GroupCreationError, .unreachableMember)
+    }
+  }
+
+  func testGroupSendRejectsWhitespaceBeforeCallingCore() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+
+    XCTAssertThrowsError(
+      try fixture.manager.sendGroupMessage(
+        "   \n", in: groupState(name: "Birds", revision: 1), replyToMessageID: nil)
+    ) { error in
+      XCTAssertEqual(error as? SessionManager.GroupMessagingError, .invalidMessage)
+    }
+  }
+
+  func testGroupSendRejectsInactiveMembershipBeforeCallingCore() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+
+    XCTAssertThrowsError(
+      try fixture.manager.sendGroupMessage(
+        "hello", in: groupState(name: "Birds", revision: 1), replyToMessageID: nil)
+    ) { error in
+      XCTAssertEqual(error as? SessionManager.GroupMessagingError, .inactiveGroup)
+    }
+  }
+
   func testAddingContactRegistersCorePairwiseControlPrekey() throws {
     let fixture = try makeFixture()
     defer { wipe(fixture.store) }

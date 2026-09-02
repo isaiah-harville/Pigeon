@@ -3,6 +3,123 @@ import Foundation
 import PigeonFFI
 
 extension SessionManager {
+  static let maximumGroupMembers = 128
+  static let maximumGroupMessageBytes = 64 * 1024
+
+  enum GroupCreationError: Error, Equatable {
+    case invalidName
+    case invalidRoster
+    case invalidRelay
+    case unreachableMember
+    case invalidCoordinatorKey
+  }
+
+  enum GroupMessagingError: Error, Equatable {
+    case invalidMessage
+    case inactiveGroup
+  }
+
+  @discardableResult
+  func createGroup(
+    name: String,
+    memberIDs: Set<Data>,
+    relayURL: URL,
+    meshEnabled: Bool
+  ) async throws -> PigeonCoreOutput {
+    guard Self.isValidGroupName(name) else { throw GroupCreationError.invalidName }
+    guard (2..<Self.maximumGroupMembers).contains(memberIDs.count),
+      !memberIDs.contains(myID)
+    else { throw GroupCreationError.invalidRoster }
+    guard let scheme = relayURL.scheme?.lowercased(),
+      scheme == "https" || scheme == "wss",
+      GroupRelayTransport.endpoint(for: relayURL) != nil
+    else { throw GroupCreationError.invalidRelay }
+
+    let selected = memberIDs.compactMap { memberID in
+      contacts.first { $0.id == memberID && $0.requestState == .none }
+    }
+    guard selected.count == memberIDs.count,
+      selected.allSatisfy({ contact in
+        contact.pairwiseControlPrekeyBundle != nil
+          && (contact.preferredRelayURL != nil || !contact.relayURLs.isEmpty)
+      })
+    else { throw GroupCreationError.unreachableMember }
+
+    let coordinatorKey = try await resolveGroupCoordinatorKey(relayURL)
+    guard coordinatorKey.count == 32,
+      (try? Curve25519.Signing.PublicKey(rawRepresentation: coordinatorKey)) != nil
+    else { throw GroupCreationError.invalidCoordinatorKey }
+    return try executeCore(
+      PigeonCoreCommand(
+        id: "create-group:\(UUID().uuidString.lowercased())",
+        body: .createGroup(
+          PigeonCreateGroup(
+            name: name,
+            memberIdentities: memberIDs.sorted { $0.lexicographicallyPrecedes($1) },
+            relayURL: relayURL.absoluteString,
+            meshEnabled: meshEnabled,
+            coordinatorPublicKey: coordinatorKey))))
+  }
+
+  @discardableResult
+  func sendGroupMessage(
+    _ text: String,
+    in group: PigeonGroupState,
+    replyToMessageID: String?
+  ) throws -> PigeonCoreOutput {
+    let body = Data(text.utf8)
+    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      !body.isEmpty, body.count <= Self.maximumGroupMessageBytes
+    else { throw GroupMessagingError.invalidMessage }
+    guard !group.dissolved, group.memberIdentities.contains(myID) else {
+      throw GroupMessagingError.inactiveGroup
+    }
+    let commandID = "send-group-message:\(UUID().uuidString.lowercased())"
+    return try executeCore(
+      PigeonCoreCommand(
+        id: commandID,
+        body: .sendGroupMessage(
+          PigeonSendGroupMessage(
+            groupID: group.groupID,
+            messageID: commandID,
+            body: body,
+            senderTimestampMilliseconds: Int64(Date().timeIntervalSince1970 * 1_000),
+            replyToMessageID: replyToMessageID))))
+  }
+
+  @discardableResult
+  func changeGroupPolicy(
+    _ kind: PigeonGroupPolicyChangeKind,
+    in group: PigeonGroupState,
+    subjectIdentity: Data,
+    stringValue: String,
+    boolValue: Bool
+  ) throws -> PigeonCoreOutput {
+    if kind == .nameChanged, !Self.isValidGroupName(stringValue) {
+      throw GroupCreationError.invalidName
+    }
+    guard !group.dissolved else { throw GroupMessagingError.inactiveGroup }
+    return try executeCore(
+      PigeonCoreCommand(
+        id: "change-group-policy:\(UUID().uuidString.lowercased())",
+        body: .changeGroupPolicy(
+          PigeonChangeGroupPolicy(
+            groupID: group.groupID,
+            kind: kind,
+            subjectIdentity: subjectIdentity,
+            stringValue: stringValue,
+            boolValue: boolValue))))
+  }
+
+  private static func isValidGroupName(_ name: String) -> Bool {
+    name.precomposedStringWithCanonicalMapping == name
+      && name == name.trimmingCharacters(in: .whitespacesAndNewlines)
+      && !name.isEmpty
+      && !name.contains("  ")
+      && name.unicodeScalars.count <= 64
+      && name.utf8.count <= 256
+  }
+
   func makePairwiseRelay() -> PairwiseRelayTransport {
     let transport = PairwiseRelayTransport(sender: myID)
     transport.onEffectDelivered = { [weak self] itemID in

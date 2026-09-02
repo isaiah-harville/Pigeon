@@ -272,6 +272,42 @@ named one-time key is the replay defense.
 - **No forward secrecy for the prekey-publication metadata** itself; prekeys are
   public by construction.
 
+### 5.8 Group chats — MLS
+
+Group chats use **MLS 1.0 (RFC 9420)** through OpenMLS 0.9 in `pigeon-core`, with
+the `MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519` ciphersuite. MLS credentials
+are bound to Pigeon's long-term Ed25519 root identity with a domain-separated
+signature. The OpenMLS signer delegates back to the platform identity boundary;
+private identity and MLS state do not cross into Swift or `pigeon-ffi`.
+
+The core persists the OpenMLS storage checkpoint, authenticated group policy,
+pending mutation, replay ledgers, application events, and outbound effects as one
+transaction. Ciphertext or host-visible events are not released before that
+checkpoint commits. The app then persists replayable events in its encrypted
+history before acknowledging them to the core. This ordering prevents a crash
+from reusing an MLS state or losing the sender's local message projection.
+
+Membership is mutable and capped at 128, with a minimum of three. The immutable
+owner identity is always an admin and cannot be removed or demoted. Authenticated
+policy commits enforce admin membership changes, owner-only name/relay/mesh
+changes, member leave, and owner dissolve. Each roster mutation advances the MLS
+epoch: joiners receive no pre-join message keys, and former members receive no
+post-removal epoch keys.
+
+Each group selects one relay deployment. Its group endpoint provides both the
+opaque ciphertext mailbox and a coordinator that serializes concurrent MLS
+commits. Coordinator receipts are Ed25519-signed and bound into the group policy.
+The coordinator is untrusted for confidentiality and authorization: clients
+validate receipts, MLS commits, and policy transitions. A malicious coordinator
+can delay, drop, replay, or withhold progress, but should not be able to forge a
+valid transition or decrypt content. Pairwise Olm control messages carry join
+requests, join material, and welcomes before a new member can authenticate to the
+group mailbox; normal group messages are encrypted once with MLS, not fanned out.
+
+Local mesh delivery is an explicit per-group owner opt-in and is off by default.
+Relay and mesh copies use the same authenticated MLS ciphertext and replay
+ledger, so transport duplication cannot produce duplicate application events.
+
 ---
 
 ## 6. Transport & Mesh
@@ -395,6 +431,9 @@ and is explicitly out of scope.
   and that a sender is delivering to recipient key X — and drop, delay, or replay
   ciphertext. The relay **cannot** read content, impersonate a peer, or forge a
   trusted session.
+- Operate a group's MLS coordinator: reorder, replay, equivocate about, withhold,
+  or drop candidate commits and ciphertext. Signed receipts plus client-side MLS
+  and policy verification protect integrity; availability remains attackable.
 - Attempt pairing/identity impersonation and MITM.
 - Tamper with any unauthenticated protocol field.
 - Read app logs, crash reports, and unprotected on-disk state.
@@ -418,6 +457,10 @@ and is explicitly out of scope.
   transports avoid relay metadata; relay transports provide remote reach.
 - **Endpoint trust.** A compromised/unlocked device defeats all guarantees.
 - **No audit** (see below).
+- **MLS integration is not audited.** OpenMLS supplies the protocol machinery,
+  but Pigeon's identity binding, policy extension, coordinator protocol,
+  transactional storage, and host event reduction remain project code requiring
+  independent review and adversarial interoperability testing.
 - **Key zeroization is limited at the FFI seam.** Ratchet and message keys live
   inside `vodozemac`, which zeroizes its own secrets on drop; but the seed and
   Olm account pickle cross the UniFFI boundary as plain bytes before being sealed

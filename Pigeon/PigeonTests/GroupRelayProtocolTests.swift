@@ -47,6 +47,9 @@ final class GroupRelayProtocolTests: XCTestCase {
     XCTAssertEqual(
       try object(GroupRelayProtocol.auth(signature: Data([1, 2]))),
       ["type": "auth", "signature": "AQI="])
+    XCTAssertEqual(
+      try object(GroupRelayProtocol.coordinatorKey()),
+      ["type": "coordinator_key"])
   }
 
   func testCoreRelayActionsEncodeWithoutExposingProtobufToTransport() throws {
@@ -104,6 +107,12 @@ final class GroupRelayProtocolTests: XCTestCase {
       GroupRelayProtocol.classify(["type": "challenge", "nonce": "AQI="]),
       .ignored)
     XCTAssertEqual(GroupRelayProtocol.classify(["type": "future"]), .ignored)
+    XCTAssertEqual(
+      GroupRelayProtocol.classify([
+        "type": "coordinator_key",
+        "public_key": Data(repeating: 9, count: 32).hexEncoded,
+      ]),
+      .coordinatorKey(Data(repeating: 9, count: 32)))
   }
 
   func testCoordinatorCandidatesDecodeAllAuthenticatedReceiptFields() {

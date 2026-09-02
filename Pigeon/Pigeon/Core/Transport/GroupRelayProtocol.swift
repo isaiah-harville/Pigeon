@@ -37,6 +37,10 @@ enum GroupRelayProtocol {
     try encode(["type": "auth", "signature": signature.base64EncodedString()])
   }
 
+  nonisolated static func coordinatorKey() throws -> Data {
+    try encode(["type": "coordinator_key"])
+  }
+
   nonisolated static func action(_ action: PigeonCoreRelayAction) throws -> Data {
     switch action {
     case .append(let value):

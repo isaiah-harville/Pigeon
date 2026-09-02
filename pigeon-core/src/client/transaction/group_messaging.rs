@@ -323,6 +323,24 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         output.events.push(AppEvent {
             inner: proto::AppEvent {
                 version: PROTOCOL_VERSION,
+                event_id: format!("{command_id}:local"),
+                body: Some(proto::app_event::Body::GroupMessageReceived(
+                    proto::GroupMessageReceived {
+                        group_id: group_id.to_vec(),
+                        message_id: message_id.clone(),
+                        sender_identity: sender.to_vec(),
+                        body: send.body.clone(),
+                        reply_to_message_id: reply_to
+                            .map(|id| encode_message_id(id.as_bytes()))
+                            .unwrap_or_default(),
+                        epoch: ciphertext.epoch(),
+                    },
+                )),
+            },
+        });
+        output.events.push(AppEvent {
+            inner: proto::AppEvent {
+                version: PROTOCOL_VERSION,
                 event_id: format!("{command_id}:sending"),
                 body: Some(proto::app_event::Body::GroupDeliveryChanged(
                     proto::GroupDeliveryChanged {
