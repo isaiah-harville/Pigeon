@@ -58,9 +58,8 @@ device; there is nothing to register with a central Pigeon service.
 
 > **Visual walkthrough.** For an illustrated, plain-language version of the flows
 > below — identity exchange, the handshake, the ratchet, and each transport —
-> see [How Pigeon Works](HOW_IT_WORKS.md). The per-flow sequence diagrams (showing
-> what each party's keys do, and what a relay can and cannot see) are regenerated
-> by [`diagrams/generate_diagrams.py`](diagrams/generate_diagrams.py).
+> see [How Pigeon Works](HOW_IT_WORKS.md). Its accessible SVG flow diagrams show
+> what each party's keys do and what a relay can and cannot see.
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -333,7 +332,7 @@ once.
 
 ### 6.1 Relay transport (remote delivery) — opt-in
 
-![Federated relay flow](diagrams/pigeon_04_relay.png)
+![Federated relay flow](diagrams/pigeon_04_relay.svg)
 
 Two devices that are out of Bluetooth/local-Wi-Fi range and on different networks
 (e.g. both on cellular) **cannot connect directly**: behind NAT/CGNAT a phone can

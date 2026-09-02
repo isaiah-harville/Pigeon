@@ -1,39 +1,25 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
-  <title id="title">Pigeon MLS group creation</title>
-  <desc id="desc">The owner creates an MLS group, pairwise encrypted invitations reach each member, and the selected relay stores only ciphertext and coordinates ordered membership commits.</desc>
-  <defs>
-    <style>.bg{fill:#f8fafc}.card{fill:#fff;stroke:#2563eb;stroke-width:3}.relay{fill:#eff6ff;stroke:#1d4ed8;stroke-width:3}.title{font:700 25px system-ui;fill:#0f172a}.text{font:17px system-ui;fill:#334155}.small{font:15px system-ui;fill:#475569}.arrow{stroke:#2563eb;stroke-width:4;fill:none;marker-end:url(#head)}.key{fill:#fee2e2;stroke:#dc2626;stroke-width:2}</style>
-    <marker id="head" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#2563eb"/></marker>
-  </defs>
-  <rect class="bg" width="1200" height="620" rx="24"/>
-  <text class="title" x="40" y="50">Create once; join asynchronously</text>
-  <rect class="card" x="55" y="110" width="270" height="320" rx="22"/>
-  <text class="title" x="105" y="155">Alice · owner</text>
-  <text class="text" x="85" y="205">1. Creates MLS group</text>
-  <text class="text" x="85" y="240">2. Sets name + relay</text>
-  <text class="text" x="85" y="275">3. Adds Bob and Carol</text>
-  <rect class="key" x="85" y="325" width="210" height="70" rx="12"/>
-  <text class="small" x="105" y="355">Private MLS state</text>
-  <text class="small" x="105" y="380">stays in pigeon-core</text>
-  <rect class="relay" x="455" y="95" width="290" height="350" rx="22"/>
-  <text class="title" x="505" y="140">Selected relay</text>
-  <text class="text" x="495" y="190">Group ciphertext mailbox</text>
-  <text class="text" x="495" y="225">MLS commit coordinator</text>
-  <text class="text" x="495" y="260">Signed ordering receipts</text>
-  <text class="text" x="495" y="315">No plaintext</text>
-  <text class="text" x="495" y="350">No MLS secrets</text>
-  <text class="text" x="495" y="385">No creator dependency</text>
-  <rect class="card" x="875" y="90" width="270" height="160" rx="22"/>
-  <text class="title" x="950" y="135">Bob</text>
-  <text class="text" x="910" y="180">Pairwise-encrypted invite</text>
-  <text class="small" x="910" y="215">No simultaneous presence needed</text>
-  <rect class="card" x="875" y="300" width="270" height="160" rx="22"/>
-  <text class="title" x="945" y="345">Carol</text>
-  <text class="text" x="910" y="390">Pairwise-encrypted invite</text>
-  <text class="small" x="910" y="425">No simultaneous presence needed</text>
-  <path class="arrow" d="M325 220 C375 220 405 200 455 200"/>
-  <path class="arrow" d="M745 180 C800 180 820 165 875 165"/>
-  <path class="arrow" d="M745 330 C800 330 820 375 875 375"/>
-  <text class="small" x="430" y="520">Contact-card control prekeys establish pairwise channels for invitations.</text>
-  <text class="small" x="430" y="550">The relay coordinates commits, but authenticated MLS policy decides what is valid.</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1280" viewBox="0 0 1200 1280" role="img" aria-labelledby="title desc">
+  <title id="title">MLS group creation, asynchronous join, coordination, and message delivery</title>
+  <desc id="desc">A sequence diagram with four lanes. The permanent owner creates authenticated MLS group state, sends pairwise-encrypted invitations to members, submits membership commits to the coordinator service, verifies its signed ordering receipt, and uploads one MLS ciphertext to the separate group message service for members to fetch.</desc>
+  <defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#071426"/><stop offset="1" stop-color="#102b4f"/></linearGradient><marker id="blue" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto"><path d="M0 0 11 5.5 0 11z" fill="#57b8ff"/></marker><marker id="purple" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto"><path d="M0 0 11 5.5 0 11z" fill="#b889ff"/></marker><style>.kicker{font-family:system-ui,sans-serif;font-size:15px;font-weight:700;letter-spacing:2px;fill:#79c8ff}.heading{font-family:system-ui,sans-serif;font-size:31px;font-weight:750;fill:#f8fbff}.sub{font-family:system-ui,sans-serif;font-size:16px;fill:#b9c9dc}.actor{font-family:system-ui,sans-serif;font-size:17px;font-weight:750;fill:#fff}.label{font-family:system-ui,sans-serif;font-size:14px;font-weight:650;fill:#eef6ff}.body{font-family:system-ui,sans-serif;font-size:13px;fill:#c4d2e2}.tiny{font-family:system-ui,sans-serif;font-size:12px;fill:#9fb2c9}.actorBox{fill:#112942;stroke:#57b8ff;stroke-width:2}.infraBox{fill:#172334;stroke:#93a3b5;stroke-width:2}.private{fill:#351b2c;stroke:#ff6b7a;stroke-width:2}.public{fill:#0e3156;stroke:#57b8ff;stroke-width:2}.cipher{fill:#2c1d4a;stroke:#b889ff;stroke-width:2}.policy{fill:#12372e;stroke:#54d8a2;stroke-width:2}.none{fill:#292f38;stroke:#93a3b5;stroke-width:1.5}.life{stroke:#57708c;stroke-width:2;stroke-dasharray:6 8}.pairline{stroke:#57b8ff;stroke-width:3;stroke-dasharray:8 6;fill:none;marker-end:url(#blue)}.publine{stroke:#57b8ff;stroke-width:3;fill:none;marker-end:url(#blue)}.cipherline{stroke:#b889ff;stroke-width:3;fill:none;marker-end:url(#purple)}</style></defs>
+  <rect width="1200" height="1280" rx="28" fill="url(#bg)"/>
+  <text class="kicker" x="48" y="47">PROTOCOL SEQUENCE · MLS GROUP CHAT</text><text class="heading" x="48" y="86">Pairwise invitation, ordered commits, one group ciphertext.</text><text class="sub" x="48" y="116">The selected relay deployment hosts two separate opaque services; neither becomes group policy authority.</text>
+  <rect class="actorBox" x="18" y="157" width="204" height="66" rx="15"/><text class="actor" x="120" y="189" text-anchor="middle">Alice · owner</text><text class="tiny" x="120" y="210" text-anchor="middle">pigeon-core</text>
+  <rect class="infraBox" x="318" y="157" width="244" height="66" rx="15"/><text class="actor" x="440" y="189" text-anchor="middle">Group message service</text><text class="tiny" x="440" y="210" text-anchor="middle">selected relay deployment</text>
+  <rect class="infraBox" x="638" y="157" width="244" height="66" rx="15"/><text class="actor" x="760" y="189" text-anchor="middle">Commit coordinator</text><text class="tiny" x="760" y="210" text-anchor="middle">same relay deployment</text>
+  <rect class="actorBox" x="978" y="157" width="204" height="66" rx="15"/><text class="actor" x="1080" y="189" text-anchor="middle">Bob + Carol</text><text class="tiny" x="1080" y="210" text-anchor="middle">member clients</text>
+  <rect class="private" x="10" y="244" width="220" height="84" rx="14"/><text class="label" x="120" y="274" text-anchor="middle">PRIVATE MLS + OLM</text><text class="body" x="120" y="301" text-anchor="middle">inside pigeon-core</text><rect class="none" x="310" y="244" width="260" height="84" rx="14"/><text class="label" x="440" y="274" text-anchor="middle">OPAQUE GROUP LOG</text><text class="body" x="440" y="301" text-anchor="middle">no plaintext or keys</text><rect class="none" x="630" y="244" width="260" height="84" rx="14"/><text class="label" x="760" y="274" text-anchor="middle">ORDERING ONLY</text><text class="body" x="760" y="301" text-anchor="middle">signed receipts, no authority</text><rect class="private" x="970" y="244" width="220" height="84" rx="14"/><text class="label" x="1080" y="274" text-anchor="middle">PRIVATE MLS + OLM</text><text class="body" x="1080" y="301" text-anchor="middle">inside pigeon-core</text>
+  <line class="life" x1="120" y1="328" x2="120" y2="1162"/><line class="life" x1="440" y1="328" x2="440" y2="1162"/><line class="life" x1="760" y1="328" x2="760" y2="1162"/><line class="life" x1="1080" y1="328" x2="1080" y2="1162"/>
+  <rect class="policy" x="10" y="357" width="220" height="101" rx="14"/><text class="label" x="120" y="385" text-anchor="middle">1 · Create group</text><text class="body" x="120" y="411" text-anchor="middle">permanent owner · 3–128</text><text class="tiny" x="120" y="437" text-anchor="middle">name + relay · mesh off</text>
+  <path class="pairline" d="M120 506 H1068"/><text class="label" x="600" y="493" text-anchor="middle">2 · Pairwise-encrypted invitation controls</text><text class="tiny" x="600" y="526" text-anchor="middle">Welcome + authenticated policy/capabilities over each existing Olm channel · members may be offline</text>
+  <rect class="private" x="970" y="555" width="220" height="83" rx="14"/><text class="label" x="1080" y="584" text-anchor="middle">3 · Validate + join</text><text class="body" x="1080" y="611" text-anchor="middle">install current epoch only</text>
+  <path class="publine" d="M1080 688 H452"/><text class="label" x="760" y="675" text-anchor="middle">4 · Authenticate group capability</text><text class="tiny" x="760" y="708" text-anchor="middle">message service learns an opaque group slot, not MLS membership secrets</text>
+  <path class="publine" d="M120 758 H748"/><text class="label" x="440" y="745" text-anchor="middle">5 · Submit authenticated commit candidate</text>
+  <rect class="public" x="630" y="789" width="260" height="82" rx="14"/><text class="label" x="760" y="818" text-anchor="middle">6 · Serialize competing candidates</text><text class="body" x="760" y="845" text-anchor="middle">monotonic sequence · signed receipt</text>
+  <path class="publine" d="M760 918 H132"/><text class="label" x="440" y="905" text-anchor="middle">7 · Coordinator receipt + ordered candidate</text>
+  <rect class="private" x="10" y="948" width="220" height="92" rx="14"/><text class="label" x="120" y="977" text-anchor="middle">8 · Verify before apply</text><text class="body" x="120" y="1004" text-anchor="middle">receipt · MLS commit · policy</text><text class="tiny" x="120" y="1028" text-anchor="middle">persist epoch before output</text>
+  <path class="cipherline" d="M120 1083 H428"/><text class="label" x="280" y="1070" text-anchor="middle">9 · Encrypt once + append</text>
+  <path class="cipherline" d="M440 1149 H1068"/><text class="label" x="760" y="1136" text-anchor="middle">10 · Members fetch the same MLS ciphertext</text>
+  <rect class="private" x="970" y="1178" width="220" height="56" rx="14"/><text class="label" x="1080" y="1212" text-anchor="middle">11 · MLS authenticate + decrypt</text>
+  <rect class="none" x="110" y="1245" width="980" height="25" rx="10"/><text class="tiny" x="600" y="1262" text-anchor="middle">Owner may be offline after creation · ordinary traffic does not fan out pairwise · optional local mesh carries the same MLS ciphertext</text>
 </svg>

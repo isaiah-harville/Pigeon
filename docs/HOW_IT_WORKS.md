@@ -30,9 +30,9 @@ channel that someone may be watching.
 
 The simplest encryption uses **one** secret key to both lock and unlock, like a
 physical key that works in both directions. This is **symmetric** encryption.
-Pigeon's symmetric workhorse is **AES-256**, the Advanced Encryption Standard at
-its 256-bit key size ([FIPS 197][fips197]) — the most widely deployed block
-cipher in the world.
+Direct Olm chats use **AES-256**, the Advanced Encryption Standard at its
+256-bit key size ([FIPS 197][fips197]). MLS group chats use the standardized
+AES-128-GCM cipher suite selected by OpenMLS.
 
 But a cipher alone only hides content; it doesn't stop tampering. Every secret
 Pigeon stores or sends is therefore **authenticated** too:
@@ -42,11 +42,12 @@ Pigeon stores or sends is therefore **authenticated** too:
 - **Integrity/authenticity:** if anyone flips even one bit, decryption *fails
   loudly* rather than returning garbage — you cannot tamper undetected.
 
-Two standard constructions provide that second guarantee. Messages between peers
-use **AES-256-CBC encrypt-then-MAC**: encrypt with AES, then stamp the ciphertext
+Standard constructions provide that second guarantee. Direct Olm messages use
+**AES-256-CBC encrypt-then-MAC**: encrypt with AES, then stamp the ciphertext
 with **HMAC-SHA256** (a keyed hash) so any change is detected — the classic
-authenticated-encryption recipe ([Bellare & Namprempre 2000][etm]). At-rest
-storage on the device uses **AES-256-GCM**, a single-pass **AEAD** mode —
+authenticated-encryption recipe ([Bellare & Namprempre 2000][etm]). MLS messages
+use AES-GCM authenticated encryption. At-rest storage on the device uses
+**AES-256-GCM**, a single-pass **AEAD** mode —
 *Authenticated Encryption with Associated Data* ([Rogaway 2002][aead]) — that
 locks content and authenticity together in one operation.
 
@@ -92,10 +93,10 @@ The two operations public keys enable:
    with *the other's public key* and independently arrive at the **same** shared
    secret — without that secret ever crossing the wire (mechanism below).
 
-On every diagram in this doc, the red **"Keychain · private keys"** badge under
-each phone names these keys and their jobs: *Ed25519 identity → sign*, *Curve25519
-key → ECDH*, *ratchet keys → decrypt*. Red is a running reminder: **this material
-never leaves the device.**
+On every diagram in this doc, red identifies private cryptographic state. The
+long-term Ed25519 signing key lives in the Keychain; sealed core checkpoints
+contain Olm and MLS state under the presence-gated vault key. None of it leaves
+the device in plaintext.
 
 ### Hashes and key derivation
 
@@ -136,7 +137,7 @@ follows.
 
 ## Step 1 — Becoming contacts, nearby or remote
 
-![Identity and trust: exchanging contact cards](diagrams/pigeon_01_identity.png)
+![Identity and trust: exchanging contact cards](diagrams/pigeon_01_identity.svg)
 
 *Two phones generate keys, exchange public ContactCards by QR or contact link,
 and verify a safety number.*
@@ -149,7 +150,8 @@ that contact as not verified in person.
 
 1. **Each phone generates its keys** (an Ed25519 identity key, plus an Olm
    account holding a Curve25519 identity key and a pool of prekeys) on first
-   launch and stores the private halves in the **Keychain** (details in
+   launch. The Ed25519 private key lives in the **Keychain**; evolving Olm state
+   lives in the atomically persisted, encrypted core checkpoint (details in
    [Where the secrets live](#where-the-secrets-live)).
 2. **You exchange a ContactCard** by scanning each other's QR codes or sharing
    contact links. The card contains your *public* Ed25519 identity key, your
@@ -317,7 +319,7 @@ can read the box.
 
 ### Bluetooth LE mesh — when you're nearby
 
-![Bluetooth LE mesh](diagrams/pigeon_02_bluetooth.png)
+![Bluetooth LE mesh](diagrams/pigeon_02_bluetooth.svg)
 
 *An Olm session opened from published prekeys and an encrypted message over
 Bluetooth — no server.*
@@ -330,7 +332,7 @@ internet is absent or untrusted.
 
 ### Local Wi-Fi — same lock, more bandwidth *(planned)*
 
-![Local Wi-Fi (planned)](diagrams/pigeon_03_wifi.png)
+![Local Wi-Fi (planned)](diagrams/pigeon_03_wifi.svg)
 
 *Identical end-to-end crypto to Bluetooth; only the link layer changes.*
 
@@ -340,7 +342,7 @@ pluggable transport design. The LAN carries only ciphertext.
 
 ### Relay — when you're far apart *(zero-knowledge)*
 
-![Federated relay](diagrams/pigeon_04_relay.png)
+![Federated relay](diagrams/pigeon_04_relay.svg)
 
 *A blind mailbox: it stores opaque ciphertext addressed by public key and never
 sees content or private keys.*
@@ -378,40 +380,41 @@ Face ID while the phone is asleep in your pocket. The design threads this needle
 
 ### Today: notify now, decrypt at unlock
 
-![Notifications while locked](diagrams/pigeon_05_notifications.png)
+![Notifications while locked](diagrams/pigeon_05_notifications.svg)
 
-*A locked phone receives ciphertext, shows a content-free alert, and decrypts only
-after you unlock.*
+*A running app persists normally through screen lock; a cold background relaunch
+buffers ciphertext without acknowledging it until the vault can open.*
 
-1. The phone can still **receive**: its identity key is readable in the background
-   after the first unlock since boot (Apple's `AfterFirstUnlock` data-protection
-   class — [Apple Platform Security][appsec]). The message store stays sealed (the
-   badge reads *"message vault → locked"*).
-2. It therefore **can't decrypt**, so it holds the locked box in memory and posts a
-   **content-free** alert — just "New message," no sender, no preview. It also
-   does *not* yet acknowledge the relay, so the box is safely retained server-side
-   until you actually read it.
-3. On unlock, the store opens, the ratchet decrypts the buffered box, and the
-   message appears.
+1. If Pigeon was already running when the screen locked, its vault key remains in
+   memory. It decrypts, records, and atomically persists normally using a file
+   protection class writable after the first unlock since boot ([Apple Platform
+   Security][appsec]). Only then does it acknowledge the relay.
+2. If iOS cold-launches Pigeon in the background while locked, the presence-gated
+   vault key is unavailable. Pigeon holds the locked box in memory and posts a
+   **content-free** alert — just "New message," no sender, no preview. It
+   deliberately does *not* acknowledge the relay, which retains the durable copy
+   for redelivery.
+3. On unlock, the vault opens; Pigeon decrypts and persists the buffered box, then
+   acknowledges it.
 
 > Even the notification reveals nothing about who messaged you or what they said —
 > a deliberate lock-screen privacy choice.
 
-### Planned: push wake-ups via APNs
+### Push wake-ups via APNs
 
-![Notifications with APNs push (planned)](diagrams/pigeon_06_notifications_apns.png)
+![Notifications with APNs push](diagrams/pigeon_06_notifications_apns.svg)
 
 *A content-free push wakes the phone; the message itself never travels through
 Apple.*
 
 iOS eventually suspends a backgrounded app, so for reliable delivery hours later,
-Pigeon plans to use Apple Push Notification service (**APNs**,
+Pigeon can use Apple Push Notification service (**APNs**,
 [Apple developer docs][apns]) purely as a doorbell:
 
-- You **opt in**; your phone registers an opaque APNs token with Pigeon's
-  **official** relay. (Only the app's publisher can push to the app, so this part
-  can't be federated — it lives on the official relay only; see the
-  [Roadmap](ROADMAP.md) and issue tracker.)
+- Push wake-ups are **on by default and can be turned off**. When enabled, your
+  phone registers an opaque APNs token with Pigeon's **official** relay. (Only
+  the app's publisher can push to the app, so this part can't be federated — it
+  lives on the official relay only.)
 - When a box arrives, the relay asks APNs to send a **content-free** wake-up. Your
   phone wakes, fetches the locked box, and — as before — only decrypts after you
   unlock.
@@ -452,16 +455,16 @@ security audit and must not be treated as proven-secure. See the
 
 ## Where the secrets live
 
-- **Private keys** (the Ed25519 identity key and the Olm account: its Curve25519
-  identity key and prekeys) are stored in the iPhone **Keychain**, marked
-  *this-device-only*: never synced to iCloud, never in backups, never moved to
-  another device. Their *lock-state* accessibility is
-  `AfterFirstUnlock` by default for cold background delivery, or the stricter
-  `WhenUnlocked` if you turn that feature off — both are Apple data-protection
-  classes ([Apple Platform Security][appsec]).
-- The **message store** is encrypted with a key sealed behind **Face ID /
-  passcode**, so your history stays locked until you authenticate even if the
-  phone is in hand.
+- Long-term and purpose-scoped **Ed25519 identity keys** live in the iPhone
+  **Keychain**, marked *this-device-only*: never synced to iCloud, never in
+  backups, and never moved to another device. Their lock-state accessibility is
+  `AfterFirstUnlock` by default for background delivery, or the stricter
+  `WhenUnlocked` if you disable it ([Apple Platform Security][appsec]).
+- Evolving **Olm and MLS state** lives inside pigeon-core's atomic checkpoint.
+  The checkpoint and message store are encrypted under a vault key sealed behind
+  **Face ID / passcode**, so a cold background relaunch cannot open them while
+  locked. A process that was already running retains the vault key in memory and
+  can persist safely through screen lock.
 - **No key is ever sent to any server.** Servers handle locked boxes only.
 
 That's the whole system: exchange cards once and verify the safety number; agree
@@ -522,9 +525,9 @@ Foundational papers:
 - **K. Cohn-Gordon, C. Cremers, L. Garratt**, *On Post-Compromise Security*, IEEE
   CSF 2016. <https://eprint.iacr.org/2016/221>
 
-*The direct-message diagrams are generated from
-[`docs/diagrams/generate_diagrams.py`](diagrams/generate_diagrams.py). The MLS
-figures are maintained as accessible SVGs alongside them.*
+*The diagrams are hand-maintained accessible SVGs. Their colors consistently
+distinguish private state, public material, ciphertext, plaintext, and untrusted
+infrastructure.*
 
 [rfc7748]: https://www.rfc-editor.org/rfc/rfc7748
 [rfc8032]: https://www.rfc-editor.org/rfc/rfc8032
