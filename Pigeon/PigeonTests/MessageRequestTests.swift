@@ -36,6 +36,40 @@ final class MessageRequestTests: XCTestCase {
         prekeyBundle: card.prekeyBundle, admission: .outgoingRequest))
   }
 
+  func testScannedContactCanBecomeOutgoingMessageRequest() throws {
+    let bus = TestBus()
+    let keyA = SymmetricKey(size: .bits256)
+    let keyB = SymmetricKey(size: .bits256)
+    wipe(keyA, "requests-scanned-a.store")
+    wipe(keyB, "requests-scanned-b.store")
+    let alice = try launch(seed: seed(), key: keyA, file: "requests-scanned-a.store", bus: bus)
+    let bob = try launch(seed: seed(), key: keyB, file: "requests-scanned-b.store", bus: bus)
+    alice.setMyName("Alice")
+    bob.setMyName("Bob")
+
+    let aliceCard = try XCTUnwrap(alice.myCard)
+    XCTAssertTrue(
+      bob.addContact(
+        aliceCard.bundle, name: aliceCard.name, relayURLs: aliceCard.relayURLs,
+        prekeyBundle: aliceCard.prekeyBundle, admission: .verifiedInPerson))
+    let aliceOnBob = try XCTUnwrap(bob.contacts.first { $0.id == alice.myID })
+
+    XCTAssertTrue(bob.beginMessageRequest(to: aliceOnBob.id))
+    XCTAssertEqual(bob.contacts.first { $0.id == alice.myID }?.requestState, .outgoing)
+    XCTAssertTrue(try XCTUnwrap(bob.contacts.first { $0.id == alice.myID }).verifiedInPerson)
+    XCTAssertTrue(bob.canSendMessage(to: aliceOnBob))
+
+    bob.send("Hi Alice, it is Bob", to: aliceOnBob)
+
+    let bobOnAlice = try XCTUnwrap(alice.contacts.first { $0.id == bob.myID })
+    XCTAssertEqual(bobOnAlice.requestState, .incoming)
+    XCTAssertFalse(bobOnAlice.verifiedInPerson)
+    XCTAssertEqual(
+      alice.messages(with: bobOnAlice).filter { !$0.system }.map(\.text),
+      ["Hi Alice, it is Bob"])
+    XCTAssertFalse(bob.canSendMessage(to: aliceOnBob))
+  }
+
   // swiftlint:disable:next function_body_length
   func testUnknownSenderCanDeliverExactlyOneIntroductionThenRecipientAccepts() throws {
     let bus = TestBus()

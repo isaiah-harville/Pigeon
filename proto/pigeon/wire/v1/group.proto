@@ -1,0 +1,240 @@
+syntax = "proto3";
+
+package pigeon.wire.v1;
+
+import "pigeon/wire/v1/identity.proto";
+
+message PigeonGroupPolicy {
+  uint32 protocol_version = 1;
+  uint32 policy_version = 2;
+  bytes group_id = 3;
+  bytes owner_identity = 4;
+  repeated bytes admin_identities = 5;
+  repeated bytes member_identities = 6;
+  string name = 7;
+  string relay_url = 8;
+  bytes coordination_id = 9;
+  bool mesh_enabled = 10;
+  uint64 revision = 11;
+  bool dissolved = 12;
+  bytes coordinator_public_key = 13;
+  repeated GroupMemberKeys member_keys = 14;
+}
+
+enum GroupPolicyChangeKind {
+  GROUP_POLICY_CHANGE_KIND_UNSPECIFIED = 0;
+  GROUP_POLICY_CHANGE_KIND_MEMBER_ADDED = 1;
+  GROUP_POLICY_CHANGE_KIND_MEMBER_REMOVED = 2;
+  GROUP_POLICY_CHANGE_KIND_MEMBER_LEFT = 3;
+  GROUP_POLICY_CHANGE_KIND_ADMIN_PROMOTED = 4;
+  GROUP_POLICY_CHANGE_KIND_ADMIN_DEMOTED = 5;
+  GROUP_POLICY_CHANGE_KIND_NAME_CHANGED = 6;
+  GROUP_POLICY_CHANGE_KIND_MESH_CHANGED = 7;
+  GROUP_POLICY_CHANGE_KIND_RELAY_CHANGED = 8;
+  GROUP_POLICY_CHANGE_KIND_DISSOLVED = 9;
+}
+
+message GroupCreated {
+  bytes group_id = 1;
+  bytes owner_identity = 2;
+  string name = 3;
+  string relay_url = 4;
+  bool mesh_enabled = 5;
+  uint64 epoch = 6;
+  uint64 policy_revision = 7;
+}
+
+message GroupMessageReceived {
+  bytes group_id = 1;
+  string message_id = 2;
+  bytes sender_identity = 3;
+  bytes body = 4;
+  string reply_to_message_id = 5;
+  uint64 epoch = 6;
+}
+
+message GroupReactionReceived {
+  bytes group_id = 1;
+  string message_id = 2;
+  bytes sender_identity = 3;
+  string target_message_id = 4;
+  string reaction = 5;
+  uint64 epoch = 6;
+}
+
+message GroupPolicyChanged {
+  GroupPolicyChangeKind kind = 1;
+  bytes group_id = 2;
+  bytes actor_identity = 3;
+  bytes subject_identity = 4;
+  uint64 epoch = 5;
+  uint64 policy_revision = 6;
+  string name = 7;
+  bool mesh_enabled = 8;
+  string relay_url = 9;
+}
+
+enum GroupDeliveryState {
+  GROUP_DELIVERY_STATE_UNSPECIFIED = 0;
+  GROUP_DELIVERY_STATE_SENDING = 1;
+  GROUP_DELIVERY_STATE_SENT = 2;
+  GROUP_DELIVERY_STATE_DELIVERED_TO = 3;
+  GROUP_DELIVERY_STATE_DELIVERED = 4;
+  GROUP_DELIVERY_STATE_FAILED = 5;
+  GROUP_DELIVERY_STATE_EXPIRED = 6;
+}
+
+message GroupDeliveryChanged {
+  bytes group_id = 1;
+  string message_id = 2;
+  GroupDeliveryState state = 3;
+  uint64 epoch = 4;
+  uint32 delivered_count = 5;
+  uint32 intended_count = 6;
+}
+
+message GroupSecurityWarning {
+  bytes group_id = 1;
+  uint32 code = 2;
+  bytes evidence_id = 3;
+  uint64 epoch = 4;
+}
+
+message StoredGroup {
+  bytes group_id = 1;
+  bytes owner_identity = 2;
+  string name = 3;
+  repeated bytes member_identities = 4;
+  string relay_url = 5;
+  bool mesh_enabled = 6;
+  uint64 epoch = 7;
+  uint64 policy_revision = 8;
+  bytes policy = 9;
+  bytes coordinator_chain = 10;
+}
+
+message GroupApplicationCiphertext {
+  uint32 version = 1;
+  bytes group_id = 2;
+  uint64 epoch = 3;
+  bytes message_id = 4;
+  bytes ciphertext = 5;
+}
+
+message GroupEpochFetch {
+  uint32 version = 1;
+  bytes group_id = 2;
+  uint64 from_epoch = 3;
+  uint64 through_epoch = 4;
+}
+
+message GroupRelayCapability {
+  bytes public_key = 1;
+  bool can_append = 2;
+  bool can_read = 3;
+  bool can_control = 4;
+}
+
+message GroupRelayRegistration {
+  uint32 version = 1;
+  bytes coordination_id = 2;
+  repeated GroupRelayCapability capabilities = 3;
+  bytes signature = 4;
+}
+
+enum GroupRelayControlKind {
+  GROUP_RELAY_CONTROL_KIND_UNSPECIFIED = 0;
+  GROUP_RELAY_CONTROL_KIND_GRANT = 1;
+  GROUP_RELAY_CONTROL_KIND_REVOKE = 2;
+  GROUP_RELAY_CONTROL_KIND_PROMOTE_ADMIN = 3;
+  GROUP_RELAY_CONTROL_KIND_DEMOTE_ADMIN = 4;
+}
+
+message GroupRelayControl {
+  uint32 version = 1;
+  bytes coordination_id = 2;
+  GroupRelayControlKind kind = 3;
+  bytes public_key = 4;
+}
+
+message CoordinatorReceipt {
+  uint32 version = 1;
+  bytes coordination_id = 2;
+  uint64 sequence = 3;
+  bytes prior_receipt_hash = 4;
+  uint64 claimed_base_epoch = 5;
+  bytes entry_hash = 6;
+  bytes signature = 7;
+}
+
+message CoordinatorCandidate {
+  CoordinatorReceipt receipt = 1;
+  bytes candidate = 2;
+}
+
+message GroupCoordinatorSubmission {
+  uint32 version = 1;
+  uint64 claimed_base_epoch = 2;
+  bytes candidate = 3;
+}
+
+// The opaque value sequenced by the coordinator. Referenced MLS proposals must
+// accompany the commit so every member can queue them before processing it.
+message GroupMutationCandidate {
+  uint32 version = 1;
+  repeated bytes proposals = 2;
+  bytes commit = 3;
+}
+
+message GroupLeaveProposal {
+  uint32 version = 1;
+  bytes group_id = 2;
+  bytes proposal = 3;
+  bytes departing_identity = 4;
+}
+
+message CoordinatorChainEntry {
+  uint64 sequence = 1;
+  bytes prior_receipt_hash = 2;
+  bytes receipt_hash = 3;
+}
+
+message CoordinatorChainState {
+  uint32 version = 1;
+  bytes coordination_id = 2;
+  bytes verifying_key = 3;
+  uint64 last_sequence = 4;
+  bytes receipt_head = 5;
+  bytes last_prior_hash = 6;
+  repeated CoordinatorChainEntry accepted_receipts = 7;
+  bool frozen = 8;
+}
+
+message GroupApplicationContent {
+  uint32 version = 1;
+  bytes group_id = 2;
+  uint64 epoch = 3;
+  bytes sender_identity = 4;
+  bytes message_id = 5;
+  int64 sender_timestamp_ms = 6;
+  oneof body {
+    GroupText text = 10;
+    GroupReaction reaction = 11;
+    GroupAcknowledgement acknowledgement = 12;
+  }
+}
+
+message GroupText {
+  bytes body = 1;
+  bytes reply_to_message_id = 2;
+}
+
+message GroupReaction {
+  bytes target_message_id = 1;
+  string reaction = 2;
+}
+
+message GroupAcknowledgement {
+  bytes original_sender_identity = 1;
+  bytes message_id = 2;
+}

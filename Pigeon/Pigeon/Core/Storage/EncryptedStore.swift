@@ -37,6 +37,8 @@ struct PersistedContact: Codable {
   /// The contact's published Olm prekey bundle, as its wire encoding. `nil` for
   /// contacts / cards without prekeys. Defaults nil so older stores decode.
   var prekeyBundle: Data?
+  /// Optional for stores written before core-owned pairwise controls.
+  var pairwiseControlPrekeyBundle: Data?
   /// Whether the contact was verified in person (scanned vs pasted). Defaults
   /// true so contacts saved before this field read as verified (§5.7 trust UX).
   var verifiedInPerson: Bool = true
@@ -58,6 +60,8 @@ struct PersistedBlockedContact: Codable {
 struct PersistedState: Codable {
   var contacts: [PersistedContact] = []
   var conversations: [String: [ChatMessage]] = [:]
+  /// Group histories keyed by the base64-encoded authenticated group id.
+  var groupConversations: [String: GroupConversation] = [:]
   /// Base64 identity ids of contacts whose chat is ephemeral.
   var ephemeralContactIDs: [String] = []
   /// Base64 identity ids of contacts whose chat uses Bluetooth instead of the
@@ -80,7 +84,7 @@ struct PersistedState: Codable {
 
 extension PersistedState {
   private enum CodingKeys: String, CodingKey {
-    case contacts, conversations, ephemeralContactIDs, bluetoothContactIDs
+    case contacts, conversations, groupConversations, ephemeralContactIDs, bluetoothContactIDs
     case activeConversationIDs, blockedContacts, myName, olmAccountPickle, olmFallbackKey
   }
 
@@ -89,6 +93,9 @@ extension PersistedState {
     contacts = try values.decodeIfPresent([PersistedContact].self, forKey: .contacts) ?? []
     conversations =
       try values.decodeIfPresent([String: [ChatMessage]].self, forKey: .conversations) ?? [:]
+    groupConversations =
+      try values.decodeIfPresent([String: GroupConversation].self, forKey: .groupConversations)
+      ?? [:]
     ephemeralContactIDs =
       try values.decodeIfPresent([String].self, forKey: .ephemeralContactIDs) ?? []
     bluetoothContactIDs =

@@ -70,10 +70,12 @@ final class CleanSlateTests: XCTestCase {
     let store = EncryptedStore(key: key, url: url)
     let crypto = store.companion(suffix: ".crypto")
     let transaction = store.companion(suffix: ".transaction")
+    let core = store.companion(suffix: CoreCheckpointStore.companionSuffix)
     defer {
       store.wipe()
       crypto.wipe()
       transaction.wipe()
+      core.wipe()
     }
     let persistence = SessionPersistence()
     _ = try persistence.attach(store, identitySeed: Data(repeating: 4, count: 32))
@@ -82,12 +84,19 @@ final class CleanSlateTests: XCTestCase {
     XCTAssertTrue(
       transaction.save(
         PersistedStateTransaction(bulk: PersistedState(), crypto: PersistedCrypto())))
+    XCTAssertTrue(
+      core.save(
+        PersistedCoreCheckpoint(
+          generation: 1,
+          bytes: Data("core".utf8),
+          sha256: Data(SHA256.hash(data: Data("core".utf8))))))
 
     XCTAssertTrue(persistence.wipeAll())
 
     XCTAssertNil(try store.load(PersistedState.self))
     XCTAssertNil(try crypto.load(PersistedCrypto.self))
     XCTAssertNil(try transaction.load(PersistedStateTransaction.self))
+    XCTAssertNil(try core.load(PersistedCoreCheckpoint.self))
   }
 
   func testPartialStoreFamilyWipeCanBeRetried() throws {

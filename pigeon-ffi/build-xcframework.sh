@@ -84,13 +84,21 @@ xcodebuild -create-xcframework \
   -output "$PACKAGE_DIR/PigeonFFIBindings.xcframework"
 
 echo "==> Refreshing generated Swift bindings in PigeonFFI"
-mkdir -p "$PACKAGE_DIR/Sources/PigeonFFI/Generated"
-cp "$GEN_DIR"/*.swift "$PACKAGE_DIR/Sources/PigeonFFI/Generated/"
+GENERATED_SWIFT_DIR="$PACKAGE_DIR/Sources/PigeonFFI/Generated"
+# Generated filenames follow proto source filenames. Remove the exact generated
+# tree so schema renames cannot leave duplicate Swift types behind.
+rm -rf "$GENERATED_SWIFT_DIR"
+mkdir -p "$GENERATED_SWIFT_DIR"
+cp "$GEN_DIR"/*.swift "$GENERATED_SWIFT_DIR/"
 
 echo "==> Generating Swift protobuf bindings"
 protoc \
   --proto_path="$CRATE_DIR/../proto" \
-  --swift_out="$PACKAGE_DIR/Sources/PigeonFFI/Generated" \
-  "$CRATE_DIR/../proto/pigeon/wire/v1/pigeon_wire.proto"
+  --swift_out="$GENERATED_SWIFT_DIR" \
+  "$CRATE_DIR/../proto/pigeon/wire/v1/identity.proto" \
+  "$CRATE_DIR/../proto/pigeon/wire/v1/pairwise.proto" \
+  "$CRATE_DIR/../proto/pigeon/wire/v1/transport.proto" \
+  "$CRATE_DIR/../proto/pigeon/wire/v1/group.proto" \
+  "$CRATE_DIR/../proto/pigeon/wire/v1/client.proto"
 
 echo "==> Done: $PACKAGE_DIR/PigeonFFIBindings.xcframework"

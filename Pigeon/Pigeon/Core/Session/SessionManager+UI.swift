@@ -21,7 +21,8 @@ extension SessionManager {
     prekeyBundle: PigeonPrekeyBundle?, verifiedInPerson: Bool
   ) -> Bool {
     addContact(
-      bundle, name: name, relayURLs: relayURLs, prekeyBundle: prekeyBundle,
+      bundle, name: name, relayURLs: relayURLs,
+      prekeys: ContactPrekeyBundles(chat: prekeyBundle, control: nil),
       admission: verifiedInPerson ? .verifiedInPerson : .unverified)
   }
 
@@ -203,7 +204,9 @@ extension SessionManager {
   var myCard: ContactCard? {
     guard let account,
       let bundle = try? PigeonIdentityBundle(decoding: account.identityBundle()),
-      let prekeyBundle = try? PigeonPrekeyBundle(decoding: account.signedPrekeyBundle())
+      let prekeyBundle = try? PigeonPrekeyBundle(decoding: account.signedPrekeyBundle()),
+      let corePrekeyBytes = try? coreClient?.stateSnapshot().pairwisePrekeyBundle,
+      let pairwiseControlPrekeyBundle = try? PigeonPrekeyBundle(decoding: corePrekeyBytes)
     else { return nil }
     let relayURLs = self.relayURLs
     let payload = ContactCard.relayPayload(relayURLs)
@@ -213,7 +216,8 @@ extension SessionManager {
       bundle: bundle,
       relayURLs: relayURLs,
       relaySignature: signature,
-      prekeyBundle: prekeyBundle)  // enables async first contact
+      prekeyBundle: prekeyBundle,
+      pairwiseControlPrekeyBundle: pairwiseControlPrekeyBundle)
   }
 
   /// Whether `contact` was verified in person (QR scanned face to face) rather

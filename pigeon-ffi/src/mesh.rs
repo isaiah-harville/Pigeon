@@ -125,6 +125,8 @@ pub enum EnvelopeType {
     Ack,
     Control,
     X3dhInit,
+    Pairwise,
+    GroupMls,
 }
 
 impl From<core_env::EnvelopeType> for EnvelopeType {
@@ -136,6 +138,8 @@ impl From<core_env::EnvelopeType> for EnvelopeType {
             core_env::EnvelopeType::Ack => EnvelopeType::Ack,
             core_env::EnvelopeType::Control => EnvelopeType::Control,
             core_env::EnvelopeType::X3dhInit => EnvelopeType::X3dhInit,
+            core_env::EnvelopeType::Pairwise => EnvelopeType::Pairwise,
+            core_env::EnvelopeType::GroupMls => EnvelopeType::GroupMls,
         }
     }
 }
@@ -149,6 +153,8 @@ impl From<EnvelopeType> for core_env::EnvelopeType {
             EnvelopeType::Ack => core_env::EnvelopeType::Ack,
             EnvelopeType::Control => core_env::EnvelopeType::Control,
             EnvelopeType::X3dhInit => core_env::EnvelopeType::X3dhInit,
+            EnvelopeType::Pairwise => core_env::EnvelopeType::Pairwise,
+            EnvelopeType::GroupMls => core_env::EnvelopeType::GroupMls,
         }
     }
 }
@@ -365,5 +371,44 @@ impl Reassembler {
             .lock()
             .expect("reassembler poisoned")
             .pending_count() as u32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn core_owned_pairwise_envelope_round_trips_across_ffi() {
+        let envelope = SessionEnvelope {
+            kind: EnvelopeType::Pairwise,
+            sender: vec![0x31; 32],
+            recipient: vec![0x42; 32],
+            payload: b"opaque core ciphertext".to_vec(),
+        };
+
+        let decoded = decode_session_envelope(encode_session_envelope(envelope)).unwrap();
+
+        assert!(matches!(decoded.kind, EnvelopeType::Pairwise));
+        assert_eq!(decoded.sender, vec![0x31; 32]);
+        assert_eq!(decoded.recipient, vec![0x42; 32]);
+        assert_eq!(decoded.payload, b"opaque core ciphertext");
+    }
+
+    #[test]
+    fn core_owned_group_envelope_round_trips_across_ffi() {
+        let envelope = SessionEnvelope {
+            kind: EnvelopeType::GroupMls,
+            sender: vec![0x51; 32],
+            recipient: vec![0x62; 32],
+            payload: b"opaque MLS ciphertext".to_vec(),
+        };
+
+        let decoded = decode_session_envelope(encode_session_envelope(envelope)).unwrap();
+
+        assert!(matches!(decoded.kind, EnvelopeType::GroupMls));
+        assert_eq!(decoded.sender, vec![0x51; 32]);
+        assert_eq!(decoded.recipient, vec![0x62; 32]);
+        assert_eq!(decoded.payload, b"opaque MLS ciphertext");
     }
 }

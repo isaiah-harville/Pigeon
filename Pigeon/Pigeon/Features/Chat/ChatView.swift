@@ -264,7 +264,9 @@ extension ChatView {
         Button(alreadyAdded ? "In Contacts" : "Add Contact") {
           _ = session.addContact(
             card.bundle, name: card.name, relayURLs: card.relayURLs,
-            prekeyBundle: card.prekeyBundle, admission: .outgoingRequest)
+            prekeys: ContactPrekeyBundles(
+              chat: card.prekeyBundle, control: card.pairwiseControlPrekeyBundle),
+            admission: .outgoingRequest)
         }
         .buttonStyle(.bordered)
         .disabled(alreadyAdded)

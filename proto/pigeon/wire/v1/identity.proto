@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+package pigeon.wire.v1;
+
+message IdentityBundle {
+  bytes identity_key = 1;
+  bytes curve_identity_key = 2;
+  bytes binding_signature = 3;
+}
+
+message PrekeyBundle {
+  IdentityBundle identity = 1;
+  bytes prekey = 2;
+  bytes prekey_signature = 3;
+  bool one_time = 4;
+}
+
+message MlsIdentityBinding {
+  uint32 version = 1;
+  uint32 ciphersuite = 2;
+  bytes root_public_key = 3;
+  bytes mls_public_key = 4;
+  bytes signature = 5;
+}
+
+message ReservedKeyPackage {
+  MlsIdentityBinding binding = 1;
+  bytes intended_consumer = 2;
+  bytes key_package = 3;
+  bytes package_hash = 4;
+  bytes reservation_signature = 5;
+}
+
+message GroupMemberKeys {
+  uint32 version = 1;
+  bytes group_id = 2;
+  bytes coordination_id = 3;
+  bytes intended_creator = 4;
+  bytes member_identity = 5;
+  bytes capability_public_key = 6;
+  bytes recovery_public_key = 7;
+  bytes binding_signature = 8;
+}
+
+message GroupJoinMaterial {
+  uint32 version = 1;
+  bytes group_id = 2;
+  bytes coordination_id = 3;
+  bytes reserved_key_package = 4;
+  GroupMemberKeys member_keys = 5;
+}
+
+message GroupJoinRequest {
+  uint32 version = 1;
+  bytes group_id = 2;
+  bytes coordination_id = 3;
+  bytes requester_identity = 4;
+  string relay_url = 5;
+  bytes signature = 6;
+  bytes owner_identity = 7;
+}
+
+message ContactCard {
+  uint32 version = 1;
+  IdentityBundle identity = 2;
+  string name = 3;
+  repeated string relay_urls = 4;
+  bytes relay_signature = 5;
+  bytes prekey_bundle = 6;
+  bytes pairwise_control_prekey_bundle = 7;
+}

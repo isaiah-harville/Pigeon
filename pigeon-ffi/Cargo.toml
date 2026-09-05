@@ -19,12 +19,12 @@ name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
 
 [dependencies]
-pigeon-core = { path = "../pigeon-core" }
+pigeon-core = { version = "=0.1.2", path = "../pigeon-core" }
 # The transport-agnostic mesh core, surfaced to Swift through this same bridge
 # so the app links one XCFramework. pigeon-mesh stays binding-free itself.
-pigeon-mesh = { path = "../pigeon-mesh" }
-# Needed directly only to (de)serialize the Olm AccountPickle at the FFI seam;
-# pigeon-core owns all protocol use of vodozemac.
-vodozemac = "0.10"
+pigeon-mesh = { version = "=0.1.1", path = "../pigeon-mesh" }
 uniffi = { version = "0.31", features = ["cli"] }
-serde_json = "1"
+
+[dev-dependencies]
+ed25519-dalek = "2"
+prost = "0.14"

@@ -98,6 +98,10 @@ final class SessionManager {
 
   /// Locked until the vault is unlocked with Face ID / Touch ID.
   private(set) var isUnlocked = false
+
+  func markUnlockedAfterRestore() {
+    isUnlocked = true
+  }
   /// False after any persistence failure. Processing stays frozen for the rest
   /// of the run so the live ratchet can never advance farther than sealed state.
   var isPersistenceHealthy = true
@@ -107,6 +111,23 @@ final class SessionManager {
   /// Owns the encrypted store and the codec between the live state and disk
   /// (including building the bound Olm account). See `SessionPersistence`.
   let persistence: SessionPersistence
+
+  /// Transactional application core. The host supplies signing and encrypted
+  /// checkpoint callbacks; pairwise/MLS internals remain behind this API.
+  private(set) var coreClient: PigeonCoreClient?
+  private var coreIdentityProvider: CoreIdentityProvider?
+  private var coreCheckpointStore: CoreCheckpointStore?
+  @ObservationIgnored private(set) lazy var groupRelay = makeGroupRelay()
+  @ObservationIgnored private(set) lazy var pairwiseRelay = makePairwiseRelay()
+  @ObservationIgnored var resolveGroupCoordinatorKey = GroupRelayCoordinatorKey.resolve
+  /// Authenticated group projection rebuilt from the Rust checkpoint. It is
+  /// never persisted separately, so it cannot drift across a crash boundary.
+  var groups: [PigeonGroupState] = []
+  var groupConversations: [Data: GroupConversation] = [:]
+  var coreSnapshotGeneration: UInt64 = 0
+  /// Group relay effects already copied onto the best-effort local mesh during
+  /// this process. The relay effect remains pending until the relay confirms it.
+  var meshedCoreOutboundIDs: Set<String> = []
 
   /// Configured relay endpoints, mirrored here so the value is observable —
   /// changing it refreshes anything that depends on it (e.g. the QR card, which
@@ -180,29 +201,30 @@ final class SessionManager {
     // seed. The codec/account logic lives in `SessionPersistence`; here we just
     // apply the result to the live state and run the post-unlock orchestration.
     let loaded = try persistence.attach(store, identitySeed: identity.identitySeed)
-    account = loaded.account
-    contacts = loaded.contacts
-    conversationStore.load(loaded.conversations)  // in-memory view starts from disk
-    ephemeralContactIDs = loaded.ephemeralContactIDs
-    bluetoothChatIDs = loaded.bluetoothChatIDs
-    activeConversationIDs = loaded.activeConversationIDs
-    blockedContacts = loaded.blockedContacts
-    myName = loaded.myName
-    // Restore established sessions so a relaunch continues the conversation
-    // instead of re-handshaking. A contact with a restored session is, by
-    // definition, established (the two are kept in lockstep everywhere else).
-    sessions = loaded.sessions
-    establishedContactIDs = Set(loaded.sessions.keys)
-    pendingInitiation = loaded.pendingInitiation
-    lastInitiationIn = loaded.lastInitiationIn
-    acceptedInitiationDigests = loaded.acceptedInitiationDigests
-    fallbackRotatedAt = loaded.fallbackRotatedAt
-    isUnlocked = true
-    isPersistenceHealthy = true
-    lockedInbox.reset()
+    let coreIdentityProvider = CoreIdentityProvider(rootIdentity: identity)
+    let coreCheckpointStore = CoreCheckpointStore(appStore: store)
+    let coreClient = try PigeonCoreClient(
+      identity: coreIdentityProvider,
+      store: coreCheckpointStore)
+    _ = try coreClient.execute(
+      PigeonCoreCommand(
+        id: "ensure-pairwise-account-v1",
+        body: .ensurePairwiseAccount))
+    let coreSnapshot = try coreClient.stateSnapshot()
+    self.coreIdentityProvider = coreIdentityProvider
+    self.coreCheckpointStore = coreCheckpointStore
+    self.coreClient = coreClient
+    applyCoreSnapshot(coreSnapshot)
+    restoreLoadedState(loaded)
+    try registerPairwiseContacts()
     guard purgeExpiredIncomingRequests(now: Date()) else {
       throw SessionPersistenceError.unreadableStore
     }
+    try absorbCoreEvents(coreSnapshot.pendingEvents)
+    let refreshedCoreSnapshot = try coreClient.stateSnapshot()
+    groupRelay.reconfigure(snapshot: refreshedCoreSnapshot)
+    fanOutGroupMesh(snapshot: refreshedCoreSnapshot)
+    if relay != nil { pairwiseRelay.reconfigure(snapshot: refreshedCoreSnapshot) }
     refreshRelay()  // pick up loaded contacts' relays
     // Drain anything buffered while locked *before* re-driving establishment, so
     // a buffered initiation/rehandshake stands up the session itself and the

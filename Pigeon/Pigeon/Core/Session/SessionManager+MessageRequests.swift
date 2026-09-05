@@ -14,6 +14,26 @@ extension SessionManager {
     contacts.count { $0.requestState == .incoming && !$0.introductionReceived }
   }
 
+  /// Converts a freshly scanned, one-sided contact into the existing
+  /// one-introduction request flow. In-person verification is directional: the
+  /// scanner has authenticated this contact, but the recipient has not yet
+  /// authenticated the scanner.
+  @discardableResult
+  func beginMessageRequest(to contactID: Data) -> Bool {
+    guard let index = contacts.firstIndex(where: { $0.id == contactID }),
+      contacts[index].requestState == .none,
+      !contacts[index].introductionSent,
+      !contacts[index].introductionReceived,
+      conversationStore.messages(for: contactID).isEmpty
+    else { return false }
+    contacts[index].requestState = .outgoing
+    guard persist() else {
+      contacts[index].requestState = .none
+      return false
+    }
+    return true
+  }
+
   @discardableResult
   func purgeExpiredIncomingRequests(now: Date) -> Bool {
     let expiredIDs = contacts.compactMap { contact -> Data? in

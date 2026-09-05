@@ -34,23 +34,44 @@
 //! 5. Both ends exchange traffic with [`Session::encrypt`] / [`Session::decrypt`].
 //!
 //! Wire types are encoded with the shared `pigeon.wire.v1` Protocol Buffer
-//! schema in `proto/pigeon/wire/v1/pigeon_wire.proto`.
+//! schemas in `proto/pigeon/wire/v1/`.
 
 #![forbid(unsafe_code)]
 
-mod account;
+mod client;
 mod error;
+mod group;
 mod identity;
-mod prekey;
-mod session;
+mod storage;
 mod wire;
 
-pub use account::Account;
+pub use client::{
+    AppEvent, ClientCommand, ClientOutput, ClientSnapshot, OutboundItem, PigeonClient,
+};
 pub use error::Error;
-pub use identity::{IdentityBundle, IdentityKeypair};
-pub use prekey::PrekeyBundle;
-pub use session::{Initiation, Session};
-pub use wire::{decode_olm_message, encode_olm_message};
+pub use group::{
+    Actor, AuthenticatedGroupMessage, BufferDisposition, CanonicalCandidate, CoordinatorBinding,
+    CoordinatorChain, CoordinatorChainError, CoordinatorReceipt, DeliveryLedger, EpochBuffer,
+    GroupAction, GroupApplication, GroupCiphertext, GroupCreationConfig, GroupDeliveryState,
+    GroupEngine, GroupId, GroupMessageId, GroupMutationCandidate, GroupRelayCapability,
+    GroupRelayControl, GroupRelayControlKind, GroupRelayRegistration, PendingMutation,
+    PigeonGroupPolicy, PolicyError, PolicyEvent, PolicyEventKind, coordinator_receipt_transcript,
+    select_canonical_candidate, validate_transition,
+};
+pub use identity::{
+    Account, GroupJoinMaterial, GroupJoinRequest, GroupMemberKeys, IdentityBundle, IdentityError,
+    IdentityKeypair, IdentityPurpose, Initiation, KeyPackagePool, MlsIdentityBinding, PrekeyBundle,
+    ReservedKeyPackage, SecureIdentity, Session, decode_olm_message, encode_olm_message,
+};
+pub use storage::{
+    MemoryStateStore, SealedCheckpoint, StateStore, StorageError, TransactionalOpenMlsStorage,
+};
+pub use wire::proto as wire_proto;
+pub use wire::{
+    MAX_CLIENT_COMMAND_BYTES, MAX_FUTURE_EPOCH_BUFFER_BYTES, MAX_FUTURE_EPOCHS,
+    MAX_GROUP_APPLICATION_BYTES, MAX_GROUP_MEMBERS, MAX_MLS_OBJECT_BYTES,
+    MAX_PENDING_OUTBOUND_ENTRIES, MAX_PROPOSAL_CANDIDATES, decode_client_command,
+};
 
 /// The Olm message type that crosses pigeon-core's API surface. Re-exported so
 /// callers need not depend on `vodozemac` directly.

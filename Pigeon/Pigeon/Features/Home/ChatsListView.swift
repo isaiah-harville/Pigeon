@@ -7,6 +7,7 @@
 //  contact by scanning their QR code.
 //
 
+import PigeonFFI
 import SwiftUI
 
 struct ChatsListView: View {
@@ -16,6 +17,7 @@ struct ChatsListView: View {
   @State private var showAddContact = false
   @State private var showMenu = false
   @State private var showContacts = false
+  @State private var showCreateGroup = false
   /// The chat to push in *this* (home) stack. Set when a contact is opened from
   /// the contacts sheet, applied after the sheet dismisses so the chat opens in
   /// the real navigation stack rather than inside the sheet.
@@ -30,7 +32,9 @@ struct ChatsListView: View {
 
   private var content: some View {
     Group {
-      if session.chatContacts.isEmpty && session.incomingMessageRequests.isEmpty {
+      if session.chatContacts.isEmpty && session.incomingMessageRequests.isEmpty
+        && activeGroups.isEmpty
+      {
         emptyState
       } else {
         contactList
@@ -39,7 +43,9 @@ struct ChatsListView: View {
     // The bubble floats over the content, bottom-right. The empty state has its
     // own add button, so it's only shown when there are chats.
     .overlay(alignment: .bottomTrailing) {
-      if !session.chatContacts.isEmpty || !session.incomingMessageRequests.isEmpty {
+      if !session.chatContacts.isEmpty || !session.incomingMessageRequests.isEmpty
+        || !activeGroups.isEmpty
+      {
         addContactBubble
       }
     }
@@ -52,8 +58,14 @@ struct ChatsListView: View {
         ChatView(contact: contact)
       }
     }
-    .sheet(isPresented: $showAddContact) { AddContactView() }
+    .sheet(isPresented: $showAddContact, onDismiss: openPendingChat) {
+      AddContactView { contactID in
+        pendingChatID = contactID
+        showAddContact = false
+      }
+    }
     .sheet(isPresented: $showMenu) { MenuView() }
+    .sheet(isPresented: $showCreateGroup) { CreateGroupView() }
     .sheet(isPresented: $showContacts, onDismiss: openPendingChat) {
       ContactsListView { contactID in
         pendingChatID = contactID
@@ -87,7 +99,14 @@ struct ChatsListView: View {
         .tracking(2)
         .foregroundStyle(.primary)
     }
-    ToolbarItem(placement: .topBarTrailing) {
+    ToolbarItemGroup(placement: .topBarTrailing) {
+      Button {
+        showCreateGroup = true
+      } label: {
+        Image(systemName: "person.3.fill")
+          .font(.body)
+      }
+      .accessibilityLabel("New group")
       Button {
         showContacts = true
       } label: {
@@ -116,15 +135,39 @@ struct ChatsListView: View {
     .padding(.bottom, 20)
     .accessibilityLabel("Add contact")
   }
+}
+
+extension ChatsListView {
 
   // MARK: - Contact list
 
   private var contactList: some View {
     List {
       messageRequestsSection
+      groupRows
       chatRows
     }
     .listStyle(.plain)
+  }
+
+  private var activeGroups: [PigeonGroupState] {
+    session.groups.filter { !$0.dissolved }
+  }
+
+  @ViewBuilder
+  private var groupRows: some View {
+    if !activeGroups.isEmpty {
+      Section("Groups") {
+        ForEach(activeGroups, id: \.groupID) { group in
+          NavigationLink {
+            GroupChatView(groupID: group.groupID)
+          } label: {
+            GroupRow(group: group)
+          }
+          .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+        }
+      }
+    }
   }
 
   @ViewBuilder
@@ -205,6 +248,45 @@ struct ChatsListView: View {
     .buttonStyle(.borderedProminent)
     .controlSize(.large)
     .buttonBorderShape(.capsule)
+  }
+}
+
+private struct GroupRow: View {
+  @Environment(SessionManager.self) private var session
+  let group: PigeonGroupState
+
+  private var latest: GroupChatEntry? {
+    session.groupConversations[group.groupID]?.messages.last
+  }
+
+  var body: some View {
+    HStack(spacing: 14) {
+      GroupAvatar(seed: group.groupID, size: 52)
+      VStack(alignment: .leading, spacing: 3) {
+        HStack {
+          Text(group.name).font(.headline).lineLimit(1)
+          Spacer()
+          if let date = latest?.date {
+            Text(date, style: Calendar.current.isDateInToday(date) ? .time : .date)
+              .font(.caption).foregroundStyle(.secondary)
+          }
+        }
+        HStack(spacing: 5) {
+          Image(systemName: "lock.shield.fill").font(.caption2).foregroundStyle(.green)
+          Text(preview).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+        }
+      }
+    }
+    .padding(.vertical, 2)
+  }
+
+  private var preview: String {
+    guard let latest else { return "MLS encrypted · \(group.memberIdentities.count) members" }
+    switch latest.content {
+    case .message(let text, _): return (latest.mine ? "You: " : "") + text
+    case .status: return "Group membership updated"
+    case .securityWarning: return "Security warning"
+    }
   }
 }
 

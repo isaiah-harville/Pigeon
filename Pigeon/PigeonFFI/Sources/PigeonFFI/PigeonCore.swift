@@ -19,6 +19,19 @@ public typealias PigeonAccount = FfiAccount
 /// One end of a pairwise end-to-end-encrypted session (Olm Double Ratchet).
 public typealias PigeonSession = FfiSession
 
+/// The transactional application core. It accepts and returns versioned wire
+/// messages while keeping identity, pairwise, and MLS state inside Rust.
+public typealias PigeonCoreClient = FfiClient
+
+extension FfiClient {
+  func execute(_ command: Pigeon_Wire_V1_ClientCommand) throws
+    -> Pigeon_Wire_V1_ClientOutput
+  {
+    let encoded = try command.serializedData()
+    return try Pigeon_Wire_V1_ClientOutput(serializedBytes: execute(command: encoded))
+  }
+}
+
 /// A device's public identity: its Ed25519 identity key, its Olm Curve25519
 /// identity key, and the binding signature — the QR payload. Decoding verifies
 /// the binding, so a value of this type is always authentic (the Curve key is
@@ -50,6 +63,7 @@ public struct PigeonContactCardPayload: Equatable, Sendable {
   public var relayURLs: [String]
   public var relaySignature: Data
   public var prekeyBundle: Data
+  public var pairwiseControlPrekeyBundle: Data
 
   public init(
     version: UInt32,
@@ -57,7 +71,8 @@ public struct PigeonContactCardPayload: Equatable, Sendable {
     name: String,
     relayURLs: [String],
     relaySignature: Data,
-    prekeyBundle: Data
+    prekeyBundle: Data,
+    pairwiseControlPrekeyBundle: Data = Data()
   ) {
     self.version = version
     self.identityBundle = identityBundle
@@ -65,6 +80,7 @@ public struct PigeonContactCardPayload: Equatable, Sendable {
     self.relayURLs = relayURLs
     self.relaySignature = relaySignature
     self.prekeyBundle = prekeyBundle
+    self.pairwiseControlPrekeyBundle = pairwiseControlPrekeyBundle
   }
 }
 
@@ -80,6 +96,7 @@ public func encodeContactCardPayload(_ payload: PigeonContactCardPayload) throws
   card.relayUrls = payload.relayURLs
   card.relaySignature = payload.relaySignature
   card.prekeyBundle = payload.prekeyBundle
+  card.pairwiseControlPrekeyBundle = payload.pairwiseControlPrekeyBundle
   return try card.serializedData()
 }
 
@@ -94,7 +111,8 @@ public func decodeContactCardPayload(_ data: Data) throws -> PigeonContactCardPa
     name: card.name,
     relayURLs: card.relayUrls,
     relaySignature: card.relaySignature,
-    prekeyBundle: card.prekeyBundle
+    prekeyBundle: card.prekeyBundle,
+    pairwiseControlPrekeyBundle: card.pairwiseControlPrekeyBundle
   )
 }
 

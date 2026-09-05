@@ -103,12 +103,12 @@ App `Features/`: `Onboarding/` (`UnlockView`, `OnboardingNameView`), `Home/`
 `Contacts/` (`AddContactView` = scan/paste flow, `IdentityQRView` = show my QR,
 `QRScanner`, `QRCode`), `Components/`.
 
-`pigeon-core/src/`: `identity.rs` (`IdentityKeypair` + `IdentityBundle` binding),
-`account.rs` (`Account`: Ed25519 identity + Olm account + prekeys + persistence),
-`prekey.rs` (`PrekeyBundle`), `session.rs` (`Session`, `Initiation`),
-`wire.rs` (protobuf encode/decode for the `pigeon.wire.v1` schema), `error.rs`.
-The shared schema is `proto/pigeon/wire/v1/pigeon_wire.proto`. Behavioral tests
-in `pigeon-core/tests/pairwise.rs`.
+`pigeon-core/src/`: `identity/` owns root identity, MLS identity, and the private
+`identity/pairwise/` Olm implementation; `client/` owns commands, events, and
+transactions; `storage/` owns checkpoint and OpenMLS state boundaries; `wire/`
+owns bounded protobuf decoding; `error.rs` holds shared errors. The protobuf
+schemas are split by domain under `proto/pigeon/wire/v1/`. Behavioral tests live
+under `pigeon-core/tests/`.
 
 `Pigeon/PigeonFFI/Sources/PigeonFFI/`: `PigeonCore.swift` (the crypto facade),
 `PigeonMesh.swift` (the mesh facade over the generated bindings); `Generated/`

@@ -27,6 +27,10 @@ struct ContactCard {
   /// offline. `nil` when not published; a received bundle is honoured only if it
   /// verifies and is bound to this same identity.
   let prekeyBundle: PigeonPrekeyBundle?
+  /// Public prekey for core-owned group bootstrap controls. It is distinct from
+  /// the legacy chat prekey so migration cannot route ordinary messages to the
+  /// wrong ratchet implementation.
+  let pairwiseControlPrekeyBundle: PigeonPrekeyBundle?
 
   private static let version: UInt8 = 0x03
   private static let shareScheme = "https"
@@ -41,11 +45,21 @@ struct ContactCard {
     name: String, bundle: PigeonIdentityBundle, relayURLs: [URL], relaySignature: Data,
     prekeyBundle: PigeonPrekeyBundle?
   ) {
+    self.init(
+      name: name, bundle: bundle, relayURLs: relayURLs, relaySignature: relaySignature,
+      prekeyBundle: prekeyBundle, pairwiseControlPrekeyBundle: nil)
+  }
+
+  init(
+    name: String, bundle: PigeonIdentityBundle, relayURLs: [URL], relaySignature: Data,
+    prekeyBundle: PigeonPrekeyBundle?, pairwiseControlPrekeyBundle: PigeonPrekeyBundle?
+  ) {
     self.name = name
     self.bundle = bundle
     self.relayURLs = relayURLs
     self.relaySignature = relaySignature
     self.prekeyBundle = prekeyBundle
+    self.pairwiseControlPrekeyBundle = pairwiseControlPrekeyBundle
   }
 
   /// The canonical bytes signed/verified for a set of relay URLs.
@@ -61,7 +75,8 @@ struct ContactCard {
       name: name,
       relayURLs: relayURLs.map(\.absoluteString),
       relaySignature: relaySignature,
-      prekeyBundle: prekeyBundle?.encoded ?? Data())
+      prekeyBundle: prekeyBundle?.encoded ?? Data(),
+      pairwiseControlPrekeyBundle: pairwiseControlPrekeyBundle?.encoded ?? Data())
     return (try? encodeContactCardPayload(payload).base64EncodedString()) ?? ""
   }
 
@@ -116,14 +131,17 @@ struct ContactCard {
     // Honour the prekey bundle only if internally valid (self-signed) and bound
     // to the *same* identity as this card, so a tampered card can at worst deny
     // async delivery, never redirect trust.
-    if !payload.prekeyBundle.isEmpty,
-      let parsed = try? PigeonPrekeyBundle(decoding: payload.prekeyBundle),
-      parsed.identityKey == bundle.identityKey
-    {
-      self.prekeyBundle = parsed
-    } else {
-      self.prekeyBundle = nil
-    }
+    self.prekeyBundle = Self.boundPrekey(payload.prekeyBundle, identity: bundle.identityKey)
+    self.pairwiseControlPrekeyBundle = Self.boundPrekey(
+      payload.pairwiseControlPrekeyBundle, identity: bundle.identityKey)
+  }
+
+  private static func boundPrekey(_ encoded: Data, identity: Data) -> PigeonPrekeyBundle? {
+    guard !encoded.isEmpty,
+      let parsed = try? PigeonPrekeyBundle(decoding: encoded),
+      parsed.identityKey == identity
+    else { return nil }
+    return parsed
   }
 
   private static func isValidRelayURL(_ url: URL) -> Bool {

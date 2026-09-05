@@ -39,6 +39,8 @@ struct SessionCryptoExporter {
 /// including building the bound Olm account. Not `@Observable`: persistence is a
 /// side effect, not observable UI state.
 @MainActor
+// Contact and crypto codecs intentionally remain colocated with their store boundary.
+// swiftlint:disable:next type_body_length
 final class SessionPersistence {
 
   /// The bulk store (contacts + conversations), set at unlock. `nil` (and every
@@ -65,6 +67,7 @@ final class SessionPersistence {
     var account: PigeonAccount?
     var contacts: [Contact]
     var conversations: [Data: [ChatMessage]]
+    var groupConversations: [Data: GroupConversation]
     var ephemeralContactIDs: Set<Data>
     var bluetoothChatIDs: Set<Data>
     var activeConversationIDs: Set<Data>
@@ -84,6 +87,7 @@ final class SessionPersistence {
   struct Snapshot {
     var contacts: [Contact]
     var conversations: [Data: [ChatMessage]]
+    var groupConversations: [Data: GroupConversation] = [:]
     var ephemeralContactIDs: Set<Data>
     var bluetoothChatIDs: Set<Data>
     var activeConversationIDs: Set<Data> = []
@@ -128,6 +132,7 @@ final class SessionPersistence {
       account: Self.buildAccount(seed: identitySeed, crypto: crypto),
       contacts: Self.decodeContacts(bulk.contacts),
       conversations: Self.decodeConversations(bulk.conversations),
+      groupConversations: try Self.decodeGroupConversations(bulk.groupConversations),
       ephemeralContactIDs: Self.decodeIDs(bulk.ephemeralContactIDs),
       bluetoothChatIDs: Self.decodeIDs(bulk.bluetoothContactIDs),
       activeConversationIDs: Self.decodeIDs(bulk.activeConversationIDs),
@@ -169,6 +174,7 @@ final class SessionPersistence {
       relayURLs: contact.relayURLs.map(\.absoluteString),
       preferredRelayURL: contact.preferredRelayURL?.absoluteString,
       prekeyBundle: contact.prekeyBundle?.encoded,
+      pairwiseControlPrekeyBundle: contact.pairwiseControlPrekeyBundle?.encoded,
       verifiedInPerson: contact.verifiedInPerson,
       requestState: contact.requestState,
       introductionSent: contact.introductionSent ? 1 : 0,
@@ -177,6 +183,8 @@ final class SessionPersistence {
   }
 
   private static func decodeContacts(_ persisted: [PersistedContact]) throws -> [Contact] {
+    // Each contact validates the identity plus two independently signed prekey bundles.
+    // swiftlint:disable:next closure_body_length
     try persisted.map { persisted in
       // Decoding a PigeonIdentityBundle verifies its binding signature; an
       // invalid one yields nil and the contact is dropped.
@@ -194,11 +202,21 @@ final class SessionPersistence {
       } else {
         prekeyBundle = nil
       }
+      let pairwiseControlPrekeyBundle: PigeonPrekeyBundle?
+      if let encoded = persisted.pairwiseControlPrekeyBundle {
+        guard let decoded = try? PigeonPrekeyBundle(decoding: encoded),
+          decoded.identityKey == bundle.identityKey
+        else { throw SessionPersistenceError.unreadableStore }
+        pairwiseControlPrekeyBundle = decoded
+      } else {
+        pairwiseControlPrekeyBundle = nil
+      }
       return Contact(
         bundle: bundle, displayName: persisted.name,
         relayURLs: persisted.relayURLs.compactMap { URL(string: $0) },
         preferredRelayURL: persisted.preferredRelayURL.flatMap { URL(string: $0) },
         prekeyBundle: prekeyBundle,
+        pairwiseControlPrekeyBundle: pairwiseControlPrekeyBundle,
         verifiedInPerson: persisted.verifiedInPerson,
         requestState: persisted.requestState ?? .none,
         introductionSent: persisted.introductionSent == 1,
@@ -255,6 +273,19 @@ final class SessionPersistence {
     return loaded
   }
 
+  private static func decodeGroupConversations(
+    _ stored: [String: GroupConversation]
+  ) throws -> [Data: GroupConversation] {
+    var loaded: [Data: GroupConversation] = [:]
+    for (key, conversation) in stored {
+      guard let id = Data(base64Encoded: key), id == conversation.id else {
+        throw SessionPersistenceError.unreadableStore
+      }
+      loaded[id] = conversation
+    }
+    return loaded
+  }
+
   private static func decodeIDs(_ stored: [String]) throws -> Set<Data> {
     var ids: Set<Data> = []
     for encoded in stored {
@@ -275,7 +306,12 @@ extension SessionPersistence {
     let store = EncryptedStore(key: SymmetricKey(size: .bits256))
     let cryptoStore = store.companion(suffix: Self.cryptoSuffix)
     let transactionStore = store.companion(suffix: Self.transactionSuffix)
-    return wipe(store: store, cryptoStore: cryptoStore, transactionStore: transactionStore)
+    let coreStore = store.companion(suffix: CoreCheckpointStore.companionSuffix)
+    return wipe(
+      store: store,
+      cryptoStore: cryptoStore,
+      transactionStore: transactionStore,
+      coreStore: coreStore)
   }
 
   /// Irreversibly removes bulk history, cryptographic state, and any pending
@@ -284,7 +320,10 @@ extension SessionPersistence {
   func wipeAll() -> Bool {
     guard let store, let cryptoStore, let transactionStore else { return false }
     let wiped = Self.wipe(
-      store: store, cryptoStore: cryptoStore, transactionStore: transactionStore)
+      store: store,
+      cryptoStore: cryptoStore,
+      transactionStore: transactionStore,
+      coreStore: store.companion(suffix: CoreCheckpointStore.companionSuffix))
     if wiped {
       self.store = nil
       self.cryptoStore = nil
@@ -296,13 +335,15 @@ extension SessionPersistence {
   private static func wipe(
     store: EncryptedStore,
     cryptoStore: EncryptedStore,
-    transactionStore: EncryptedStore
+    transactionStore: EncryptedStore,
+    coreStore: EncryptedStore
   ) -> Bool {
     // Do not short-circuit: every path must be attempted on each recovery pass.
     let bulkWiped = store.wipe()
     let cryptoWiped = cryptoStore.wipe()
     let transactionWiped = transactionStore.wipe()
-    return bulkWiped && cryptoWiped && transactionWiped
+    let coreWiped = coreStore.wipe()
+    return bulkWiped && cryptoWiped && transactionWiped && coreWiped
   }
 
   /// Writes one recoverable full generation. The journal becomes durable before
@@ -316,9 +357,15 @@ extension SessionPersistence {
     for (id, messages) in snapshot.conversations {
       conversationsByKey[id.base64EncodedString()] = messages
     }
+    var groupConversationsByKey: [String: GroupConversation] = [:]
+    for (id, conversation) in snapshot.groupConversations {
+      guard id == conversation.id else { return false }
+      groupConversationsByKey[id.base64EncodedString()] = conversation
+    }
     let bulk = PersistedState(
       contacts: snapshot.contacts.map(Self.encodeContact),
       conversations: conversationsByKey,
+      groupConversations: groupConversationsByKey,
       ephemeralContactIDs: snapshot.ephemeralContactIDs.map { $0.base64EncodedString() },
       bluetoothContactIDs: snapshot.bluetoothChatIDs.map { $0.base64EncodedString() },
       activeConversationIDs: snapshot.activeConversationIDs.map { $0.base64EncodedString() },

@@ -12,6 +12,9 @@ extension SessionManager {
 
   func handleInbound(_ data: Data, channel: TransportChannel) -> TransportMessageDisposition {
     guard let envelope = try? SessionEnvelope(decoding: data) else { return .consumed }
+    if envelope.type == .groupMls {
+      return handleInboundGroupMesh(envelope, encoded: data, channel: channel)
+    }
     guard envelope.recipient == myID else { return .consumed }  // not addressed to us
 
     // Locked (e.g. relaunched in the background — no Face ID prompt possible):
@@ -66,6 +69,12 @@ extension SessionManager {
       return isPersistenceHealthy
     case .ack: return handleAck(envelope.payload, from: contact)
     case .control: return handleControl(envelope.payload, from: contact)
+    case .pairwise:
+      return consumePairwiseMessage(
+        envelope.payload,
+        requestID: "pairwise-\(InitiationReplayLedger.digest(envelope.encoded()).hexEncoded)")
+    case .groupMls:
+      return true
     // Olm is async-first: there is no interactive Noise handshake anymore, so a
     // `.handshake` envelope (only ever sent by the old protocol) is ignored.
     case .handshake: return true
