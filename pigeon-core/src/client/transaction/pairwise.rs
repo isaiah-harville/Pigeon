@@ -225,7 +225,16 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     return Err(Error::InvalidSignature);
                 }
                 let initiation = Initiation::decode(&bytes)?;
-                if initiation.identity.identity_key != sender {
+                let contact = candidate
+                    .pairwise_contacts
+                    .iter()
+                    .find(|contact| contact.identity.as_slice() == sender)
+                    .ok_or(Error::InvalidSignature)?;
+                let registered = PrekeyBundle::decode(&contact.prekey_bundle)?;
+                if initiation.identity.identity_key != sender
+                    || initiation.identity.curve_identity_key
+                        != registered.identity.curve_identity_key
+                {
                     return Err(Error::InvalidSignature);
                 }
                 let mut account = pairwise_account(candidate)?.ok_or(Error::InvalidKey)?;

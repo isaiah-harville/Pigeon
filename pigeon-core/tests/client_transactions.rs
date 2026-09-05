@@ -535,6 +535,60 @@ fn registering_a_contact_wraps_already_pending_group_controls() {
     assert_eq!(wrapped.relay_url, "https://bob-relay.example");
 }
 
+#[test]
+fn inbound_pairwise_rejects_an_unregistered_olm_key_for_a_known_root() {
+    let mut original =
+        PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(1)).unwrap();
+    let mut replacement =
+        PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(1)).unwrap();
+    let mut bob = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(2)).unwrap();
+    for client in [&mut original, &mut replacement, &mut bob] {
+        client
+            .execute(ClientCommand::ensure_pairwise_account("account").unwrap())
+            .unwrap();
+    }
+    let original_bundle =
+        wire_proto::ClientSnapshot::decode(original.snapshot().unwrap().encode().as_slice())
+            .unwrap()
+            .pairwise_prekey_bundle;
+    let bob_bundle =
+        wire_proto::ClientSnapshot::decode(bob.snapshot().unwrap().encode().as_slice())
+            .unwrap()
+            .pairwise_prekey_bundle;
+    bob.execute(
+        ClientCommand::register_pairwise_contact(
+            "register",
+            original_bundle,
+            "https://alice-relay.example",
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    replacement
+        .execute(
+            ClientCommand::register_pairwise_contact(
+                "register",
+                bob_bundle,
+                "https://bob-relay.example",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let draft = replacement.execute(create_group()).unwrap();
+    let request = draft
+        .outbound
+        .iter()
+        .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
+        .find(|item| item.destination == TestIdentity::new(2).root_public())
+        .unwrap();
+    let before = bob.snapshot().unwrap().encode();
+    let result = bob.execute(
+        ClientCommand::apply_pairwise_control("unexpected-account", request.payload).unwrap(),
+    );
+    assert!(matches!(result, Err(Error::InvalidSignature)));
+    assert_eq!(bob.snapshot().unwrap().encode(), before);
+}
+
 struct CheckpointFixtureStore {
     checkpoint: Option<pigeon_core::SealedCheckpoint>,
 }
