@@ -1,7 +1,8 @@
 use prost::Message;
 
 use pigeon_core::{
-    Error, MAX_CLIENT_COMMAND_BYTES, MAX_GROUP_MEMBERS, decode_client_command, wire_proto,
+    Error, MAX_CLIENT_COMMAND_BYTES, MAX_DIRECT_MESSAGE_BYTES, MAX_GROUP_MEMBERS,
+    decode_client_command, wire_proto,
 };
 
 #[test]
@@ -51,5 +52,29 @@ fn unsupported_command_version_fails_explicitly() {
             kind: "command",
             version: 2
         })
+    ));
+}
+
+#[test]
+fn oversized_direct_message_is_rejected_before_crypto_state_changes() {
+    let command = wire_proto::ClientCommand {
+        version: 1,
+        command_id: "direct-1".into(),
+        body: Some(wire_proto::client_command::Body::SendDirectMessage(
+            wire_proto::SendDirectMessage {
+                recipient_identity: vec![7; 32],
+                message: Some(wire_proto::DirectMessage {
+                    message_id: "message-1".into(),
+                    text: "x".repeat(MAX_DIRECT_MESSAGE_BYTES + 1),
+                    reply_to_message_id: String::new(),
+                    sender_timestamp_ms: 1,
+                }),
+            },
+        )),
+    };
+
+    assert!(matches!(
+        decode_client_command(&command.encode_to_vec()),
+        Err(Error::ResourceLimit("direct message text"))
     ));
 }

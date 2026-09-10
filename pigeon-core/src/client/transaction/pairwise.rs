@@ -122,6 +122,26 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         payload: Vec<u8>,
         candidate: &mut proto::ClientCheckpoint,
     ) -> Result<proto::OutboundItem, Error> {
+        self.stage_pairwise_payload(
+            item_id,
+            recipient,
+            proto::pairwise_payload::Body::GroupControl(proto::PairwiseGroupControl {
+                content_kind: content_kind
+                    .try_into()
+                    .map_err(|_| Error::MalformedBundle)?,
+                payload,
+            }),
+            candidate,
+        )
+    }
+
+    pub(super) fn stage_pairwise_payload(
+        &self,
+        item_id: &str,
+        recipient: [u8; 32],
+        body: proto::pairwise_payload::Body,
+        candidate: &mut proto::ClientCheckpoint,
+    ) -> Result<proto::OutboundItem, Error> {
         let contact = candidate
             .pairwise_contacts
             .iter()
@@ -131,14 +151,11 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         let local_identity = self
             .identity
             .ensure_public_key(crate::IdentityPurpose::Root)?;
-        let plaintext = proto::PairwiseControlPayload {
-            version: PROTOCOL_VERSION,
+        let plaintext = proto::PairwisePayload {
+            version: crate::wire::PAIRWISE_PAYLOAD_VERSION,
             sender_identity: local_identity.to_vec(),
             recipient_identity: recipient.to_vec(),
-            content_kind: content_kind
-                .try_into()
-                .map_err(|_| Error::MalformedBundle)?,
-            payload,
+            body: Some(body),
         }
         .encode_to_vec();
 
@@ -184,7 +201,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         &self,
         inbound: &proto::ApplyInbound,
         candidate: &mut proto::ClientCheckpoint,
-    ) -> Result<proto::PairwiseControlPayload, Error> {
+    ) -> Result<proto::PairwisePayload, Error> {
         let envelope = proto::PairwiseEnvelope::decode(inbound.payload.as_slice())
             .map_err(|_| Error::MalformedBundle)?;
         if envelope.version != PROTOCOL_VERSION {
@@ -268,20 +285,11 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 plaintext
             }
         };
-        let control = proto::PairwiseControlPayload::decode(plaintext.as_slice())
+        let control = proto::PairwisePayload::decode(plaintext.as_slice())
             .map_err(|_| Error::MalformedBundle)?;
-        if control.version != PROTOCOL_VERSION
+        if control.version != crate::wire::PAIRWISE_PAYLOAD_VERSION
             || control.sender_identity.as_slice() != sender
             || control.recipient_identity.as_slice() != recipient
-            || !matches!(
-                proto::OutboundKind::try_from(
-                    i32::try_from(control.content_kind).map_err(|_| Error::MalformedBundle)?
-                )
-                .map_err(|_| Error::MalformedBundle)?,
-                proto::OutboundKind::GroupJoinRequest
-                    | proto::OutboundKind::GroupJoinMaterial
-                    | proto::OutboundKind::GroupWelcome
-            )
         {
             return Err(Error::InvalidSignature);
         }

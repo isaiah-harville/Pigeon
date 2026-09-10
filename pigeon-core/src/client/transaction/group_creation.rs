@@ -159,17 +159,14 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             .pending_group_creations
             .iter()
             .position(|draft| {
-                draft
-                    .join_request_ids
-                    .iter()
-                    .any(|request| request == &inbound.request_id)
+                draft.group_id.as_slice() == material.member_keys().group_id().as_bytes()
             })
             .ok_or(Error::InvalidKey)?;
         let draft = &mut candidate.pending_group_creations[draft_index];
         let material_index = draft
-            .join_request_ids
+            .member_identities
             .iter()
-            .position(|request| request == &inbound.request_id)
+            .position(|member| member.as_slice() == material.member_identity())
             .ok_or(Error::InvalidKey)?;
         let group_id = GroupId::from_bytes(
             draft

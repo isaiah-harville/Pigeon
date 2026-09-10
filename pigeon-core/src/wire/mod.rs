@@ -132,6 +132,12 @@ pub(crate) fn validate_client_command(command: &proto::ClientCommand) -> Result<
             }
         }
         proto::client_command::Body::EnsurePairwiseAccount(_) => {}
+        proto::client_command::Body::SendDirectMessage(send) => {
+            if send.recipient_identity.len() != IDENTITY_KEY_BYTES {
+                return Err(Error::InvalidKey);
+            }
+            validate_direct_message(send.message.as_ref().ok_or(Error::MalformedBundle)?)?;
+        }
         proto::client_command::Body::RegisterPairwiseContact(register) => {
             check_bytes(
                 register.prekey_bundle.len(),
@@ -176,6 +182,27 @@ fn check_exact_group_id(bytes: &[u8]) -> Result<(), Error> {
     } else {
         Err(Error::MalformedBundle)
     }
+}
+
+pub(crate) fn validate_direct_message(message: &proto::DirectMessage) -> Result<(), Error> {
+    if message.message_id.is_empty() || message.text.is_empty() || message.sender_timestamp_ms < 0 {
+        return Err(Error::MalformedBundle);
+    }
+    check_bytes(
+        message.message_id.len(),
+        MAX_STABLE_ID_BYTES,
+        "direct message id",
+    )?;
+    check_bytes(
+        message.reply_to_message_id.len(),
+        MAX_STABLE_ID_BYTES,
+        "direct reply id",
+    )?;
+    check_bytes(
+        message.text.len(),
+        MAX_DIRECT_MESSAGE_BYTES,
+        "direct message text",
+    )
 }
 
 fn check_bytes(actual: usize, maximum: usize, label: &'static str) -> Result<(), Error> {

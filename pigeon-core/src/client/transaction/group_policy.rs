@@ -371,7 +371,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
     pub(super) fn stage_apply_group_addition_material(
         &self,
         command_id: &str,
-        inbound: &proto::ApplyInbound,
+        _inbound: &proto::ApplyInbound,
         material: &GroupJoinMaterial,
         candidate: &mut proto::ClientCheckpoint,
         output: &mut ClientOutput,
@@ -379,7 +379,10 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         let Some(addition_index) = candidate
             .pending_group_additions
             .iter()
-            .position(|addition| addition.request_id == inbound.request_id)
+            .position(|addition| {
+                addition.group_id.as_slice() == material.member_keys().group_id().as_bytes()
+                    && addition.member_identity.as_slice() == material.member_identity()
+            })
         else {
             return Ok(false);
         };

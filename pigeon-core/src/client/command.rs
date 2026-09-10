@@ -10,6 +10,33 @@ pub struct ClientCommand {
 }
 
 impl ClientCommand {
+    pub fn send_direct_text(
+        command_id: impl Into<String>,
+        recipient_identity: [u8; 32],
+        text: impl Into<String>,
+        reply_to_message_id: impl Into<String>,
+        sender_timestamp_ms: i64,
+    ) -> Result<Self, Error> {
+        let command_id = command_id.into();
+        let inner = proto::ClientCommand {
+            version: PROTOCOL_VERSION,
+            command_id: command_id.clone(),
+            body: Some(proto::client_command::Body::SendDirectMessage(
+                proto::SendDirectMessage {
+                    recipient_identity: recipient_identity.to_vec(),
+                    message: Some(proto::DirectMessage {
+                        message_id: command_id,
+                        text: text.into(),
+                        reply_to_message_id: reply_to_message_id.into(),
+                        sender_timestamp_ms,
+                    }),
+                },
+            )),
+        };
+        wire::validate_client_command(&inner)?;
+        Ok(Self { inner })
+    }
+
     pub fn decode(bytes: &[u8]) -> Result<Self, Error> {
         Ok(Self {
             inner: wire::decode_client_command(bytes)?,

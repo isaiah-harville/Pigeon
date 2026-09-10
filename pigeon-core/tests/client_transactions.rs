@@ -475,6 +475,59 @@ fn inbound_pairwise_control_is_decrypted_and_dispatched_inside_one_transaction()
     assert_eq!(material.kind, wire_proto::OutboundKind::Pairwise as i32);
     assert_eq!(material.destination, TestIdentity::new(1).root_public());
 
+    let sent = bob
+        .execute(
+            ClientCommand::send_direct_text(
+                "direct-message",
+                TestIdentity::new(1).root_public(),
+                "hello",
+                "",
+                1234,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let direct = wire_proto::OutboundItem::decode(sent.outbound[0].encode().as_slice()).unwrap();
+    let envelope = wire_proto::PairwiseEnvelope::decode(direct.payload.as_slice()).unwrap();
+    assert!(matches!(
+        envelope.body,
+        Some(wire_proto::pairwise_envelope::Body::Message(_))
+    ));
+    // Direct messages can arrive before earlier group controls on the same ratchet.
+    let received = alice
+        .execute(
+            ClientCommand::apply_pairwise_control("direct-in", direct.payload.clone()).unwrap(),
+        )
+        .unwrap();
+    let event = wire_proto::AppEvent::decode(received.events[0].encode().as_slice()).unwrap();
+    let Some(wire_proto::app_event::Body::DirectMessageReceived(message)) = event.body else {
+        panic!("expected direct message")
+    };
+    assert_eq!(message.sender_identity, TestIdentity::new(2).root_public());
+    assert_eq!(message.message.unwrap().text, "hello");
+    let duplicate = alice
+        .execute(ClientCommand::apply_pairwise_control("direct-duplicate", direct.payload).unwrap())
+        .unwrap();
+    assert!(duplicate.events.is_empty());
+    let snapshot =
+        wire_proto::ClientSnapshot::decode(alice.snapshot().unwrap().encode().as_slice()).unwrap();
+    assert!(
+        snapshot
+            .pending_events
+            .iter()
+            .any(|pending| pending.event_id == event.event_id)
+    );
+
+    alice
+        .execute(
+            ClientCommand::apply_pairwise_control(
+                "independent-transport-delivery-id",
+                material.payload,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
     let replay = bob
         .execute(
             ClientCommand::apply_pairwise_control(
