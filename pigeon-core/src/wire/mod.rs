@@ -132,11 +132,11 @@ pub(crate) fn validate_client_command(command: &proto::ClientCommand) -> Result<
             }
         }
         proto::client_command::Body::EnsurePairwiseAccount(_) => {}
-        proto::client_command::Body::SendDirectMessage(send) => {
+        proto::client_command::Body::SendDirectApplication(send) => {
             if send.recipient_identity.len() != IDENTITY_KEY_BYTES {
                 return Err(Error::InvalidKey);
             }
-            validate_direct_message(send.message.as_ref().ok_or(Error::MalformedBundle)?)?;
+            validate_direct_application(send.application.as_ref().ok_or(Error::MalformedBundle)?)?;
         }
         proto::client_command::Body::RegisterPairwiseContact(register) => {
             check_bytes(
@@ -184,25 +184,82 @@ fn check_exact_group_id(bytes: &[u8]) -> Result<(), Error> {
     }
 }
 
-pub(crate) fn validate_direct_message(message: &proto::DirectMessage) -> Result<(), Error> {
-    if message.message_id.is_empty() || message.text.is_empty() || message.sender_timestamp_ms < 0 {
+pub(crate) fn validate_direct_application(
+    application: &proto::DirectApplication,
+) -> Result<(), Error> {
+    if application.application_id.is_empty() {
         return Err(Error::MalformedBundle);
     }
     check_bytes(
-        message.message_id.len(),
+        application.application_id.len(),
         MAX_STABLE_ID_BYTES,
-        "direct message id",
+        "direct application id",
     )?;
-    check_bytes(
-        message.reply_to_message_id.len(),
-        MAX_STABLE_ID_BYTES,
-        "direct reply id",
-    )?;
-    check_bytes(
-        message.text.len(),
-        MAX_DIRECT_MESSAGE_BYTES,
-        "direct message text",
-    )
+    match application.body.as_ref().ok_or(Error::MalformedBundle)? {
+        proto::direct_application::Body::Message(message) => {
+            if message.text.is_empty() || message.sender_timestamp_ms < 0 {
+                return Err(Error::MalformedBundle);
+            }
+            check_bytes(
+                message.reply_snippet.len(),
+                MAX_STABLE_ID_BYTES,
+                "direct reply snippet",
+            )?;
+            check_bytes(
+                message.text.len(),
+                MAX_DIRECT_MESSAGE_BYTES,
+                "direct message text",
+            )
+        }
+        proto::direct_application::Body::Acknowledgement(acknowledgement) => {
+            validate_referenced_message_id(&acknowledgement.message_id)
+        }
+        proto::direct_application::Body::Reaction(reaction) => {
+            validate_referenced_message_id(&reaction.message_id)?;
+            if let Some(emoji) = &reaction.emoji {
+                if emoji.is_empty() {
+                    return Err(Error::MalformedBundle);
+                }
+                check_bytes(emoji.len(), MAX_DIRECT_REACTION_BYTES, "direct reaction")?;
+            }
+            Ok(())
+        }
+        proto::direct_application::Body::EphemeralState(_) => Ok(()),
+        proto::direct_application::Body::TransportState(state) => {
+            match proto::DirectTransportMode::try_from(state.mode)
+                .map_err(|_| Error::MalformedBundle)?
+            {
+                proto::DirectTransportMode::Relay | proto::DirectTransportMode::Local => Ok(()),
+                proto::DirectTransportMode::Unspecified => Err(Error::MalformedBundle),
+            }
+        }
+        proto::direct_application::Body::ScreenshotNotice(_)
+        | proto::direct_application::Body::ContactAcceptance(_) => Ok(()),
+        proto::direct_application::Body::RelayRecommendation(recommendation) => {
+            if recommendation.relay_urls.is_empty() {
+                return Err(Error::MalformedBundle);
+            }
+            check_count(
+                recommendation.relay_urls.len(),
+                MAX_DIRECT_RELAY_URLS,
+                "direct relay urls",
+            )?;
+            for relay_url in &recommendation.relay_urls {
+                check_bytes(relay_url.len(), MAX_RELAY_URL_BYTES, "relay url")?;
+                if !(relay_url.starts_with("https://") || relay_url.starts_with("wss://")) {
+                    return Err(Error::MalformedBundle);
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_referenced_message_id(message_id: &str) -> Result<(), Error> {
+    if message_id.is_empty() {
+        return Err(Error::MalformedBundle);
+    }
+    check_bytes(message_id.len(), MAX_STABLE_ID_BYTES, "direct message id")
 }
 
 fn check_bytes(actual: usize, maximum: usize, label: &'static str) -> Result<(), Error> {

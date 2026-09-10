@@ -3,6 +3,8 @@
 pub const PROTOCOL_VERSION: u32 = 1;
 pub(crate) const PAIRWISE_PAYLOAD_VERSION: u32 = 2;
 pub const MAX_DIRECT_MESSAGE_BYTES: usize = 64 * 1024;
+pub const MAX_DIRECT_REACTION_BYTES: usize = 128;
+pub const MAX_DIRECT_RELAY_URLS: usize = 8;
 pub const IDENTITY_KEY_BYTES: usize = 32;
 pub const GROUP_ID_BYTES: usize = 32;
 pub const MAX_CLIENT_COMMAND_BYTES: usize = 256 * 1024;

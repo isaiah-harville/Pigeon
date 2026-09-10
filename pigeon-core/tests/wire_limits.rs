@@ -60,14 +60,18 @@ fn oversized_direct_message_is_rejected_before_crypto_state_changes() {
     let command = wire_proto::ClientCommand {
         version: 1,
         command_id: "direct-1".into(),
-        body: Some(wire_proto::client_command::Body::SendDirectMessage(
-            wire_proto::SendDirectMessage {
+        body: Some(wire_proto::client_command::Body::SendDirectApplication(
+            wire_proto::SendDirectApplication {
                 recipient_identity: vec![7; 32],
-                message: Some(wire_proto::DirectMessage {
-                    message_id: "message-1".into(),
-                    text: "x".repeat(MAX_DIRECT_MESSAGE_BYTES + 1),
-                    reply_to_message_id: String::new(),
-                    sender_timestamp_ms: 1,
+                application: Some(wire_proto::DirectApplication {
+                    application_id: "message-1".into(),
+                    body: Some(wire_proto::direct_application::Body::Message(
+                        wire_proto::DirectMessage {
+                            text: "x".repeat(MAX_DIRECT_MESSAGE_BYTES + 1),
+                            reply_snippet: String::new(),
+                            sender_timestamp_ms: 1,
+                        },
+                    )),
                 }),
             },
         )),

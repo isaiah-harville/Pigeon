@@ -17,7 +17,7 @@ message ClientCommand {
     EnsurePairwiseAccount ensure_pairwise_account = 15;
     RegisterPairwiseContact register_pairwise_contact = 16;
     SendPairwiseControl send_pairwise_control = 17;
-    SendDirectMessage send_direct_message = 18;
+    SendDirectApplication send_direct_application = 18;
   }
 }
 
@@ -37,14 +37,14 @@ message SendPairwiseControl {
   bytes payload = 3;
 }
 
-message SendDirectMessage {
+message SendDirectApplication {
   bytes recipient_identity = 1;
-  DirectMessage message = 2;
+  DirectApplication application = 2;
 }
 
-message DirectMessageReceived {
+message DirectApplicationReceived {
   bytes sender_identity = 1;
-  DirectMessage message = 2;
+  DirectApplication application = 2;
 }
 
 message CreateGroup {
@@ -92,7 +92,7 @@ message AppEvent {
     GroupDeliveryChanged group_delivery_changed = 23;
     GroupSecurityWarning group_security_warning = 24;
     GroupReactionReceived group_reaction_received = 25;
-    DirectMessageReceived direct_message_received = 26;
+    DirectApplicationReceived direct_application_received = 26;
   }
 }
 

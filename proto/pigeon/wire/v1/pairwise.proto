@@ -31,7 +31,7 @@ message PairwisePayload {
   reserved 4, 5;
   oneof body {
     PairwiseGroupControl group_control = 10;
-    DirectMessage direct_message = 11;
+    DirectApplication direct_application = 11;
   }
 }
 
@@ -41,10 +41,54 @@ message PairwiseGroupControl {
 }
 
 message DirectMessage {
+  string text = 1;
+  string reply_snippet = 2;
+  int64 sender_timestamp_ms = 3;
+}
+
+message DirectApplication {
+  string application_id = 1;
+  oneof body {
+    DirectMessage message = 10;
+    DirectAcknowledgement acknowledgement = 11;
+    DirectReaction reaction = 12;
+    DirectEphemeralState ephemeral_state = 13;
+    DirectTransportState transport_state = 14;
+    DirectScreenshotNotice screenshot_notice = 15;
+    DirectContactAcceptance contact_acceptance = 16;
+    DirectRelayRecommendation relay_recommendation = 17;
+  }
+}
+
+message DirectAcknowledgement {
   string message_id = 1;
-  string text = 2;
-  string reply_to_message_id = 3;
-  int64 sender_timestamp_ms = 4;
+}
+
+message DirectReaction {
+  string message_id = 1;
+  optional string emoji = 2;
+}
+
+message DirectEphemeralState {
+  bool enabled = 1;
+}
+
+enum DirectTransportMode {
+  DIRECT_TRANSPORT_MODE_UNSPECIFIED = 0;
+  DIRECT_TRANSPORT_MODE_RELAY = 1;
+  DIRECT_TRANSPORT_MODE_LOCAL = 2;
+}
+
+message DirectTransportState {
+  DirectTransportMode mode = 1;
+}
+
+message DirectScreenshotNotice {}
+
+message DirectContactAcceptance {}
+
+message DirectRelayRecommendation {
+  repeated string relay_urls = 1;
 }
 
 message X3DHPrekeyBundle {

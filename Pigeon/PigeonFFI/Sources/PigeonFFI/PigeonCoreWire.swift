@@ -5,6 +5,7 @@ public enum PigeonCoreWireError: Error, Equatable, Sendable {
   case missingEventBody
   case invalidOutboundKind(Int)
   case invalidPolicyChangeKind(Int)
+  case invalidDirectTransportMode(Int)
   case notRelayAction(PigeonCoreOutboundKind)
   case malformedRelayAction
 }
@@ -75,6 +76,8 @@ extension PigeonCoreCommand {
       command.registerPairwiseContact = value.proto()
     case .sendPairwiseControl(let value):
       command.sendPairwiseControl = try value.proto()
+    case .sendDirectApplication(let value):
+      command.sendDirectApplication = try value.proto()
     }
     return command
   }
@@ -225,6 +228,11 @@ extension PigeonCoreEvent {
       body = .groupDeliveryChanged(PigeonGroupDeliveryChangedEvent(proto: event))
     case .groupSecurityWarning(let event):
       body = .groupSecurityWarning(PigeonGroupSecurityWarningEvent(proto: event))
+    case .directApplicationReceived(let event):
+      body = .directApplicationReceived(
+        PigeonDirectApplicationReceivedEvent(
+          senderIdentity: event.senderIdentity,
+          application: try PigeonDirectApplication(proto: event.application)))
     case nil:
       throw PigeonCoreWireError.missingEventBody
     }
@@ -368,8 +376,4 @@ extension PigeonGroupDeliveryState {
     case .UNRECOGNIZED(let raw): self = .unknown(raw)
     }
   }
-}
-
-extension String {
-  var nilIfEmpty: String? { isEmpty ? nil : self }
 }

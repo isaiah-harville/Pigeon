@@ -14,22 +14,58 @@ impl ClientCommand {
         command_id: impl Into<String>,
         recipient_identity: [u8; 32],
         text: impl Into<String>,
-        reply_to_message_id: impl Into<String>,
+        reply_snippet: impl Into<String>,
         sender_timestamp_ms: i64,
     ) -> Result<Self, Error> {
         let command_id = command_id.into();
+        Self::send_direct_application(
+            command_id.clone(),
+            recipient_identity,
+            proto::DirectApplication {
+                application_id: command_id,
+                body: Some(proto::direct_application::Body::Message(
+                    proto::DirectMessage {
+                        text: text.into(),
+                        reply_snippet: reply_snippet.into(),
+                        sender_timestamp_ms,
+                    },
+                )),
+            },
+        )
+    }
+
+    pub fn send_direct_acknowledgement(
+        command_id: impl Into<String>,
+        recipient_identity: [u8; 32],
+        message_id: impl Into<String>,
+    ) -> Result<Self, Error> {
+        let command_id = command_id.into();
+        Self::send_direct_application(
+            command_id.clone(),
+            recipient_identity,
+            proto::DirectApplication {
+                application_id: command_id,
+                body: Some(proto::direct_application::Body::Acknowledgement(
+                    proto::DirectAcknowledgement {
+                        message_id: message_id.into(),
+                    },
+                )),
+            },
+        )
+    }
+
+    fn send_direct_application(
+        command_id: String,
+        recipient_identity: [u8; 32],
+        application: proto::DirectApplication,
+    ) -> Result<Self, Error> {
         let inner = proto::ClientCommand {
             version: PROTOCOL_VERSION,
-            command_id: command_id.clone(),
-            body: Some(proto::client_command::Body::SendDirectMessage(
-                proto::SendDirectMessage {
+            command_id,
+            body: Some(proto::client_command::Body::SendDirectApplication(
+                proto::SendDirectApplication {
                     recipient_identity: recipient_identity.to_vec(),
-                    message: Some(proto::DirectMessage {
-                        message_id: command_id,
-                        text: text.into(),
-                        reply_to_message_id: reply_to_message_id.into(),
-                        sender_timestamp_ms,
-                    }),
+                    application: Some(application),
                 },
             )),
         };

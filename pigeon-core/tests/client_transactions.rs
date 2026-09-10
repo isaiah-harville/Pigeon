@@ -500,11 +500,20 @@ fn inbound_pairwise_control_is_decrypted_and_dispatched_inside_one_transaction()
         )
         .unwrap();
     let event = wire_proto::AppEvent::decode(received.events[0].encode().as_slice()).unwrap();
-    let Some(wire_proto::app_event::Body::DirectMessageReceived(message)) = event.body else {
+    let Some(wire_proto::app_event::Body::DirectApplicationReceived(application)) = event.body
+    else {
         panic!("expected direct message")
     };
-    assert_eq!(message.sender_identity, TestIdentity::new(2).root_public());
-    assert_eq!(message.message.unwrap().text, "hello");
+    assert_eq!(
+        application.sender_identity,
+        TestIdentity::new(2).root_public()
+    );
+    let Some(wire_proto::direct_application::Body::Message(message)) =
+        application.application.unwrap().body
+    else {
+        panic!("expected direct message body")
+    };
+    assert_eq!(message.text, "hello");
     let duplicate = alice
         .execute(ClientCommand::apply_pairwise_control("direct-duplicate", direct.payload).unwrap())
         .unwrap();
@@ -517,6 +526,40 @@ fn inbound_pairwise_control_is_decrypted_and_dispatched_inside_one_transaction()
             .iter()
             .any(|pending| pending.event_id == event.event_id)
     );
+
+    let acknowledged = alice
+        .execute(
+            ClientCommand::send_direct_acknowledgement(
+                "ack-direct-message",
+                TestIdentity::new(2).root_public(),
+                "direct-message",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let acknowledgement =
+        wire_proto::OutboundItem::decode(acknowledged.outbound[0].encode().as_slice()).unwrap();
+    let received_ack = bob
+        .execute(
+            ClientCommand::apply_pairwise_control(
+                "bob-receives-direct-ack",
+                acknowledgement.payload,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let ack_event =
+        wire_proto::AppEvent::decode(received_ack.events[0].encode().as_slice()).unwrap();
+    let Some(wire_proto::app_event::Body::DirectApplicationReceived(application)) = ack_event.body
+    else {
+        panic!("expected direct acknowledgement")
+    };
+    let Some(wire_proto::direct_application::Body::Acknowledgement(ack)) =
+        application.application.unwrap().body
+    else {
+        panic!("expected direct acknowledgement body")
+    };
+    assert_eq!(ack.message_id, "direct-message");
 
     alice
         .execute(

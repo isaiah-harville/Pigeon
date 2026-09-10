@@ -127,7 +127,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             proto::client_command::Body::RegisterPairwiseContact(register) => {
                 self.stage_register_pairwise_contact(register, &mut candidate)?;
             }
-            proto::client_command::Body::SendDirectMessage(send) => {
+            proto::client_command::Body::SendDirectApplication(send) => {
                 let recipient = send
                     .recipient_identity
                     .as_slice()
@@ -136,8 +136,8 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 let item = self.stage_pairwise_payload(
                     &command.inner.command_id,
                     recipient,
-                    proto::pairwise_payload::Body::DirectMessage(
-                        send.message.clone().ok_or(Error::MalformedBundle)?,
+                    proto::pairwise_payload::Body::DirectApplication(
+                        send.application.clone().ok_or(Error::MalformedBundle)?,
                     ),
                     &mut candidate,
                 )?;
@@ -314,18 +314,20 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 }
                 let payload = self.stage_apply_pairwise_control(inbound, candidate)?;
                 match payload.body.ok_or(Error::MalformedBundle)? {
-                    proto::pairwise_payload::Body::DirectMessage(message) => {
-                        crate::wire::validate_direct_message(&message)?;
-                        let event_id =
-                            direct_message_event_id(&payload.sender_identity, &message.message_id);
+                    proto::pairwise_payload::Body::DirectApplication(application) => {
+                        crate::wire::validate_direct_application(&application)?;
+                        let event_id = direct_application_event_id(
+                            &payload.sender_identity,
+                            &application.application_id,
+                        );
                         output.events.push(crate::client::AppEvent {
                             inner: proto::AppEvent {
                                 version: PROTOCOL_VERSION,
                                 event_id,
-                                body: Some(proto::app_event::Body::DirectMessageReceived(
-                                    proto::DirectMessageReceived {
+                                body: Some(proto::app_event::Body::DirectApplicationReceived(
+                                    proto::DirectApplicationReceived {
                                         sender_identity: payload.sender_identity,
-                                        message: Some(message),
+                                        application: Some(application),
                                     },
                                 )),
                             },
@@ -388,12 +390,12 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
     }
 }
 
-fn direct_message_event_id(sender_identity: &[u8], message_id: &str) -> String {
+fn direct_application_event_id(sender_identity: &[u8], application_id: &str) -> String {
     let mut digest = Sha256::new();
-    digest.update(b"pigeon.direct-message.event.v1\0");
+    digest.update(b"pigeon.direct-application.event.v1\0");
     digest.update(sender_identity);
-    digest.update(message_id.as_bytes());
-    format!("direct-message:{:x}", digest.finalize())
+    digest.update(application_id.as_bytes());
+    format!("direct-application:{:x}", digest.finalize())
 }
 
 fn pairwise_account(state: &proto::ClientCheckpoint) -> Result<Option<PlatformAccount>, Error> {

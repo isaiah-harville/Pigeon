@@ -10,6 +10,7 @@ public struct PigeonCoreCommand: Equatable, Sendable {
     case ensurePairwiseAccount
     case registerPairwiseContact(PigeonRegisterPairwiseContact)
     case sendPairwiseControl(PigeonSendPairwiseControl)
+    case sendDirectApplication(PigeonSendDirectApplication)
   }
 
   public let id: String
@@ -245,6 +246,7 @@ public struct PigeonCoreEvent: Equatable, Sendable {
     case groupPolicyChanged(PigeonGroupPolicyChangedEvent)
     case groupDeliveryChanged(PigeonGroupDeliveryChangedEvent)
     case groupSecurityWarning(PigeonGroupSecurityWarningEvent)
+    case directApplicationReceived(PigeonDirectApplicationReceivedEvent)
   }
 
   public let id: String
