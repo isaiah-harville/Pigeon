@@ -560,6 +560,14 @@ fn inbound_pairwise_control_is_decrypted_and_dispatched_inside_one_transaction()
         panic!("expected direct acknowledgement body")
     };
     assert_eq!(ack.message_id, "direct-message");
+    let bob_snapshot =
+        wire_proto::ClientSnapshot::decode(bob.snapshot().unwrap().encode().as_slice()).unwrap();
+    assert!(
+        bob_snapshot
+            .pending_outbound
+            .iter()
+            .all(|item| item.item_id != "direct-message")
+    );
 
     alice
         .execute(

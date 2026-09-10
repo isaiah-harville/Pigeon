@@ -76,7 +76,9 @@ final class PairwiseRelayTransport {
   }
 
   func reconfigure(snapshot: PigeonCoreSnapshot) {
-    let effects = snapshot.pendingOutbound.compactMap(effect)
+    let effects = snapshot.pendingOutbound.compactMap { item in
+      item.localOnly ? nil : effect(item)
+    }
     let effectsByRelay = Dictionary(grouping: effects) { routedEffect in
       routedEffect.relay
     }

@@ -88,7 +88,7 @@ extension SessionManager {
     event.transientOutbox = isEphemeral(current)
     guard record(event, for: contact.id) else { return }
     armDeliveryDeadline(messageID: event.id, contactID: contact.id)
-    if establishedContactIDs.contains(contact.id) {
+    if canUseCorePairwise(with: contact) || establishedContactIDs.contains(contact.id) {
       transmit(event, to: current)
     } else {
       ensureEstablishing(contactID: contact.id)

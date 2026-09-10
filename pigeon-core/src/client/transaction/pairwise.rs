@@ -131,6 +131,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     .map_err(|_| Error::MalformedBundle)?,
                 payload,
             }),
+            false,
             candidate,
         )
     }
@@ -140,6 +141,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         item_id: &str,
         recipient: [u8; 32],
         body: proto::pairwise_payload::Body,
+        local_only: bool,
         candidate: &mut proto::ClientCheckpoint,
     ) -> Result<proto::OutboundItem, Error> {
         let contact = candidate
@@ -194,6 +196,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 body: Some(body),
             }
             .encode_to_vec(),
+            local_only,
         })
     }
 

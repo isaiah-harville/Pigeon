@@ -109,6 +109,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                         relay_url: stored.relay_url,
                         destination: engine.policy().coordination_id().to_vec(),
                         payload: acknowledgement.encode(),
+                        local_only: false,
                     },
                 });
             }
@@ -234,6 +235,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 relay_url: stored.relay_url.clone(),
                 destination: policy.coordination_id().to_vec(),
                 payload: fetch.encode_to_vec(),
+                local_only: false,
             },
         });
         Ok(())
@@ -362,6 +364,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 relay_url: stored.relay_url,
                 destination: engine.policy().coordination_id().to_vec(),
                 payload: ciphertext.encode(),
+                local_only: false,
             },
         });
         Ok(())

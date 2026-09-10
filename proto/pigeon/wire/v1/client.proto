@@ -40,6 +40,7 @@ message SendPairwiseControl {
 message SendDirectApplication {
   bytes recipient_identity = 1;
   DirectApplication application = 2;
+  bool local_only = 3;
 }
 
 message DirectApplicationReceived {
@@ -116,6 +117,7 @@ message OutboundItem {
   string relay_url = 3;
   bytes destination = 4;
   bytes payload = 5;
+  bool local_only = 6;
 }
 
 message ClientOutput {

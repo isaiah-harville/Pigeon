@@ -111,6 +111,7 @@ extension PigeonCoreOutboundItem {
     relayURL = proto.relayURL
     destination = proto.destination
     payload = proto.payload
+    localOnly = proto.localOnly
   }
 
   public func relayAction() throws -> PigeonCoreRelayAction {

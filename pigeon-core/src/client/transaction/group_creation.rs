@@ -88,6 +88,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                         relay_url: create.relay_url.clone(),
                         destination: member.clone(),
                         payload: request_payload.clone(),
+                        local_only: false,
                     },
                 }),
         );
@@ -123,6 +124,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 relay_url: request.relay_url().to_owned(),
                 destination: request.requester_identity().to_vec(),
                 payload: material.encode(),
+                local_only: false,
             },
         });
         Ok(())
@@ -265,6 +267,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 relay_url: policy.relay_url().to_owned(),
                 destination: policy.coordination_id().to_vec(),
                 payload: registration.encode(),
+                local_only: false,
             },
         });
         output.outbound.push(OutboundItem {
@@ -279,6 +282,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     candidate: GroupMutationCandidate::new(Vec::new(), initial_commit)?.encode(),
                 }
                 .encode_to_vec(),
+                local_only: false,
             },
         });
         output
@@ -295,6 +299,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                             relay_url: policy.relay_url().to_owned(),
                             destination: member,
                             payload: welcome.clone(),
+                            local_only: false,
                         },
                     }),
             );

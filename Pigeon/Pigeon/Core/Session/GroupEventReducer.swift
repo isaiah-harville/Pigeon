@@ -21,6 +21,8 @@ enum GroupEventReducer {
       try reduceDelivery(value, into: &conversation)
     case .groupSecurityWarning(let value):
       try reduceWarning(value, eventID: event.id, into: &conversation)
+    case .directApplicationReceived:
+      throw GroupEventReductionError.unsupportedEvent
     }
     conversation.markProcessed(event.id)
   }

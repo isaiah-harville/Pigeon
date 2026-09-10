@@ -21,8 +21,10 @@ pub(super) fn decode_message_id(encoded: &str) -> Result<crate::GroupMessageId, 
         return Err(Error::MalformedBundle);
     }
     let mut bytes = [0_u8; 16];
-    for (index, pair) in encoded.as_bytes().chunks_exact(2).enumerate() {
-        bytes[index] = (hex_nibble(pair[0])? << 4) | hex_nibble(pair[1])?;
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        let offset = index * 2;
+        *byte = (hex_nibble(encoded.as_bytes()[offset])? << 4)
+            | hex_nibble(encoded.as_bytes()[offset + 1])?;
     }
     Ok(crate::GroupMessageId::from_bytes(bytes))
 }

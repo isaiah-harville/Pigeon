@@ -46,7 +46,7 @@ extension SessionManager {
     guard isUnlocked else { return }  // can't decrypt/sign or read contacts yet
     expireStaleDeliveries(now: Date())
     for contact in contacts {
-      if establishedContactIDs.contains(contact.id) {
+      if canUseCorePairwise(with: contact) || establishedContactIDs.contains(contact.id) {
         sendPending(to: contact)
       } else {
         ensureEstablishing(contactID: contact.id)
@@ -94,6 +94,19 @@ extension SessionManager {
   /// cleared only when the peer ACKs, so a message survives disconnects and
   /// lost packets; duplicates are deduplicated by the recipient.
   func sendPending(to contact: Contact) {
+    if canUseCorePairwise(with: contact) {
+      if let snapshot = try? coreClient?.stateSnapshot() {
+        let contactItemIDs = snapshot.pendingOutbound
+          .filter { $0.kind == .pairwise && $0.destination == contact.id }
+          .map(\.id)
+        meshedPairwiseOutboundIDs.subtract(contactItemIDs)
+        fanOutPairwiseMesh(snapshot: snapshot)
+        if relay != nil {
+          pairwiseRelay.reconfigure(snapshot: snapshot)
+        }
+      }
+      return
+    }
     guard establishedContactIDs.contains(contact.id) else { return }
     // For a session whose initiation isn't yet acknowledged, resend the
     // initiation first so it always precedes the messages, even on reorder/loss.

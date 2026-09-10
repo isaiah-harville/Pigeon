@@ -7,6 +7,7 @@ import Foundation
 import PigeonFFI
 
 extension SessionManager {
+  var myID: Data { identity.publicKey.rawRepresentation }
 
   func setAppActive(_ active: Bool) { presenter.setAppActive(active) }
   func dismissBanner() { presenter.dismissBanner() }
@@ -281,7 +282,7 @@ extension SessionManager {
     for messageID in conversationStore.reviveExpired(contactID: contact.id) {
       armDeliveryDeadline(messageID: messageID, contactID: contact.id)
     }
-    if establishedContactIDs.contains(contact.id) {
+    if canUseCorePairwise(with: contact) || establishedContactIDs.contains(contact.id) {
       sendPending(to: contact)
     } else {
       ensureEstablishing(contactID: contact.id)

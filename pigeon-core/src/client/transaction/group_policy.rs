@@ -144,6 +144,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     relay_url: prior.relay_url().to_owned(),
                     destination: prior.coordination_id().to_vec(),
                     payload: control.encode(),
+                    local_only: false,
                 },
             });
         }
@@ -160,6 +161,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     relay_url: prior.relay_url().to_owned(),
                     destination: pending.welcome_destination.clone(),
                     payload: pending.welcome.clone(),
+                    local_only: false,
                 },
             });
         }
@@ -234,6 +236,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     candidate: coordinator_candidate,
                 }
                 .encode_to_vec(),
+                local_only: false,
             },
         });
         Ok(())
@@ -363,6 +366,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     departing_identity: departing.to_vec(),
                 }
                 .encode_to_vec(),
+                local_only: false,
             },
         });
         Ok(())
@@ -507,6 +511,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 relay_url: stored.relay_url,
                 destination: subject.to_vec(),
                 payload: request.encode(),
+                local_only: false,
             },
         });
         Ok(())
@@ -531,6 +536,7 @@ fn coordinator_submission(
                 candidate,
             }
             .encode_to_vec(),
+            local_only: false,
         },
     }
 }

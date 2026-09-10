@@ -5,6 +5,7 @@ extension PigeonSendDirectApplication {
     var body = Pigeon_Wire_V1_SendDirectApplication()
     body.recipientIdentity = recipientIdentity
     body.application = try application.proto()
+    body.localOnly = localOnly
     return body
   }
 }

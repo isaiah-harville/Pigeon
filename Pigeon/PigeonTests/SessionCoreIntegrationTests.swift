@@ -196,7 +196,7 @@ final class SessionCoreIntegrationTests: XCTestCase {
     XCTAssertEqual(try fixture.manager.coreClient?.checkpointGeneration(), initialGeneration)
   }
 
-  private func makeFixture() throws -> (manager: SessionManager, store: EncryptedStore) {
+  func makeFixture() throws -> (manager: SessionManager, store: EncryptedStore) {
     let identity = try IdentityManager(
       store: InMemoryKeyStore(seed: Data(repeating: 23, count: 32)))
     let manager = SessionManager(
@@ -223,7 +223,7 @@ final class SessionCoreIntegrationTests: XCTestCase {
       coordinatorPublicKey: Data(repeating: 7, count: 32))
   }
 
-  private func wipe(_ store: EncryptedStore) {
+  func wipe(_ store: EncryptedStore) {
     store.wipe()
     store.companion(suffix: ".crypto").wipe()
     store.companion(suffix: ".transaction").wipe()
@@ -340,6 +340,44 @@ extension SessionCoreIntegrationTests {
 
     XCTAssertEqual(output.outbound.map(\.kind), [.pairwise])
     XCTAssertEqual(output.outbound.first?.relayURL, relay.absoluteString)
+  }
+}
+
+extension SessionCoreIntegrationTests {
+  func testDirectAcknowledgementEventUpdatesDurableDeliveryBeforeCoreAck() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    try fixture.manager.attachStore(fixture.store)
+    let peer = try PigeonAccount.fromIdentitySeed(seed: Data(repeating: 61, count: 32))
+    let peerBundle = try PigeonIdentityBundle(decoding: peer.identityBundle())
+    let contact = Contact(bundle: peerBundle, displayName: "Peer")
+    fixture.manager.contacts = [contact]
+    let contactID = contact.id
+    var message = ChatMessage(mine: true, text: "hello", pending: true)
+    message.id = try XCTUnwrap(UUID(uuidString: "11111111-1111-1111-1111-111111111111"))
+    fixture.manager.conversationStore.record(message, for: contactID, ephemeral: false)
+    XCTAssertTrue(fixture.manager.persist())
+    let event = PigeonCoreEvent(
+      id: "direct-ack-event",
+      body: .directApplicationReceived(
+        PigeonDirectApplicationReceivedEvent(
+          senderIdentity: contactID,
+          application: PigeonDirectApplication(
+            id: "22222222-2222-2222-2222-222222222222",
+            body: .acknowledgement(messageID: message.id.uuidString)))))
+
+    try fixture.manager.absorbCoreEvents([event])
+
+    XCTAssertEqual(
+      fixture.manager.conversationStore.delivery(messageID: message.id, contactID: contactID),
+      .delivered)
+    let restored = SessionManager(
+      identity: fixture.manager.identity,
+      mesh: MeshService(transport: SessionCoreNoopTransport()))
+    try restored.attachStore(fixture.store)
+    XCTAssertEqual(
+      restored.conversationStore.delivery(messageID: message.id, contactID: contactID),
+      .delivered)
   }
 }
 

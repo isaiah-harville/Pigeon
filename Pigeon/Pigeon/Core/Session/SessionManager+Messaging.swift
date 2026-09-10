@@ -258,60 +258,6 @@ extension SessionManager {
     return persist()
   }
 
-  // MARK: - Transport mode (relay default; Bluetooth opt-in)
-
-  /// Switches a chat between the relay (default) and Bluetooth, mirroring the
-  /// change to the peer so both ends of the chat use the same link.
-  func setChatUsesBluetooth(_ useBluetooth: Bool, for contact: Contact) {
-    guard let current = contacts.first(where: { $0.id == contact.id }),
-      current.requestState == .none
-    else { return }
-    guard bluetoothChatIDs.contains(contact.id) != useBluetooth else { return }
-    applyTransport(useBluetooth: useBluetooth, for: contact.id, announce: true)
-    sendTransportState(to: contact)
-  }
-
-  /// Applies a transport-mode change locally and adds a centered notice in the
-  /// chat (matching how ephemeral announces itself). The relay notice names the
-  /// host this side will actually use, so each end shows its own relay.
-  func applyTransport(useBluetooth: Bool, for contactID: Data, announce: Bool) {
-    let changed = bluetoothChatIDs.contains(contactID) != useBluetooth
-    if useBluetooth {
-      bluetoothChatIDs.insert(contactID)
-    } else {
-      bluetoothChatIDs.remove(contactID)
-    }
-    if changed && announce {
-      let text: String
-      if useBluetooth {
-        text = "Switched to Local"
-      } else if let host = relayHost(for: contactID) {
-        text = "Switched to relay · \(host)"
-      } else {
-        text = "Switched to relay"
-      }
-      record(ChatMessage(mine: false, text: text, system: true), for: contactID)
-    }
-    persist()
-    // Transport-switched event: resend unacked messages over the link this
-    // chat now uses, so a switch flushes pending immediately (replacing the
-    // timer's eventual retry). `sendPending` no-ops until the session exists.
-    if changed, let contact = contacts.first(where: { $0.id == contactID }) {
-      sendPending(to: contact)
-    }
-  }
-
-  /// Sends our current transport choice for this chat to the peer (encrypted).
-  func sendTransportState(to contact: Contact) {
-    guard let session = sessions[contact.id], establishedContactIDs.contains(contact.id) else {
-      return
-    }
-    let byte: UInt8 = bluetoothChatIDs.contains(contact.id) ? 1 : 0
-    let command = Data([0x02, byte])  // 0x02 = transport cmd (1 = Bluetooth, 0 = relay)
-    guard let ciphertext = try? session.encrypt(plaintext: command) else { return }
-    sendEnvelope(.control, payload: ciphertext, to: contact)
-  }
-
   func handleControl(_ payload: Data, from contact: Contact) -> Bool {
     guard let session = sessions[contact.id],
       let plaintext = try? session.decrypt(message: payload),
@@ -351,7 +297,7 @@ extension SessionManager {
     event.transientOutbox = isEphemeral(contact)
     guard record(event, for: contact.id) else { return }
     armDeliveryDeadline(messageID: event.id, contactID: contact.id)
-    if establishedContactIDs.contains(contact.id) {
+    if canUseCorePairwise(with: contact) || establishedContactIDs.contains(contact.id) {
       transmit(event, to: contact)
     } else {
       ensureEstablishing(contactID: contact.id)

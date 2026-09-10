@@ -196,7 +196,10 @@ extension SessionManager {
     let refreshed = try coreClient.stateSnapshot()
     groupRelay.reconfigure(snapshot: refreshed)
     fanOutGroupMesh(snapshot: refreshed)
-    if relay != nil { pairwiseRelay.reconfigure(snapshot: refreshed) }
+    fanOutPairwiseMesh(snapshot: refreshed)
+    if relay != nil {
+      pairwiseRelay.reconfigure(snapshot: refreshed)
+    }
     return output
   }
 
@@ -205,8 +208,13 @@ extension SessionManager {
   func absorbCoreEvents(_ events: [PigeonCoreEvent]) throws {
     guard !events.isEmpty else { return }
     var candidate = groupConversations
+    var directEvents: [PigeonDirectApplicationReceivedEvent] = []
     for event in events {
-      let groupID = groupID(for: event)
+      if case .directApplicationReceived(let direct) = event.body {
+        directEvents.append(direct)
+        continue
+      }
+      guard let groupID = groupID(for: event) else { throw PlatformError.InvalidOutput }
       var conversation = candidate[groupID] ?? GroupConversation(id: groupID)
       try GroupEventReducer.reduce(event, into: &conversation, localIdentity: myID)
       candidate[groupID] = conversation
@@ -214,6 +222,9 @@ extension SessionManager {
     if candidate != groupConversations {
       groupConversations = candidate
       guard persist() else { throw PlatformError.Unavailable }
+    }
+    for event in directEvents {
+      try absorbDirectCoreEvent(event)
     }
     try acknowledgeCoreEvents(events.map(\.id))
   }
@@ -301,7 +312,7 @@ extension SessionManager {
     applyCoreSnapshot(try coreClient.stateSnapshot())
   }
 
-  private func groupID(for event: PigeonCoreEvent) -> Data {
+  private func groupID(for event: PigeonCoreEvent) -> Data? {
     switch event.body {
     case .groupCreated(let value): value.groupID
     case .groupMessageReceived(let value): value.groupID
@@ -309,6 +320,7 @@ extension SessionManager {
     case .groupPolicyChanged(let value): value.groupID
     case .groupDeliveryChanged(let value): value.groupID
     case .groupSecurityWarning(let value): value.groupID
+    case .directApplicationReceived: nil
     }
   }
 }

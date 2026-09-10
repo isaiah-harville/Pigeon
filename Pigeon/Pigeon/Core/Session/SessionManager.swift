@@ -94,8 +94,6 @@ final class SessionManager {
   /// bypass it. See `RehandshakeGate`.
   var rehandshakeGate = RehandshakeGate(cooldown: RehandshakeGate.defaultCooldown)
 
-  var myID: Data { identity.publicKey.rawRepresentation }
-
   /// Locked until the vault is unlocked with Face ID / Touch ID.
   private(set) var isUnlocked = false
 
@@ -128,6 +126,7 @@ final class SessionManager {
   /// Group relay effects already copied onto the best-effort local mesh during
   /// this process. The relay effect remains pending until the relay confirms it.
   var meshedCoreOutboundIDs: Set<String> = []
+  var meshedPairwiseOutboundIDs: Set<String> = []
 
   /// Configured relay endpoints, mirrored here so the value is observable —
   /// changing it refreshes anything that depends on it (e.g. the QR card, which
@@ -224,7 +223,10 @@ final class SessionManager {
     let refreshedCoreSnapshot = try coreClient.stateSnapshot()
     groupRelay.reconfigure(snapshot: refreshedCoreSnapshot)
     fanOutGroupMesh(snapshot: refreshedCoreSnapshot)
-    if relay != nil { pairwiseRelay.reconfigure(snapshot: refreshedCoreSnapshot) }
+    fanOutPairwiseMesh(snapshot: refreshedCoreSnapshot)
+    if relay != nil {
+      pairwiseRelay.reconfigure(snapshot: refreshedCoreSnapshot)
+    }
     refreshRelay()  // pick up loaded contacts' relays
     // Drain anything buffered while locked *before* re-driving establishment, so
     // a buffered initiation/rehandshake stands up the session itself and the
@@ -296,7 +298,7 @@ final class SessionManager {
     // window the status drops to "Not delivered" with a resend. A
     // successful transmit below moves it to `.sent`, which the deadline ignores.
     armDeliveryDeadline(messageID: message.id, contactID: contact.id)
-    if establishedContactIDs.contains(contact.id) {
+    if canUseCorePairwise(with: contact) || establishedContactIDs.contains(contact.id) {
       transmit(message, to: contact)
     } else {
       note(.messageQueued)
@@ -308,6 +310,18 @@ final class SessionManager {
   /// message with the link it's going out on now, so a pending message resent
   /// after a transport switch reflects reality in its long-press detail.
   func transmit(_ message: ChatMessage, to contact: Contact) {
+    if canUseCorePairwise(with: contact) {
+      guard transmitDirectCore(message, to: contact) else { return }
+      let channel = outboundChannel(for: contact)
+      if message.transport != channel {
+        setTransport(channel, messageID: message.id, contactID: contact.id)
+      }
+      if conversationStore.delivery(messageID: message.id, contactID: contact.id) != .delivered {
+        setDelivery(.sent, messageID: message.id, contactID: contact.id)
+        persist()
+      }
+      return
+    }
     guard let session = sessions[contact.id],
       let payload = Self.encodeMessage(message),
       let ciphertext = try? session.encrypt(plaintext: payload)
@@ -396,6 +410,11 @@ extension SessionManager {
 
   /// Sends our current ephemeral state for this chat to the peer (encrypted).
   func sendEphemeralState(to contact: Contact) {
+    if canUseCorePairwise(with: contact) {
+      _ = try? sendDirectCoreApplication(
+        .ephemeralState(enabled: ephemeralContactIDs.contains(contact.id)), id: UUID(), to: contact)
+      return
+    }
     guard let session = sessions[contact.id], establishedContactIDs.contains(contact.id) else {
       return
     }

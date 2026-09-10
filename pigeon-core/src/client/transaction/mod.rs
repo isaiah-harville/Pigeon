@@ -133,12 +133,13 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     .as_slice()
                     .try_into()
                     .map_err(|_| Error::InvalidKey)?;
+                let application = send.application.clone().ok_or(Error::MalformedBundle)?;
+                let item_id = application.application_id.clone();
                 let item = self.stage_pairwise_payload(
-                    &command.inner.command_id,
+                    &item_id,
                     recipient,
-                    proto::pairwise_payload::Body::DirectApplication(
-                        send.application.clone().ok_or(Error::MalformedBundle)?,
-                    ),
+                    proto::pairwise_payload::Body::DirectApplication(application),
+                    send.local_only,
                     &mut candidate,
                 )?;
                 output
@@ -316,6 +317,15 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 match payload.body.ok_or(Error::MalformedBundle)? {
                     proto::pairwise_payload::Body::DirectApplication(application) => {
                         crate::wire::validate_direct_application(&application)?;
+                        if let Some(proto::direct_application::Body::Acknowledgement(ack)) =
+                            &application.body
+                        {
+                            candidate.pending_outbound.retain(|item| {
+                                item.item_id != ack.message_id
+                                    || item.kind != proto::OutboundKind::Pairwise as i32
+                                    || item.destination != payload.sender_identity
+                            });
+                        }
                         let event_id = direct_application_event_id(
                             &payload.sender_identity,
                             &application.application_id,

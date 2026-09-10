@@ -26,6 +26,11 @@ extension SessionManager {
   /// off establishment but drop this reaction — local state already reflects it,
   /// and the peer simply won't see a reaction made while disconnected.
   private func sendReaction(_ emoji: String?, messageID: UUID, to contact: Contact) {
+    if canUseCorePairwise(with: contact) {
+      _ = try? sendDirectCoreApplication(
+        .reaction(messageID: messageID.uuidString, emoji: emoji), id: UUID(), to: contact)
+      return
+    }
     guard let session = sessions[contact.id], establishedContactIDs.contains(contact.id),
       let ciphertext = try? session.encrypt(
         plaintext: Self.encodeReaction(messageID: messageID, emoji: emoji))

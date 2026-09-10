@@ -225,16 +225,18 @@ public struct PigeonCoreOutboundItem: Equatable, Sendable {
   public let relayURL: String
   public let destination: Data
   public let payload: Data
+  public let localOnly: Bool
 
   public init(
     id: String, kind: PigeonCoreOutboundKind, relayURL: String,
-    destination: Data, payload: Data
+    destination: Data, payload: Data, localOnly: Bool = false
   ) {
     self.id = id
     self.kind = kind
     self.relayURL = relayURL
     self.destination = destination
     self.payload = payload
+    self.localOnly = localOnly
   }
 }
 

@@ -3,10 +3,15 @@ import Foundation
 public struct PigeonSendDirectApplication: Equatable, Sendable {
   public let recipientIdentity: Data
   public let application: PigeonDirectApplication
+  public let localOnly: Bool
 
-  public init(recipientIdentity: Data, application: PigeonDirectApplication) {
+  public init(
+    recipientIdentity: Data, application: PigeonDirectApplication,
+    localOnly: Bool = false
+  ) {
     self.recipientIdentity = recipientIdentity
     self.application = application
+    self.localOnly = localOnly
   }
 }
 

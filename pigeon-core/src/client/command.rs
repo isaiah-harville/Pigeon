@@ -66,6 +66,7 @@ impl ClientCommand {
                 proto::SendDirectApplication {
                     recipient_identity: recipient_identity.to_vec(),
                     application: Some(application),
+                    local_only: false,
                 },
             )),
         };
