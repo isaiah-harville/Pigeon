@@ -11,6 +11,8 @@ public struct PigeonCoreCommand: Equatable, Sendable {
     case registerPairwiseContact(PigeonRegisterPairwiseContact)
     case sendPairwiseControl(PigeonSendPairwiseControl)
     case sendDirectApplication(PigeonSendDirectApplication)
+    case setPairwiseRelationship(PigeonSetPairwiseRelationship)
+    case removePairwiseContact(identity: Data)
   }
 
   public let id: String
@@ -150,12 +152,6 @@ public enum PigeonGroupDeliveryState: Equatable, Sendable {
   case unknown(Int)
 }
 
-public struct PigeonCoreOutput: Equatable, Sendable {
-  public let checkpointGeneration: UInt64
-  public let events: [PigeonCoreEvent]
-  public let outbound: [PigeonCoreOutboundItem]
-}
-
 /// Durable, read-only application projection rebuilt from the core checkpoint.
 public struct PigeonCoreSnapshot: Equatable, Sendable {
   public let checkpointGeneration: UInt64
@@ -165,19 +161,22 @@ public struct PigeonCoreSnapshot: Equatable, Sendable {
   /// Verified public bundle for async pairwise establishment. Empty until the
   /// matching core-owned account has been durably initialized.
   public let pairwisePrekeyBundle: Data
+  public let pairwiseContacts: [PigeonPairwiseContactState]
 
   public init(
     checkpointGeneration: UInt64,
     groups: [PigeonGroupState],
     pendingOutbound: [PigeonCoreOutboundItem] = [],
     pendingEvents: [PigeonCoreEvent] = [],
-    pairwisePrekeyBundle: Data = Data()
+    pairwisePrekeyBundle: Data = Data(),
+    pairwiseContacts: [PigeonPairwiseContactState] = []
   ) {
     self.checkpointGeneration = checkpointGeneration
     self.groups = groups
     self.pendingOutbound = pendingOutbound
     self.pendingEvents = pendingEvents
     self.pairwisePrekeyBundle = pairwisePrekeyBundle
+    self.pairwiseContacts = pairwiseContacts
   }
 }
 

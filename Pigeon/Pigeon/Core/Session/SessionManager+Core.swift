@@ -129,16 +129,15 @@ extension SessionManager {
   }
 
   func registerPairwiseContacts() throws {
-    for contact in contacts {
+    for contact in contacts where contact.requestState != .incoming {
       try registerPairwiseContactIfAvailable(contact)
     }
   }
 
   func registerPairwiseContactIfAvailable(_ contact: Contact) throws {
-    guard let prekey = contact.pairwiseControlPrekeyBundle,
-      let relayURL = contact.preferredRelayURL ?? contact.relayURLs.first
-    else { return }
-    let transcript = contact.id + prekey.encoded + Data(relayURL.absoluteString.utf8)
+    guard let prekey = contact.pairwiseControlPrekeyBundle else { return }
+    let relayURL = (contact.preferredRelayURL ?? contact.relayURLs.first)?.absoluteString ?? ""
+    let transcript = contact.id + prekey.encoded + Data(relayURL.utf8)
     let commandID = SHA256.hash(data: transcript)
       .map { String(format: "%02x", $0) }
       .joined()
@@ -148,7 +147,30 @@ extension SessionManager {
         body: .registerPairwiseContact(
           PigeonRegisterPairwiseContact(
             prekeyBundle: prekey.encoded,
-            relayURL: relayURL.absoluteString))))
+            relayURL: relayURL,
+            relationship: contact.requestState == .outgoing ? .outgoingRequest : .contact))))
+  }
+
+  func setCorePairwiseRelationship(
+    _ relationship: PigeonPairwiseRelationship, for identity: Data
+  ) throws {
+    try executeCore(
+      PigeonCoreCommand(
+        id: "set-pairwise-relationship:\(UUID().uuidString.lowercased())",
+        body: .setPairwiseRelationship(
+          PigeonSetPairwiseRelationship(identity: identity, relationship: relationship))))
+  }
+
+  func removeCorePairwiseContact(_ identity: Data) {
+    guard coreClient != nil else { return }
+    do {
+      try executeCore(
+        PigeonCoreCommand(
+          id: "remove-pairwise-contact:\(identity.hexEncoded):\(UUID().uuidString.lowercased())",
+          body: .removePairwiseContact(identity: identity)))
+    } catch {
+      note(.persistenceFailed)
+    }
   }
 
   func makeGroupRelay() -> GroupRelayTransport {
@@ -178,6 +200,30 @@ extension SessionManager {
   func applyCoreSnapshot(_ snapshot: PigeonCoreSnapshot) {
     guard snapshot.checkpointGeneration >= coreSnapshotGeneration else { return }
     groups = snapshot.groups
+    let sendersWithPendingEvents = Set(
+      snapshot.pendingEvents.compactMap { event -> Data? in
+        guard case .directApplicationReceived(let direct) = event.body else { return nil }
+        return direct.senderIdentity
+      })
+    for state in snapshot.pairwiseContacts {
+      guard let index = contacts.firstIndex(where: { $0.id == state.identity }) else { continue }
+      switch state.relationship {
+      case .contact:
+        contacts[index].requestState = .none
+        contacts[index].requestCreatedAt = nil
+      case .incomingRequest:
+        contacts[index].requestState = .incoming
+        contacts[index].requestCreatedAt = contacts[index].requestCreatedAt ?? Date()
+      case .outgoingRequest:
+        contacts[index].requestState = .outgoing
+      case .unknown:
+        continue
+      }
+      if !sendersWithPendingEvents.contains(state.identity) {
+        contacts[index].introductionReceived = state.introductionReceived
+        contacts[index].introductionSent = state.introductionSent
+      }
+    }
     coreSnapshotGeneration = snapshot.checkpointGeneration
   }
 

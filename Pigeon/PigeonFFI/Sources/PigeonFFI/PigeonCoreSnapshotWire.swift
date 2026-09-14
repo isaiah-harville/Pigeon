@@ -1,3 +1,9 @@
+public struct PigeonCoreOutput: Equatable, Sendable {
+  public let checkpointGeneration: UInt64
+  public let events: [PigeonCoreEvent]
+  public let outbound: [PigeonCoreOutboundItem]
+}
+
 extension PigeonCoreSnapshot {
   init(proto: Pigeon_Wire_V1_ClientSnapshot) throws {
     try self.init(
@@ -5,7 +11,18 @@ extension PigeonCoreSnapshot {
       groups: proto.groups.map(PigeonGroupState.init(proto:)),
       pendingOutbound: proto.pendingOutbound.map(PigeonCoreOutboundItem.init(proto:)),
       pendingEvents: proto.pendingEvents.map(PigeonCoreEvent.init(proto:)),
-      pairwisePrekeyBundle: proto.pairwisePrekeyBundle)
+      pairwisePrekeyBundle: proto.pairwisePrekeyBundle,
+      pairwiseContacts: proto.pairwiseContacts.map(PigeonPairwiseContactState.init(proto:)))
+  }
+}
+
+extension PigeonPairwiseContactState {
+  init(proto: Pigeon_Wire_V1_PairwiseContactState) {
+    self.init(
+      identity: proto.identity,
+      relationship: PigeonPairwiseRelationship(proto: proto.relationship),
+      introductionReceived: proto.introductionReceived,
+      introductionSent: proto.introductionSent)
   }
 }
 

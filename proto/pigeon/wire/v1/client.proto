@@ -18,6 +18,8 @@ message ClientCommand {
     RegisterPairwiseContact register_pairwise_contact = 16;
     SendPairwiseControl send_pairwise_control = 17;
     SendDirectApplication send_direct_application = 18;
+    SetPairwiseRelationship set_pairwise_relationship = 19;
+    RemovePairwiseContact remove_pairwise_contact = 20;
   }
 }
 
@@ -29,6 +31,23 @@ message EnsurePairwiseAccount {}
 message RegisterPairwiseContact {
   bytes prekey_bundle = 1;
   string relay_url = 2;
+  PairwiseRelationship relationship = 3;
+}
+
+enum PairwiseRelationship {
+  PAIRWISE_RELATIONSHIP_UNSPECIFIED = 0;
+  PAIRWISE_RELATIONSHIP_CONTACT = 1;
+  PAIRWISE_RELATIONSHIP_OUTGOING_REQUEST = 2;
+  PAIRWISE_RELATIONSHIP_INCOMING_REQUEST = 3;
+}
+
+message SetPairwiseRelationship {
+  bytes identity = 1;
+  PairwiseRelationship relationship = 2;
+}
+
+message RemovePairwiseContact {
+  bytes identity = 1;
 }
 
 message SendPairwiseControl {
@@ -41,11 +60,13 @@ message SendDirectApplication {
   bytes recipient_identity = 1;
   DirectApplication application = 2;
   bool local_only = 3;
+  bytes sender_contact_card = 4;
 }
 
 message DirectApplicationReceived {
   bytes sender_identity = 1;
   DirectApplication application = 2;
+  bytes sender_contact_card = 3;
 }
 
 message CreateGroup {
@@ -135,6 +156,14 @@ message ClientSnapshot {
   repeated OutboundItem pending_outbound = 3;
   repeated AppEvent pending_events = 4;
   bytes pairwise_prekey_bundle = 5;
+  repeated PairwiseContactState pairwise_contacts = 6;
+}
+
+message PairwiseContactState {
+  bytes identity = 1;
+  PairwiseRelationship relationship = 2;
+  bool introduction_received = 3;
+  bool introduction_sent = 4;
 }
 
 message GroupState {
@@ -179,6 +208,9 @@ message StoredPairwiseContact {
   bytes identity = 1;
   bytes prekey_bundle = 2;
   string relay_url = 3;
+  PairwiseRelationship relationship = 4;
+  bool introduction_received = 5;
+  bool introduction_sent = 6;
 }
 
 message StoredPairwiseSession {

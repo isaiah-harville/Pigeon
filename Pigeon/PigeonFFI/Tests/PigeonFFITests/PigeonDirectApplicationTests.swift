@@ -62,4 +62,24 @@ final class PigeonDirectApplicationTests: XCTestCase {
                 text: "hello directly", senderTimestampMilliseconds: 1_234,
                 replySnippet: "parent"))))))
   }
+
+  func testSnapshotMapsPairwiseRequestAdmission() throws {
+    var contact = Pigeon_Wire_V1_PairwiseContactState()
+    contact.identity = Data(repeating: 4, count: 32)
+    contact.relationship = .incomingRequest
+    contact.introductionReceived = true
+    var snapshot = Pigeon_Wire_V1_ClientSnapshot()
+    snapshot.checkpointGeneration = 9
+    snapshot.pairwiseContacts = [contact]
+
+    let mapped = try PigeonCoreSnapshot(proto: snapshot)
+
+    XCTAssertEqual(
+      mapped.pairwiseContacts,
+      [
+        PigeonPairwiseContactState(
+          identity: Data(repeating: 4, count: 32), relationship: .incomingRequest,
+          introductionReceived: true, introductionSent: false)
+      ])
+  }
 }

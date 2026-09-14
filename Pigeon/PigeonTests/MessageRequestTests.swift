@@ -33,7 +33,9 @@ final class MessageRequestTests: XCTestCase {
     XCTAssertTrue(
       sender.addContact(
         card.bundle, name: card.name, relayURLs: card.relayURLs,
-        prekeyBundle: card.prekeyBundle, admission: .outgoingRequest))
+        prekeys: ContactPrekeyBundles(
+          chat: card.prekeyBundle, control: card.pairwiseControlPrekeyBundle),
+        admission: .outgoingRequest))
   }
 
   func testScannedContactCanBecomeOutgoingMessageRequest() throws {
@@ -51,7 +53,9 @@ final class MessageRequestTests: XCTestCase {
     XCTAssertTrue(
       bob.addContact(
         aliceCard.bundle, name: aliceCard.name, relayURLs: aliceCard.relayURLs,
-        prekeyBundle: aliceCard.prekeyBundle, admission: .verifiedInPerson))
+        prekeys: ContactPrekeyBundles(
+          chat: aliceCard.prekeyBundle, control: aliceCard.pairwiseControlPrekeyBundle),
+        admission: .verifiedInPerson))
     let aliceOnBob = try XCTUnwrap(bob.contacts.first { $0.id == alice.myID })
 
     XCTAssertTrue(bob.beginMessageRequest(to: aliceOnBob.id))
@@ -93,6 +97,7 @@ final class MessageRequestTests: XCTestCase {
     XCTAssertFalse(
       b.messages(with: stagedAOnB).contains { $0.event == .screenshot },
       "system events cannot become an introduction")
+    XCTAssertFalse(stagedAOnB.introductionReceived)
     a.send("Hello from Alice", to: bOnA)
 
     let aOnB = try XCTUnwrap(b.contacts.first { $0.id == a.myID })
@@ -125,11 +130,31 @@ final class MessageRequestTests: XCTestCase {
     XCTAssertEqual(
       a.contacts.first { $0.id == b.myID }?.requestState, ContactRequestState.none)
     XCTAssertTrue(a.canSendMessage(to: bOnA))
+    XCTAssertEqual(
+      try a.coreClient?.stateSnapshot().pairwiseContacts.first { $0.identity == b.myID }?
+        .relationship,
+      .contact)
     a.setEphemeral(true, for: bOnA)
+    XCTAssertEqual(
+      try a.coreClient?.stateSnapshot().pairwiseContacts.first { $0.identity == b.myID }?
+        .relationship,
+      .contact)
     a.setChatUsesBluetooth(true, for: bOnA)
     XCTAssertTrue(a.isEphemeral(bOnA), "accepted chats can enable ephemeral mode")
     XCTAssertTrue(a.bluetoothChatIDs.contains(b.myID), "accepted chats can switch transport")
+    XCTAssertEqual(
+      try a.coreClient?.stateSnapshot().pairwiseContacts.first { $0.identity == b.myID }?
+        .relationship,
+      .contact)
+    XCTAssertEqual(
+      try b.coreClient?.stateSnapshot().pairwiseContacts.first { $0.identity == a.myID }?
+        .relationship,
+      .contact)
     a.shareRelay(sharedRelay, with: bOnA)
+    XCTAssertEqual(
+      a.messages(with: bOnA).last { $0.event == .relayRecommendation }?
+        .relayRecommendationURLs,
+      [sharedRelay.absoluteString])
     XCTAssertEqual(
       b.messages(with: aOnB).last { $0.event == .relayRecommendation }?
         .relayRecommendationURLs,
@@ -150,8 +175,13 @@ final class MessageRequestTests: XCTestCase {
 
     try addRemoteCard(of: recipient, to: sender)
     let contact = try XCTUnwrap(sender.contacts.first { $0.id == recipient.myID })
+    XCTAssertFalse(
+      recipient.contacts.first { $0.id == sender.myID }?.introductionReceived ?? false)
     sender.send("One-sided hello", to: contact)
 
+    XCTAssertTrue(recipient.isPersistenceHealthy)
+    XCTAssertTrue(
+      recipient.contacts.first { $0.id == sender.myID }?.introductionReceived ?? false)
     XCTAssertEqual(
       recipient.contacts.first { $0.id == sender.myID }?.requestState, .incoming)
     let receivedContact = try XCTUnwrap(recipient.contacts.first { $0.id == sender.myID })
@@ -253,9 +283,12 @@ final class MessageRequestTests: XCTestCase {
     a.sendEphemeralState(to: bOnA)
     let aOnB = try XCTUnwrap(b.contacts.first { $0.id == a.myID })
     XCTAssertFalse(b.isEphemeral(aOnB), "request-stage controls must not mutate chat state")
+    XCTAssertFalse(aOnB.introductionReceived)
 
     b.applyEphemeral(true, for: a.myID, announce: false)
     a.send("first introduction", to: bOnA)
+    XCTAssertTrue(b.isPersistenceHealthy)
+    XCTAssertTrue(b.contacts.first { $0.id == a.myID }?.introductionReceived ?? false)
     XCTAssertEqual(b.messages(with: aOnB).filter { !$0.system }.count, 1)
 
     bus.disconnect(b.myID)

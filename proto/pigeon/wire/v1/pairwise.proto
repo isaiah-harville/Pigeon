@@ -18,6 +18,9 @@ message PairwiseEnvelope {
   uint32 version = 1;
   bytes sender_identity = 2;
   bytes recipient_identity = 3;
+  // Present only on the first message of a one-sided contact request. The core
+  // verifies it before admitting the unknown sender.
+  bytes sender_contact_card = 4;
   oneof body {
     bytes initiation = 10;
     bytes message = 11;

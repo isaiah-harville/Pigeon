@@ -31,6 +31,18 @@ extension SessionManager {
 
     guard !blockedContactIDs.contains(envelope.sender) else { return .consumed }
 
+    return handleUnlockedInbound(envelope, encoded: data, channel: channel)
+  }
+
+  private func handleUnlockedInbound(
+    _ envelope: SessionEnvelope, encoded: Data, channel: TransportChannel
+  ) -> TransportMessageDisposition {
+    if envelope.type == .pairwise {
+      return consumePairwiseMessage(
+        envelope.payload,
+        requestID: "pairwise-\(InitiationReplayLedger.digest(encoded).hexEncoded)")
+        ? .consumed : .retryAfterRestart
+    }
     guard let (contact, admittedUnknown) = contactForInbound(envelope) else { return .consumed }
     let consumed = dispatchInbound(envelope, from: contact, channel: channel)
     removeRejectedUnknown(contact, ifAdmitted: admittedUnknown)
@@ -53,6 +65,7 @@ extension SessionManager {
     let contact = Contact(
       bundle: card.bundle, displayName: sanitized.isEmpty ? "Unnamed" : sanitized,
       relayURLs: card.relayURLs, prekeyBundle: card.prekeyBundle,
+      pairwiseControlPrekeyBundle: card.pairwiseControlPrekeyBundle,
       verifiedInPerson: false, requestState: .incoming, requestCreatedAt: Date())
     contacts.append(contact)
     return (contact, true)

@@ -6,6 +6,7 @@ public enum PigeonCoreWireError: Error, Equatable, Sendable {
   case invalidOutboundKind(Int)
   case invalidPolicyChangeKind(Int)
   case invalidDirectTransportMode(Int)
+  case invalidPairwiseRelationship(Int)
   case notRelayAction(PigeonCoreOutboundKind)
   case malformedRelayAction
 }
@@ -35,51 +36,6 @@ extension PigeonCoreOutput {
     checkpointGeneration = proto.checkpointGeneration
     events = try proto.events.map(PigeonCoreEvent.init(proto:))
     outbound = proto.outbound.map(PigeonCoreOutboundItem.init(proto:))
-  }
-}
-
-extension PigeonCoreCommand {
-  func proto() throws -> Pigeon_Wire_V1_ClientCommand {
-    var command = Pigeon_Wire_V1_ClientCommand()
-    command.version = 1
-    command.commandID = id
-    switch body {
-    case .createGroup(let value):
-      command.createGroup = value.proto()
-    case .sendGroupMessage(let value):
-      var body = Pigeon_Wire_V1_SendGroupMessage()
-      body.groupID = value.groupID
-      body.messageID = value.messageID
-      body.body = value.body
-      body.replyToMessageID = value.replyToMessageID ?? ""
-      body.senderTimestampMs = value.senderTimestampMilliseconds
-      command.sendGroupMessage = body
-    case .applyInbound(let value):
-      var body = Pigeon_Wire_V1_ApplyInbound()
-      body.kind = try value.kind.proto()
-      body.payload = value.payload
-      body.requestID = value.requestID
-      command.applyInbound = body
-    case .changeGroupPolicy(let value):
-      var body = Pigeon_Wire_V1_ChangeGroupPolicy()
-      body.groupID = value.groupID
-      body.kind = try value.kind.proto()
-      body.subjectIdentity = value.subjectIdentity
-      body.stringValue = value.stringValue
-      body.boolValue = value.boolValue
-      command.changeGroupPolicy = body
-    case .acknowledgeEffects(let value):
-      command.acknowledgeEffects = value.proto()
-    case .ensurePairwiseAccount:
-      command.ensurePairwiseAccount = Pigeon_Wire_V1_EnsurePairwiseAccount()
-    case .registerPairwiseContact(let value):
-      command.registerPairwiseContact = value.proto()
-    case .sendPairwiseControl(let value):
-      command.sendPairwiseControl = try value.proto()
-    case .sendDirectApplication(let value):
-      command.sendDirectApplication = try value.proto()
-    }
-    return command
   }
 }
 
@@ -233,7 +189,8 @@ extension PigeonCoreEvent {
       body = .directApplicationReceived(
         PigeonDirectApplicationReceivedEvent(
           senderIdentity: event.senderIdentity,
-          application: try PigeonDirectApplication(proto: event.application)))
+          application: try PigeonDirectApplication(proto: event.application),
+          senderContactCard: event.senderContactCard))
     case nil:
       throw PigeonCoreWireError.missingEventBody
     }

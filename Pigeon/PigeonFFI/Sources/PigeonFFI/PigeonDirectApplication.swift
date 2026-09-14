@@ -4,14 +4,16 @@ public struct PigeonSendDirectApplication: Equatable, Sendable {
   public let recipientIdentity: Data
   public let application: PigeonDirectApplication
   public let localOnly: Bool
+  public let senderContactCard: Data
 
   public init(
     recipientIdentity: Data, application: PigeonDirectApplication,
-    localOnly: Bool = false
+    localOnly: Bool = false, senderContactCard: Data = Data()
   ) {
     self.recipientIdentity = recipientIdentity
     self.application = application
     self.localOnly = localOnly
+    self.senderContactCard = senderContactCard
   }
 }
 
@@ -60,9 +62,14 @@ public enum PigeonDirectTransportMode: Equatable, Sendable {
 public struct PigeonDirectApplicationReceivedEvent: Equatable, Sendable {
   public let senderIdentity: Data
   public let application: PigeonDirectApplication
+  public let senderContactCard: Data
 
-  public init(senderIdentity: Data, application: PigeonDirectApplication) {
+  public init(
+    senderIdentity: Data, application: PigeonDirectApplication,
+    senderContactCard: Data = Data()
+  ) {
     self.senderIdentity = senderIdentity
     self.application = application
+    self.senderContactCard = senderContactCard
   }
 }

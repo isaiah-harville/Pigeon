@@ -1,4 +1,5 @@
 import Foundation
+import PigeonFFI
 
 extension SessionManager {
   static var maximumIncomingRequests: Int { 50 }
@@ -26,6 +27,11 @@ extension SessionManager {
       !contacts[index].introductionReceived,
       conversationStore.messages(for: contactID).isEmpty
     else { return false }
+    do {
+      try setCorePairwiseRelationship(.outgoingRequest, for: contactID)
+    } catch {
+      return false
+    }
     contacts[index].requestState = .outgoing
     guard persist() else {
       contacts[index].requestState = .none
@@ -63,6 +69,7 @@ extension SessionManager {
   private func removeIncomingRequests(ids: [Data]) {
     let idSet = Set(ids)
     for id in ids {
+      removeCorePairwiseContact(id)
       conversationStore.clear(contactID: id)
       activeConversationIDs.remove(id)
       ephemeralContactIDs.remove(id)

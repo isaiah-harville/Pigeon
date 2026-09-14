@@ -8,6 +8,7 @@ import PigeonFFI
 
 extension SessionManager {
   var myID: Data { identity.publicKey.rawRepresentation }
+  var banner: InAppBanner? { presenter.banner }
 
   func setAppActive(_ active: Bool) { presenter.setAppActive(active) }
   func dismissBanner() { presenter.dismissBanner() }
@@ -316,6 +317,11 @@ extension SessionManager {
     guard let index = contacts.firstIndex(where: { $0.id == contact.id }),
       contacts[index].requestState == .incoming
     else { return }
+    do {
+      try setCorePairwiseRelationship(.contact, for: contact.id)
+    } catch {
+      return
+    }
     contacts[index].requestState = .none
     activeConversationIDs.insert(contact.id)
     var accepted = ChatMessage(
@@ -343,6 +349,7 @@ extension SessionManager {
     if !blockedContactIDs.contains(contact.id) {
       blockedContacts.append(BlockedContact(id: contact.id, displayName: contact.displayName))
     }
+    removeCorePairwiseContact(contact.id)
     conversationStore.clear(contactID: contact.id)
     activeConversationIDs.remove(contact.id)
     ephemeralContactIDs.remove(contact.id)

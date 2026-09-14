@@ -30,10 +30,46 @@ extension SessionManager {
   }
 
   func absorbDirectCoreEvent(_ event: PigeonDirectApplicationReceivedEvent) throws {
-    guard let contact = contacts.first(where: { $0.id == event.senderIdentity }) else { return }
+    let contact = try contactForDirectCoreEvent(event)
     if try applyDirectCoreApplication(event.application, from: contact) {
       try enqueueDirectAcknowledgement(messageID: event.application.id, to: contact)
     }
+  }
+
+  private func contactForDirectCoreEvent(
+    _ event: PigeonDirectApplicationReceivedEvent
+  ) throws -> Contact {
+    if let index = contacts.firstIndex(where: { $0.id == event.senderIdentity }) {
+      if contacts[index].pairwiseControlPrekeyBundle == nil,
+        !event.senderContactCard.isEmpty
+      {
+        guard let card = ContactCard(scanned: event.senderContactCard.base64EncodedString()),
+          card.bundle.identityKey == event.senderIdentity,
+          let controlPrekey = card.pairwiseControlPrekeyBundle
+        else { throw PlatformError.InvalidOutput }
+        contacts[index].pairwiseControlPrekeyBundle = controlPrekey
+      }
+      return contacts[index]
+    }
+    guard !blockedContactIDs.contains(event.senderIdentity),
+      stagedIncomingRequestCount < Self.maximumIncomingRequests,
+      !event.senderContactCard.isEmpty,
+      let card = ContactCard(scanned: event.senderContactCard.base64EncodedString()),
+      card.bundle.identityKey == event.senderIdentity,
+      let controlPrekey = card.pairwiseControlPrekeyBundle
+    else { throw PlatformError.InvalidOutput }
+    let sanitized = DisplayName.sanitize(card.name)
+    let contact = Contact(
+      bundle: card.bundle,
+      displayName: sanitized.isEmpty ? "Unnamed" : sanitized,
+      relayURLs: card.relayURLs,
+      prekeyBundle: card.prekeyBundle,
+      pairwiseControlPrekeyBundle: controlPrekey,
+      verifiedInPerson: false,
+      requestState: .incoming,
+      requestCreatedAt: Date())
+    contacts.append(contact)
+    return contact
   }
 
   private func applyDirectCoreApplication(
@@ -95,14 +131,27 @@ extension SessionManager {
     id: UUID,
     to contact: Contact
   ) throws -> PigeonCoreOutput {
-    try executeCore(
+    guard let current = contacts.first(where: { $0.id == contact.id }) else {
+      throw PlatformError.Unavailable
+    }
+    let senderContactCard: Data
+    if current.requestState == .outgoing, case .message = body {
+      guard let encoded = myCard?.encoded(), let bytes = Data(base64Encoded: encoded) else {
+        throw PlatformError.Unavailable
+      }
+      senderContactCard = bytes
+    } else {
+      senderContactCard = Data()
+    }
+    return try executeCore(
       PigeonCoreCommand(
         id: "send-direct:\(id.uuidString.lowercased())",
         body: .sendDirectApplication(
           PigeonSendDirectApplication(
-            recipientIdentity: contact.id,
+            recipientIdentity: current.id,
             application: PigeonDirectApplication(id: id.uuidString, body: body),
-            localOnly: bluetoothChatIDs.contains(contact.id)))))
+            localOnly: usesBluetooth(current) || relay == nil,
+            senderContactCard: senderContactCard))))
   }
 
   private func absorbDirectAcknowledgement(_ messageID: String, from contact: Contact) throws {
@@ -143,9 +192,7 @@ extension SessionManager {
     from contact: Contact
   ) throws {
     let id = directHistoryID(applicationID: applicationID, senderIdentity: contact.id)
-    if !conversationStore.contains(messageID: id, for: contact.id),
-      !shouldDiscardRequestMessage(id: id, from: contact)
-    {
+    if !conversationStore.contains(messageID: id, for: contact.id) {
       if contact.requestState == .incoming,
         let index = contacts.firstIndex(where: { $0.id == contact.id })
       {
@@ -162,12 +209,6 @@ extension SessionManager {
         title: contact.requestState == .incoming ? "Message Request" : contact.displayName,
         body: contact.requestState == .incoming ? "New message request" : message.text)
     }
-  }
-
-  private func shouldDiscardRequestMessage(id: UUID, from contact: Contact) -> Bool {
-    guard contact.requestState == .incoming else { return false }
-    if conversationStore.contains(messageID: id, for: contact.id) { return false }
-    return contacts.first { $0.id == contact.id }?.introductionReceived == true
   }
 
   private func recordDirectSystemEvent(
@@ -198,7 +239,7 @@ extension SessionManager {
             application: PigeonDirectApplication(
               id: id.uuidString,
               body: .acknowledgement(messageID: messageID)),
-            localOnly: bluetoothChatIDs.contains(contact.id)))))
+            localOnly: usesBluetooth(contact) || relay == nil))))
     let snapshot = try coreClient.stateSnapshot()
     applyCoreSnapshot(snapshot)
     fanOutPairwiseMesh(snapshot: snapshot)

@@ -55,7 +55,6 @@ final class SessionManager {
 
   // Facade passthroughs so the app/views keep a stable surface over `presenter`.
   typealias InAppBanner = ChatPresenter.InAppBanner
-  var banner: InAppBanner? { presenter.banner }
   var isAppActive: Bool { presenter.isAppActive }
   var activeChatID: Data? {
     get { presenter.activeChatID }
@@ -215,6 +214,7 @@ final class SessionManager {
     self.coreClient = coreClient
     applyCoreSnapshot(coreSnapshot)
     restoreLoadedState(loaded)
+    applyCoreSnapshot(coreSnapshot)
     try registerPairwiseContacts()
     guard purgeExpiredIncomingRequests(now: Date()) else {
       throw SessionPersistenceError.unreadableStore

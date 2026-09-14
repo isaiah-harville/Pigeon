@@ -8,6 +8,8 @@ use crate::Error;
 
 pub use limits::*;
 
+pub(crate) const CONTACT_CARD_VERSION: u32 = 3;
+
 #[allow(dead_code)]
 pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/pigeon.wire.v1.rs"));
@@ -137,6 +139,21 @@ pub(crate) fn validate_client_command(command: &proto::ClientCommand) -> Result<
                 return Err(Error::InvalidKey);
             }
             validate_direct_application(send.application.as_ref().ok_or(Error::MalformedBundle)?)?;
+            check_bytes(
+                send.sender_contact_card.len(),
+                MAX_CONTACT_CARD_BYTES,
+                "sender contact card",
+            )?;
+            if !send.sender_contact_card.is_empty()
+                && !matches!(
+                    send.application
+                        .as_ref()
+                        .and_then(|application| application.body.as_ref()),
+                    Some(proto::direct_application::Body::Message(_))
+                )
+            {
+                return Err(Error::MalformedBundle);
+            }
         }
         proto::client_command::Body::RegisterPairwiseContact(register) => {
             check_bytes(
@@ -145,8 +162,38 @@ pub(crate) fn validate_client_command(command: &proto::ClientCommand) -> Result<
                 "pairwise prekey bundle",
             )?;
             check_bytes(register.relay_url.len(), MAX_RELAY_URL_BYTES, "relay url")?;
-            if register.prekey_bundle.is_empty() || register.relay_url.is_empty() {
+            if register.prekey_bundle.is_empty() {
                 return Err(Error::MalformedBundle);
+            }
+            match proto::PairwiseRelationship::try_from(register.relationship)
+                .map_err(|_| Error::MalformedBundle)?
+            {
+                proto::PairwiseRelationship::Contact
+                | proto::PairwiseRelationship::OutgoingRequest => {}
+                proto::PairwiseRelationship::Unspecified
+                | proto::PairwiseRelationship::IncomingRequest => {
+                    return Err(Error::MalformedBundle);
+                }
+            }
+        }
+        proto::client_command::Body::SetPairwiseRelationship(set) => {
+            if set.identity.len() != IDENTITY_KEY_BYTES {
+                return Err(Error::InvalidKey);
+            }
+            match proto::PairwiseRelationship::try_from(set.relationship)
+                .map_err(|_| Error::MalformedBundle)?
+            {
+                proto::PairwiseRelationship::Contact
+                | proto::PairwiseRelationship::OutgoingRequest => {}
+                proto::PairwiseRelationship::Unspecified
+                | proto::PairwiseRelationship::IncomingRequest => {
+                    return Err(Error::MalformedBundle);
+                }
+            }
+        }
+        proto::client_command::Body::RemovePairwiseContact(remove) => {
+            if remove.identity.len() != IDENTITY_KEY_BYTES {
+                return Err(Error::InvalidKey);
             }
         }
         proto::client_command::Body::SendPairwiseControl(send) => {

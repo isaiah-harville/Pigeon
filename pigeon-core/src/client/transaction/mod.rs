@@ -127,21 +127,14 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             proto::client_command::Body::RegisterPairwiseContact(register) => {
                 self.stage_register_pairwise_contact(register, &mut candidate)?;
             }
+            proto::client_command::Body::SetPairwiseRelationship(set) => {
+                self.stage_set_pairwise_relationship(set, &mut candidate)?;
+            }
+            proto::client_command::Body::RemovePairwiseContact(remove) => {
+                self.stage_remove_pairwise_contact(remove, &mut candidate)?;
+            }
             proto::client_command::Body::SendDirectApplication(send) => {
-                let recipient = send
-                    .recipient_identity
-                    .as_slice()
-                    .try_into()
-                    .map_err(|_| Error::InvalidKey)?;
-                let application = send.application.clone().ok_or(Error::MalformedBundle)?;
-                let item_id = application.application_id.clone();
-                let item = self.stage_pairwise_payload(
-                    &item_id,
-                    recipient,
-                    proto::pairwise_payload::Body::DirectApplication(application),
-                    send.local_only,
-                    &mut candidate,
-                )?;
+                let item = self.stage_send_direct_application(send, &mut candidate)?;
                 output
                     .outbound
                     .push(crate::client::OutboundItem { inner: item });
@@ -245,6 +238,17 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             .map(|account| account.signed_prekey_bundle(&self.identity))
             .transpose()?
             .map_or_else(Vec::new, |bundle| bundle.encode());
+        let pairwise_contacts = self
+            .state
+            .pairwise_contacts
+            .iter()
+            .map(|contact| proto::PairwiseContactState {
+                identity: contact.identity.clone(),
+                relationship: contact.relationship,
+                introduction_received: contact.introduction_received,
+                introduction_sent: contact.introduction_sent,
+            })
+            .collect();
         Ok(ClientSnapshot {
             inner: proto::ClientSnapshot {
                 checkpoint_generation: self.state.generation,
@@ -252,6 +256,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 pending_outbound: self.state.pending_outbound.clone(),
                 pending_events: self.state.pending_events.clone(),
                 pairwise_prekey_bundle,
+                pairwise_contacts,
             },
         })
     }
@@ -313,35 +318,39 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 {
                     return Ok(());
                 }
-                let payload = self.stage_apply_pairwise_control(inbound, candidate)?;
+                let (payload, sender_contact_card, suppress_direct_event) =
+                    self.stage_apply_pairwise_control(inbound, candidate)?;
                 match payload.body.ok_or(Error::MalformedBundle)? {
                     proto::pairwise_payload::Body::DirectApplication(application) => {
                         crate::wire::validate_direct_application(&application)?;
-                        if let Some(proto::direct_application::Body::Acknowledgement(ack)) =
-                            &application.body
-                        {
-                            candidate.pending_outbound.retain(|item| {
-                                item.item_id != ack.message_id
-                                    || item.kind != proto::OutboundKind::Pairwise as i32
-                                    || item.destination != payload.sender_identity
+                        if !suppress_direct_event {
+                            if let Some(proto::direct_application::Body::Acknowledgement(ack)) =
+                                &application.body
+                            {
+                                candidate.pending_outbound.retain(|item| {
+                                    item.item_id != ack.message_id
+                                        || item.kind != proto::OutboundKind::Pairwise as i32
+                                        || item.destination != payload.sender_identity
+                                });
+                            }
+                            let event_id = direct_application_event_id(
+                                &payload.sender_identity,
+                                &application.application_id,
+                            );
+                            output.events.push(crate::client::AppEvent {
+                                inner: proto::AppEvent {
+                                    version: PROTOCOL_VERSION,
+                                    event_id,
+                                    body: Some(proto::app_event::Body::DirectApplicationReceived(
+                                        proto::DirectApplicationReceived {
+                                            sender_identity: payload.sender_identity,
+                                            application: Some(application),
+                                            sender_contact_card,
+                                        },
+                                    )),
+                                },
                             });
                         }
-                        let event_id = direct_application_event_id(
-                            &payload.sender_identity,
-                            &application.application_id,
-                        );
-                        output.events.push(crate::client::AppEvent {
-                            inner: proto::AppEvent {
-                                version: PROTOCOL_VERSION,
-                                event_id,
-                                body: Some(proto::app_event::Body::DirectApplicationReceived(
-                                    proto::DirectApplicationReceived {
-                                        sender_identity: payload.sender_identity,
-                                        application: Some(application),
-                                    },
-                                )),
-                            },
-                        });
                     }
                     proto::pairwise_payload::Body::GroupControl(control) => {
                         let inner = proto::ApplyInbound {

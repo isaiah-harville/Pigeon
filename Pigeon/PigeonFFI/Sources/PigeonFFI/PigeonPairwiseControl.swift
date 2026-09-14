@@ -5,10 +5,49 @@ import Foundation
 public struct PigeonRegisterPairwiseContact: Equatable, Sendable {
   public let prekeyBundle: Data
   public let relayURL: String
+  public let relationship: PigeonPairwiseRelationship
 
-  public init(prekeyBundle: Data, relayURL: String) {
+  public init(
+    prekeyBundle: Data, relayURL: String,
+    relationship: PigeonPairwiseRelationship = .contact
+  ) {
     self.prekeyBundle = prekeyBundle
     self.relayURL = relayURL
+    self.relationship = relationship
+  }
+}
+
+public enum PigeonPairwiseRelationship: Equatable, Sendable {
+  case contact
+  case outgoingRequest
+  case incomingRequest
+  case unknown(Int)
+}
+
+public struct PigeonPairwiseContactState: Equatable, Sendable {
+  public let identity: Data
+  public let relationship: PigeonPairwiseRelationship
+  public let introductionReceived: Bool
+  public let introductionSent: Bool
+
+  public init(
+    identity: Data, relationship: PigeonPairwiseRelationship,
+    introductionReceived: Bool, introductionSent: Bool
+  ) {
+    self.identity = identity
+    self.relationship = relationship
+    self.introductionReceived = introductionReceived
+    self.introductionSent = introductionSent
+  }
+}
+
+public struct PigeonSetPairwiseRelationship: Equatable, Sendable {
+  public let identity: Data
+  public let relationship: PigeonPairwiseRelationship
+
+  public init(identity: Data, relationship: PigeonPairwiseRelationship) {
+    self.identity = identity
+    self.relationship = relationship
   }
 }
 
@@ -31,11 +70,42 @@ public struct PigeonSendPairwiseControl: Equatable, Sendable {
 }
 
 extension PigeonRegisterPairwiseContact {
-  func proto() -> Pigeon_Wire_V1_RegisterPairwiseContact {
+  func proto() throws -> Pigeon_Wire_V1_RegisterPairwiseContact {
     var body = Pigeon_Wire_V1_RegisterPairwiseContact()
     body.prekeyBundle = prekeyBundle
     body.relayURL = relayURL
+    body.relationship = try relationship.proto()
     return body
+  }
+}
+
+extension PigeonSetPairwiseRelationship {
+  func proto() throws -> Pigeon_Wire_V1_SetPairwiseRelationship {
+    var body = Pigeon_Wire_V1_SetPairwiseRelationship()
+    body.identity = identity
+    body.relationship = try relationship.proto()
+    return body
+  }
+}
+
+extension PigeonPairwiseRelationship {
+  init(proto: Pigeon_Wire_V1_PairwiseRelationship) {
+    switch proto {
+    case .contact: self = .contact
+    case .outgoingRequest: self = .outgoingRequest
+    case .incomingRequest: self = .incomingRequest
+    case .unspecified: self = .unknown(0)
+    case .UNRECOGNIZED(let raw): self = .unknown(raw)
+    }
+  }
+
+  func proto() throws -> Pigeon_Wire_V1_PairwiseRelationship {
+    switch self {
+    case .contact: return .contact
+    case .outgoingRequest: return .outgoingRequest
+    case .incomingRequest: return .incomingRequest
+    case .unknown(let raw): throw PigeonCoreWireError.invalidPairwiseRelationship(raw)
+    }
   }
 }
 

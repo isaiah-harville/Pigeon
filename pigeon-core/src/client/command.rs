@@ -31,6 +31,7 @@ impl ClientCommand {
                     },
                 )),
             },
+            Vec::new(),
         )
     }
 
@@ -51,6 +52,50 @@ impl ClientCommand {
                     },
                 )),
             },
+            Vec::new(),
+        )
+    }
+
+    pub fn send_direct_contact_acceptance(
+        command_id: impl Into<String>,
+        recipient_identity: [u8; 32],
+    ) -> Result<Self, Error> {
+        let command_id = command_id.into();
+        Self::send_direct_application(
+            command_id.clone(),
+            recipient_identity,
+            proto::DirectApplication {
+                application_id: command_id,
+                body: Some(proto::direct_application::Body::ContactAcceptance(
+                    proto::DirectContactAcceptance {},
+                )),
+            },
+            Vec::new(),
+        )
+    }
+
+    pub fn send_direct_message_request(
+        command_id: impl Into<String>,
+        recipient_identity: [u8; 32],
+        text: impl Into<String>,
+        sender_timestamp_ms: i64,
+        sender_contact_card: Vec<u8>,
+    ) -> Result<Self, Error> {
+        let command_id = command_id.into();
+        Self::send_direct_application(
+            command_id.clone(),
+            recipient_identity,
+            proto::DirectApplication {
+                application_id: command_id,
+                body: Some(proto::direct_application::Body::Message(
+                    proto::DirectMessage {
+                        text: text.into(),
+                        reply_snippet: String::new(),
+                        sender_timestamp_ms,
+                    },
+                )),
+            },
+            sender_contact_card,
         )
     }
 
@@ -58,6 +103,7 @@ impl ClientCommand {
         command_id: String,
         recipient_identity: [u8; 32],
         application: proto::DirectApplication,
+        sender_contact_card: Vec<u8>,
     ) -> Result<Self, Error> {
         let inner = proto::ClientCommand {
             version: PROTOCOL_VERSION,
@@ -67,6 +113,7 @@ impl ClientCommand {
                     recipient_identity: recipient_identity.to_vec(),
                     application: Some(application),
                     local_only: false,
+                    sender_contact_card,
                 },
             )),
         };
@@ -132,6 +179,20 @@ impl ClientCommand {
         prekey_bundle: Vec<u8>,
         relay_url: impl Into<String>,
     ) -> Result<Self, Error> {
+        Self::register_pairwise_contact_with_relationship(
+            command_id,
+            prekey_bundle,
+            relay_url,
+            proto::PairwiseRelationship::Contact,
+        )
+    }
+
+    pub fn register_pairwise_contact_with_relationship(
+        command_id: impl Into<String>,
+        prekey_bundle: Vec<u8>,
+        relay_url: impl Into<String>,
+        relationship: proto::PairwiseRelationship,
+    ) -> Result<Self, Error> {
         let inner = proto::ClientCommand {
             version: PROTOCOL_VERSION,
             command_id: command_id.into(),
@@ -139,6 +200,43 @@ impl ClientCommand {
                 proto::RegisterPairwiseContact {
                     prekey_bundle,
                     relay_url: relay_url.into(),
+                    relationship: relationship as i32,
+                },
+            )),
+        };
+        wire::validate_client_command(&inner)?;
+        Ok(Self { inner })
+    }
+
+    pub fn set_pairwise_relationship(
+        command_id: impl Into<String>,
+        identity: [u8; 32],
+        relationship: proto::PairwiseRelationship,
+    ) -> Result<Self, Error> {
+        let inner = proto::ClientCommand {
+            version: PROTOCOL_VERSION,
+            command_id: command_id.into(),
+            body: Some(proto::client_command::Body::SetPairwiseRelationship(
+                proto::SetPairwiseRelationship {
+                    identity: identity.to_vec(),
+                    relationship: relationship as i32,
+                },
+            )),
+        };
+        wire::validate_client_command(&inner)?;
+        Ok(Self { inner })
+    }
+
+    pub fn remove_pairwise_contact(
+        command_id: impl Into<String>,
+        identity: [u8; 32],
+    ) -> Result<Self, Error> {
+        let inner = proto::ClientCommand {
+            version: PROTOCOL_VERSION,
+            command_id: command_id.into(),
+            body: Some(proto::client_command::Body::RemovePairwiseContact(
+                proto::RemovePairwiseContact {
+                    identity: identity.to_vec(),
                 },
             )),
         };

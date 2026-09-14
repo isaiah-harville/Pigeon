@@ -74,6 +74,7 @@ fn oversized_direct_message_is_rejected_before_crypto_state_changes() {
                     )),
                 }),
                 local_only: false,
+                sender_contact_card: Vec::new(),
             },
         )),
     };

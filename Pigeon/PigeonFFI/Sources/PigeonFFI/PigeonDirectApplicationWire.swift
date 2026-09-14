@@ -6,6 +6,7 @@ extension PigeonSendDirectApplication {
     body.recipientIdentity = recipientIdentity
     body.application = try application.proto()
     body.localOnly = localOnly
+    body.senderContactCard = senderContactCard
     return body
   }
 }
