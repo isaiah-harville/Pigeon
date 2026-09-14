@@ -1,5 +1,30 @@
 import Foundation
 
+public struct PigeonLegacyPairwiseMigration: Equatable, Sendable {
+  public let accountState: Data
+  public let fallbackKey: Data
+  public let sessions: [PigeonLegacyPairwiseSession]
+
+  public init(
+    accountState: Data, fallbackKey: Data,
+    sessions: [PigeonLegacyPairwiseSession]
+  ) {
+    self.accountState = accountState
+    self.fallbackKey = fallbackKey
+    self.sessions = sessions
+  }
+}
+
+public struct PigeonLegacyPairwiseSession: Equatable, Sendable {
+  public let remoteIdentity: Data
+  public let state: Data
+
+  public init(remoteIdentity: Data, state: Data) {
+    self.remoteIdentity = remoteIdentity
+    self.state = state
+  }
+}
+
 /// Public contact material accepted by the core. The prekey bundle is verified
 /// and retained as opaque bytes; Swift never receives an Olm account or ratchet.
 public struct PigeonRegisterPairwiseContact: Equatable, Sendable {

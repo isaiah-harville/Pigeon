@@ -55,7 +55,6 @@ final class SessionManager {
 
   // Facade passthroughs so the app/views keep a stable surface over `presenter`.
   typealias InAppBanner = ChatPresenter.InAppBanner
-  var isAppActive: Bool { presenter.isAppActive }
   var activeChatID: Data? {
     get { presenter.activeChatID }
     set { presenter.activeChatID = newValue }
@@ -204,6 +203,7 @@ final class SessionManager {
     let coreClient = try PigeonCoreClient(
       identity: coreIdentityProvider,
       store: coreCheckpointStore)
+    try migrateLegacyPairwiseStateIfNeeded(loaded.legacyPairwiseMigration, into: coreClient)
     _ = try coreClient.execute(
       PigeonCoreCommand(
         id: "ensure-pairwise-account-v1",

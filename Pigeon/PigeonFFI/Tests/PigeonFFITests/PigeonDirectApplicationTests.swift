@@ -82,4 +82,24 @@ final class PigeonDirectApplicationTests: XCTestCase {
           introductionReceived: true, introductionSent: false)
       ])
   }
+
+  func testLegacyPairwiseMigrationIsVersionedAndOpaque() throws {
+    let command = PigeonCoreCommand(
+      id: "migrate-pairwise",
+      body: .migrateLegacyPairwiseState(
+        PigeonLegacyPairwiseMigration(
+          accountState: Data([1, 2]), fallbackKey: Data(repeating: 3, count: 32),
+          sessions: [
+            PigeonLegacyPairwiseSession(
+              remoteIdentity: Data(repeating: 4, count: 32), state: Data([5, 6]))
+          ])))
+
+    let proto = try command.proto().migrateLegacyPairwiseState
+
+    XCTAssertEqual(proto.formatVersion, 1)
+    XCTAssertEqual(proto.accountState, Data([1, 2]))
+    XCTAssertEqual(proto.fallbackKey, Data(repeating: 3, count: 32))
+    XCTAssertEqual(proto.sessions.first?.remoteIdentity, Data(repeating: 4, count: 32))
+    XCTAssertEqual(proto.sessions.first?.state, Data([5, 6]))
+  }
 }

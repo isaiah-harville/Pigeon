@@ -28,6 +28,11 @@ extension SessionManager {
     lastInitiationIn = loaded.lastInitiationIn
     acceptedInitiationDigests = loaded.acceptedInitiationDigests
     fallbackRotatedAt = loaded.fallbackRotatedAt
+    if loaded.legacyPairwiseMigration != nil {
+      for index in contacts.indices where contacts[index].pairwiseControlPrekeyBundle == nil {
+        contacts[index].pairwiseControlPrekeyBundle = contacts[index].prekeyBundle
+      }
+    }
     markUnlockedAfterRestore()
     isPersistenceHealthy = true
     lockedInbox.reset()

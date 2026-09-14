@@ -4,7 +4,7 @@ use prost::Message;
 use super::{PigeonClient, pairwise_account};
 use crate::client::{ClientOutput, OutboundItem};
 use crate::identity::{
-    IdentityBundle, Initiation, PlatformSession, PrekeyBundle, decode_olm_message,
+    IdentityBundle, Initiation, PlatformAccount, PlatformSession, PrekeyBundle, decode_olm_message,
     encode_olm_message,
 };
 use crate::storage::StateStore;
@@ -12,6 +12,57 @@ use crate::wire::{PROTOCOL_VERSION, proto};
 use crate::{Error, SecureIdentity};
 
 impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
+    pub(super) fn stage_migrate_legacy_pairwise_state(
+        &self,
+        migration: &proto::MigrateLegacyPairwiseState,
+        candidate: &mut proto::ClientCheckpoint,
+    ) -> Result<(), Error> {
+        if !candidate.pairwise_account_state.is_empty()
+            || !candidate.pairwise_fallback_key.is_empty()
+            || !candidate.pairwise_sessions.is_empty()
+        {
+            return Err(Error::InvalidSignature);
+        }
+        let fallback_key: [u8; 32] = migration
+            .fallback_key
+            .as_slice()
+            .try_into()
+            .map_err(|_| Error::InvalidKey)?;
+        let account = PlatformAccount::import(&migration.account_state, fallback_key)?;
+        // Force root binding and serialization before mutating the candidate.
+        account.signed_prekey_bundle(&self.identity)?.verify()?;
+        let account_state = account.export_state()?;
+
+        let local_identity = self
+            .identity
+            .ensure_public_key(crate::IdentityPurpose::Root)?;
+        let mut seen = std::collections::HashSet::new();
+        let sessions = migration
+            .sessions
+            .iter()
+            .map(|legacy| {
+                let remote_identity: [u8; 32] = legacy
+                    .remote_identity
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| Error::InvalidKey)?;
+                if remote_identity == local_identity || !seen.insert(remote_identity) {
+                    return Err(Error::InvalidKey);
+                }
+                let session = PlatformSession::import(&legacy.state, remote_identity)?;
+                Ok(proto::StoredPairwiseSession {
+                    remote_identity: remote_identity.to_vec(),
+                    state: session.export()?,
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+
+        candidate.pairwise_account_state = account_state;
+        candidate.pairwise_fallback_key = fallback_key.to_vec();
+        candidate.pairwise_sessions = sessions;
+        Ok(())
+    }
+
     pub(super) fn stage_register_pairwise_contact(
         &self,
         register: &proto::RegisterPairwiseContact,

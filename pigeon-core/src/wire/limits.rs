@@ -6,6 +6,7 @@ pub const MAX_DIRECT_MESSAGE_BYTES: usize = 64 * 1024;
 pub const MAX_DIRECT_REACTION_BYTES: usize = 128;
 pub const MAX_DIRECT_RELAY_URLS: usize = 8;
 pub const MAX_CONTACT_CARD_BYTES: usize = 64 * 1024;
+pub const LEGACY_PAIRWISE_MIGRATION_VERSION: u32 = 1;
 pub const MAX_INCOMING_MESSAGE_REQUESTS: usize = 50;
 pub const IDENTITY_KEY_BYTES: usize = 32;
 pub const GROUP_ID_BYTES: usize = 32;

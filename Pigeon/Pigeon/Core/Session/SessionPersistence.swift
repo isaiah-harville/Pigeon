@@ -81,6 +81,7 @@ final class SessionPersistence {
     var acceptedInitiationDigests: [Data: Set<Data>]
     /// When the signed-prekey (fallback) was last rotated; `nil` if never stamped.
     var fallbackRotatedAt: Date?
+    var legacyPairwiseMigration: PigeonLegacyPairwiseMigration?
   }
 
   /// The live state the coordinator hands over to be sealed at rest.
@@ -144,7 +145,8 @@ final class SessionPersistence {
       pendingInitiation: sessionState.pending,
       lastInitiationIn: sessionState.lastIn,
       acceptedInitiationDigests: sessionState.acceptedDigests,
-      fallbackRotatedAt: crypto.fallbackRotatedAt.map { Date(timeIntervalSince1970: $0) })
+      fallbackRotatedAt: crypto.fallbackRotatedAt.map { Date(timeIntervalSince1970: $0) },
+      legacyPairwiseMigration: try Self.legacyPairwiseMigration(crypto))
     self.store = store
     self.cryptoStore = cryptoStore
     self.transactionStore = transactionStore

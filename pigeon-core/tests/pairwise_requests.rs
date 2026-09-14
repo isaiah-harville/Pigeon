@@ -1,6 +1,6 @@
 use ed25519_dalek::{Signer, SigningKey};
 use pigeon_core::{
-    ClientCommand, Error, IdentityError, IdentityPurpose, MemoryStateStore, PigeonClient,
+    Account, ClientCommand, Error, IdentityError, IdentityPurpose, MemoryStateStore, PigeonClient,
     SecureIdentity, wire_proto,
 };
 use prost::Message;
@@ -337,4 +337,75 @@ fn incoming_request_admission_is_bounded_and_the_overflow_rolls_back() {
         .execute(ClientCommand::apply_pairwise_control("admit-after-purge", overflow).unwrap())
         .unwrap();
     assert_eq!(admitted.events.len(), 1);
+}
+
+#[test]
+fn legacy_pairwise_account_migrates_without_changing_its_public_curve_key() {
+    let legacy = Account::from_identity_seed([21; 32]);
+    let legacy_prekey = legacy.signed_prekey_bundle();
+    let mut client = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(21)).unwrap();
+
+    client
+        .execute(
+            ClientCommand::migrate_legacy_pairwise_state(
+                "migrate-legacy-pairwise",
+                legacy.export_pairwise_state().unwrap(),
+                legacy.export_fallback_key(),
+                Vec::new(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let migrated =
+        wire_proto::ClientSnapshot::decode(client.snapshot().unwrap().encode().as_slice()).unwrap();
+    let migrated_prekey =
+        wire_proto::PrekeyBundle::decode(migrated.pairwise_prekey_bundle.as_slice()).unwrap();
+    assert_eq!(
+        migrated_prekey.identity.unwrap().curve_identity_key,
+        legacy_prekey.identity.curve_identity_key
+    );
+}
+
+#[test]
+fn malformed_legacy_session_rolls_back_the_whole_migration() {
+    let legacy = Account::from_identity_seed([22; 32]);
+    let mut client = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(22)).unwrap();
+    let before = client.snapshot().unwrap().encode();
+
+    let result = client.execute(
+        ClientCommand::migrate_legacy_pairwise_state(
+            "reject-legacy-pairwise",
+            legacy.export_pairwise_state().unwrap(),
+            legacy.export_fallback_key(),
+            vec![([23; 32], vec![1, 2, 3])],
+        )
+        .unwrap(),
+    );
+
+    assert!(matches!(result, Err(Error::Serialization)));
+    assert_eq!(client.snapshot().unwrap().encode(), before);
+}
+
+#[test]
+fn legacy_migration_cannot_replace_an_initialized_core_account() {
+    let legacy = Account::from_identity_seed([24; 32]);
+    let mut client = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(24)).unwrap();
+    client
+        .execute(ClientCommand::ensure_pairwise_account("initialize-core").unwrap())
+        .unwrap();
+    let before = client.snapshot().unwrap().encode();
+
+    let result = client.execute(
+        ClientCommand::migrate_legacy_pairwise_state(
+            "replace-core",
+            legacy.export_pairwise_state().unwrap(),
+            legacy.export_fallback_key(),
+            Vec::new(),
+        )
+        .unwrap(),
+    );
+
+    assert!(matches!(result, Err(Error::InvalidSignature)));
+    assert_eq!(client.snapshot().unwrap().encode(), before);
 }

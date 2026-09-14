@@ -9,6 +9,7 @@ import PigeonFFI
 extension SessionManager {
   var myID: Data { identity.publicKey.rawRepresentation }
   var banner: InAppBanner? { presenter.banner }
+  var isAppActive: Bool { presenter.isAppActive }
 
   func setAppActive(_ active: Bool) { presenter.setAppActive(active) }
   func dismissBanner() { presenter.dismissBanner() }

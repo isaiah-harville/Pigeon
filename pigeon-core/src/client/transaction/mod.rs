@@ -124,6 +124,9 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     pairwise_account(&candidate)?;
                 }
             }
+            proto::client_command::Body::MigrateLegacyPairwiseState(migration) => {
+                self.stage_migrate_legacy_pairwise_state(migration, &mut candidate)?;
+            }
             proto::client_command::Body::RegisterPairwiseContact(register) => {
                 self.stage_register_pairwise_contact(register, &mut candidate)?;
             }

@@ -20,6 +20,7 @@ message ClientCommand {
     SendDirectApplication send_direct_application = 18;
     SetPairwiseRelationship set_pairwise_relationship = 19;
     RemovePairwiseContact remove_pairwise_contact = 20;
+    MigrateLegacyPairwiseState migrate_legacy_pairwise_state = 21;
   }
 }
 
@@ -48,6 +49,21 @@ message SetPairwiseRelationship {
 
 message RemovePairwiseContact {
   bytes identity = 1;
+}
+
+// One-time compatibility bridge for checkpoints written before pairwise state
+// moved behind PigeonClient. The opaque vodozemac pickles are decoded and
+// canonicalized by pigeon-core in the same transaction that installs them.
+message MigrateLegacyPairwiseState {
+  uint32 format_version = 1;
+  bytes account_state = 2;
+  bytes fallback_key = 3;
+  repeated LegacyPairwiseSession sessions = 4;
+}
+
+message LegacyPairwiseSession {
+  bytes remote_identity = 1;
+  bytes state = 2;
 }
 
 message SendPairwiseControl {

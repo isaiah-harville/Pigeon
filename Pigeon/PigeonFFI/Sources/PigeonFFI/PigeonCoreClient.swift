@@ -13,6 +13,7 @@ public struct PigeonCoreCommand: Equatable, Sendable {
     case sendDirectApplication(PigeonSendDirectApplication)
     case setPairwiseRelationship(PigeonSetPairwiseRelationship)
     case removePairwiseContact(identity: Data)
+    case migrateLegacyPairwiseState(PigeonLegacyPairwiseMigration)
   }
 
   public let id: String

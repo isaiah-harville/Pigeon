@@ -106,6 +106,10 @@ final class SessionPersistenceTests: XCTestCase {
     let reloaded = try persistence.attach(store, identitySeed: alice.exportSeed())
     let restored = try XCTUnwrap(reloaded.sessions[contactID])
     XCTAssertEqual(restored.remoteIdentityKey(), bob.identityPublicKey())
+    let migration = try XCTUnwrap(reloaded.legacyPairwiseMigration)
+    XCTAssertEqual(migration.accountState, try alice.exportOlmPickle())
+    XCTAssertEqual(migration.fallbackKey, alice.exportFallbackKey())
+    XCTAssertEqual(migration.sessions.map(\.remoteIdentity), [contactID])
 
     // The restored ratchet keeps talking to Bob's (unrestored) live session.
     let afterRelaunch = try restored.encrypt(plaintext: Data("after relaunch".utf8))

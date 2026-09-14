@@ -174,6 +174,34 @@ impl ClientCommand {
         Ok(Self { inner })
     }
 
+    pub fn migrate_legacy_pairwise_state(
+        command_id: impl Into<String>,
+        account_state: Vec<u8>,
+        fallback_key: [u8; 32],
+        sessions: Vec<([u8; 32], Vec<u8>)>,
+    ) -> Result<Self, Error> {
+        let inner = proto::ClientCommand {
+            version: PROTOCOL_VERSION,
+            command_id: command_id.into(),
+            body: Some(proto::client_command::Body::MigrateLegacyPairwiseState(
+                proto::MigrateLegacyPairwiseState {
+                    format_version: crate::wire::LEGACY_PAIRWISE_MIGRATION_VERSION,
+                    account_state,
+                    fallback_key: fallback_key.to_vec(),
+                    sessions: sessions
+                        .into_iter()
+                        .map(|(remote_identity, state)| proto::LegacyPairwiseSession {
+                            remote_identity: remote_identity.to_vec(),
+                            state,
+                        })
+                        .collect(),
+                },
+            )),
+        };
+        wire::validate_client_command(&inner)?;
+        Ok(Self { inner })
+    }
+
     pub fn register_pairwise_contact(
         command_id: impl Into<String>,
         prekey_bundle: Vec<u8>,

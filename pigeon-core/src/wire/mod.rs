@@ -134,6 +134,37 @@ pub(crate) fn validate_client_command(command: &proto::ClientCommand) -> Result<
             }
         }
         proto::client_command::Body::EnsurePairwiseAccount(_) => {}
+        proto::client_command::Body::MigrateLegacyPairwiseState(migration) => {
+            if migration.format_version != LEGACY_PAIRWISE_MIGRATION_VERSION {
+                return Err(Error::UnsupportedVersion {
+                    kind: "legacy pairwise migration",
+                    version: migration.format_version,
+                });
+            }
+            check_bytes(
+                migration.account_state.len(),
+                MAX_MLS_OBJECT_BYTES,
+                "legacy pairwise account state",
+            )?;
+            if migration.account_state.is_empty() || migration.fallback_key.len() != 32 {
+                return Err(Error::MalformedBundle);
+            }
+            check_count(
+                migration.sessions.len(),
+                MAX_PENDING_OUTBOUND_ENTRIES,
+                "legacy pairwise sessions",
+            )?;
+            for session in &migration.sessions {
+                if session.remote_identity.len() != IDENTITY_KEY_BYTES || session.state.is_empty() {
+                    return Err(Error::MalformedBundle);
+                }
+                check_bytes(
+                    session.state.len(),
+                    MAX_MLS_OBJECT_BYTES,
+                    "legacy pairwise session state",
+                )?;
+            }
+        }
         proto::client_command::Body::SendDirectApplication(send) => {
             if send.recipient_identity.len() != IDENTITY_KEY_BYTES {
                 return Err(Error::InvalidKey);

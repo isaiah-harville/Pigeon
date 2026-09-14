@@ -30,8 +30,26 @@ extension PigeonCoreCommand {
       var body = Pigeon_Wire_V1_RemovePairwiseContact()
       body.identity = identity
       command.removePairwiseContact = body
+    case .migrateLegacyPairwiseState(let value):
+      command.migrateLegacyPairwiseState = value.proto()
     }
     return command
+  }
+}
+
+extension PigeonLegacyPairwiseMigration {
+  func proto() -> Pigeon_Wire_V1_MigrateLegacyPairwiseState {
+    var migration = Pigeon_Wire_V1_MigrateLegacyPairwiseState()
+    migration.formatVersion = 1
+    migration.accountState = accountState
+    migration.fallbackKey = fallbackKey
+    migration.sessions = sessions.map { session in
+      var encoded = Pigeon_Wire_V1_LegacyPairwiseSession()
+      encoded.remoteIdentity = session.remoteIdentity
+      encoded.state = session.state
+      return encoded
+    }
+    return migration
   }
 }
 

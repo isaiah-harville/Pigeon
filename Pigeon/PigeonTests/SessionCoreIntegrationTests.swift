@@ -26,6 +26,46 @@ final class SessionCoreIntegrationTests: XCTestCase {
         .pairwisePrekeyBundle.isEmpty)
   }
 
+  func testAttachStoreMigratesLegacyPairwiseStateIntoCore() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    let legacyAccount = try PigeonAccount.fromIdentitySeed(
+      seed: fixture.manager.identity.identitySeed)
+    let peer = try PigeonAccount.generate()
+    let peerPrekey = try PigeonPrekeyBundle(decoding: peer.signedPrekeyBundle())
+    let outbound = try legacyAccount.establishOutbound(
+      peerBundle: peerPrekey.encoded, firstPlaintext: Data("migration".utf8))
+    _ = try peer.establishInbound(initiation: outbound.initiation)
+    let contact = Contact(
+      bundle: try PigeonIdentityBundle(decoding: peer.identityBundle()),
+      displayName: "Peer",
+      prekeyBundle: peerPrekey)
+    let legacyPersistence = SessionPersistence()
+    _ = try legacyPersistence.attach(
+      fixture.store, identitySeed: fixture.manager.identity.identitySeed)
+    XCTAssertTrue(
+      legacyPersistence.save(
+        SessionPersistence.Snapshot(
+          contacts: [contact], conversations: [:], ephemeralContactIDs: [],
+          bluetoothChatIDs: [], myName: "Alice", account: legacyAccount,
+          sessions: [contact.id: outbound.session], pendingInitiation: [:],
+          lastInitiationIn: [:], fallbackRotatedAt: nil)))
+
+    try fixture.manager.attachStore(fixture.store)
+
+    let snapshot = try XCTUnwrap(fixture.manager.coreClient?.stateSnapshot())
+    let migratedPrekey = try PigeonPrekeyBundle(decoding: snapshot.pairwisePrekeyBundle)
+    let legacyIdentity = try PigeonIdentityBundle(decoding: legacyAccount.identityBundle())
+    XCTAssertEqual(migratedPrekey.curveIdentityKey, legacyIdentity.curveIdentityKey)
+    XCTAssertEqual(snapshot.pairwiseContacts.map(\.identity), [contact.id])
+    XCTAssertEqual(
+      fixture.manager.contacts.first?.pairwiseControlPrekeyBundle,
+      fixture.manager.contacts.first?.prekeyBundle)
+    XCTAssertTrue(
+      fixture.manager.canUseCorePairwise(
+        with: try XCTUnwrap(fixture.manager.contacts.first)))
+  }
+
   func testCoreSnapshotAtomicallyReplacesGroupProjectionAndRejectsRollback() throws {
     let fixture = try makeFixture()
     defer { wipe(fixture.store) }
