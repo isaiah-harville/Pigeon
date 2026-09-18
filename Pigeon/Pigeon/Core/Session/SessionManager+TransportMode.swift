@@ -32,19 +32,13 @@ extension SessionManager {
   }
 
   func sendTransportState(to contact: Contact) {
-    if canUseCorePairwise(with: contact) {
-      let mode: PigeonDirectTransportMode =
-        bluetoothChatIDs.contains(contact.id) ? .local : .relay
-      _ = try? sendDirectCoreApplication(.transportState(mode), id: UUID(), to: contact)
-      return
-    }
-    guard let session = sessions[contact.id], establishedContactIDs.contains(contact.id) else {
-      return
-    }
-    let byte: UInt8 = bluetoothChatIDs.contains(contact.id) ? 1 : 0
-    let command = Data([0x02, byte])
-    guard let ciphertext = try? session.encrypt(plaintext: command) else { return }
-    sendEnvelope(.control, payload: ciphertext, to: contact)
+    guard let current = contacts.first(where: { $0.id == contact.id }),
+      current.requestState == .none,
+      canUseCorePairwise(with: current)
+    else { return }
+    let mode: PigeonDirectTransportMode =
+      bluetoothChatIDs.contains(current.id) ? .local : .relay
+    _ = try? sendDirectCoreApplication(.transportState(mode), id: UUID(), to: current)
   }
 
   private func transportNotice(useBluetooth: Bool, contactID: Data) -> String {

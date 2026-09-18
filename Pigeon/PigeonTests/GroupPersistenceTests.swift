@@ -1,6 +1,5 @@
 import CryptoKit
 import Foundation
-import PigeonFFI
 import XCTest
 
 @testable import Pigeon
@@ -10,19 +9,18 @@ final class GroupPersistenceTests: XCTestCase {
   func testGroupConversationHistorySurvivesSaveAndReload() throws {
     let store = freshStore()
     let persistence = SessionPersistence()
-    let account = try PigeonAccount.generate()
     let groupID = Data(repeating: 31, count: 32)
     var conversation = GroupConversation(id: groupID)
     conversation.messages.append(
       GroupChatEntry(
         id: UUID().uuidString,
-        senderIdentity: account.identityPublicKey(),
+        senderIdentity: Data(repeating: 32, count: 32),
         mine: true,
         content: .message("hello flock", replyToMessageID: nil),
         epoch: 2))
     conversation.markProcessed("event-1")
 
-    _ = try persistence.attach(store, identitySeed: account.exportSeed())
+    _ = try persistence.attach(store)
     XCTAssertTrue(
       persistence.save(
         SessionPersistence.Snapshot(
@@ -31,14 +29,9 @@ final class GroupPersistenceTests: XCTestCase {
           groupConversations: [groupID: conversation],
           ephemeralContactIDs: [],
           bluetoothChatIDs: [],
-          myName: "Alice",
-          account: account,
-          sessions: [:],
-          pendingInitiation: [:],
-          lastInitiationIn: [:],
-          fallbackRotatedAt: nil)))
+          myName: "Alice")))
 
-    let reloaded = try persistence.attach(store, identitySeed: account.exportSeed())
+    let reloaded = try persistence.attach(store)
     XCTAssertEqual(reloaded.groupConversations[groupID], conversation)
   }
 

@@ -15,7 +15,7 @@ struct ChatStatusBanner: View {
   @Environment(SessionManager.self) private var session
   let contact: Contact
 
-  private var isSecure: Bool { session.establishedContactIDs.contains(contact.id) }
+  private var isSecure: Bool { session.canUseCorePairwise(with: contact) }
 
   var body: some View {
     VStack(spacing: 2) {

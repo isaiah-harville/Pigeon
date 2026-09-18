@@ -296,7 +296,7 @@ private struct ContactRow: View {
   @Environment(SessionManager.self) private var session
   let contact: Contact
 
-  private var secure: Bool { session.establishedContactIDs.contains(contact.id) }
+  private var secure: Bool { session.canUseCorePairwise(with: contact) }
 
   var body: some View {
     HStack(spacing: 14) { rowContent }

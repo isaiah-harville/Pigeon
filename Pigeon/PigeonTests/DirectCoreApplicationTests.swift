@@ -9,14 +9,12 @@ extension SessionCoreIntegrationTests {
     let fixture = try makeFixture()
     defer { wipe(fixture.store) }
     try fixture.manager.attachStore(fixture.store)
-    let peer = try PigeonAccount.fromIdentitySeed(seed: Data(repeating: 62, count: 32))
-    let peerBundle = try PigeonIdentityBundle(decoding: peer.identityBundle())
-    let peerPrekey = try PigeonPrekeyBundle(decoding: peer.signedPrekeyBundle())
+    let peer = try makeCorePeer(seedByte: 62)
     let relay = try XCTUnwrap(URL(string: "wss://relay.example/ws"))
     XCTAssertTrue(
       fixture.manager.addContact(
-        peerBundle, name: "Peer", relayURLs: [relay],
-        prekeys: ContactPrekeyBundles(chat: nil, control: peerPrekey),
+        peer.bundle, name: "Peer", relayURLs: [relay],
+        prekeys: ContactPrekeyBundles(chat: nil, control: peer.prekey),
         admission: .verifiedInPerson))
     let contact = try XCTUnwrap(fixture.manager.contacts.first)
     let applicationID = "22222222-2222-2222-2222-222222222223"

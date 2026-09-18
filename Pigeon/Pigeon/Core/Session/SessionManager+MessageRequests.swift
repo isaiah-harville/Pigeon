@@ -74,8 +74,6 @@ extension SessionManager {
       activeConversationIDs.remove(id)
       ephemeralContactIDs.remove(id)
       bluetoothChatIDs.remove(id)
-      resetSession(for: id)
-      rehandshakeGate.clear(id)
     }
     contacts.removeAll { idSet.contains($0.id) }
   }
@@ -95,10 +93,8 @@ extension SessionManager {
     event.transientOutbox = isEphemeral(current)
     guard record(event, for: contact.id) else { return }
     armDeliveryDeadline(messageID: event.id, contactID: contact.id)
-    if canUseCorePairwise(with: contact) || establishedContactIDs.contains(contact.id) {
+    if canUseCorePairwise(with: contact) {
       transmit(event, to: current)
-    } else {
-      ensureEstablishing(contactID: contact.id)
     }
   }
 }

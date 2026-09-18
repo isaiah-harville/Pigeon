@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import PigeonFFI
 
@@ -75,7 +76,7 @@ extension SessionManager {
       return .retryAfterRestart
     }
     guard isPersistenceHealthy else { return .retryAfterRestart }
-    let requestID = "group-mesh-\(InitiationReplayLedger.digest(encoded).hexEncoded)"
+    let requestID = "group-mesh-\(Data(SHA256.hash(data: encoded)).hexEncoded)"
     return consumeGroupRelayMessage(envelope.payload, requestID: requestID)
       ? .consumed : .retryAfterRestart
   }

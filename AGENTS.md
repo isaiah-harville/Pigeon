@@ -48,8 +48,7 @@ deleted; do not reintroduce it.
   generated bindings are build artifacts (gitignored) — regenerate them, don't
   commit them.
 - `Pigeon/PigeonFFI/` is the Swift package the app links (module `PigeonFFI`): a
-  `binaryTarget` for the XCFramework plus a thin Swift facade (`PigeonAccount`,
-  `PigeonSession`,
+  `binaryTarget` for the XCFramework plus a thin Swift facade (`PigeonCoreClient`,
   `PigeonIdentityBundle`, `PigeonPrekeyBundle`, contact-card codec) over the
   generated bindings.
 - `pigeon-mesh/` is a dependency-free, platform-agnostic Rust crate
@@ -85,8 +84,8 @@ App `Core/`:
   persistence (`KeychainStore`), `IdentityManager`, fingerprints, and
   `SafetyNumber` generation.
 - `Core/Session/` — `SessionManager` (`@MainActor @Observable`) is the central
-  coordinator: owns one Olm `PigeonSession` per contact, drives async-first
-  establishment, contacts, conversations, and bridges to transports. It is split
+  coordinator: projects transactional core state, manages contacts and
+  conversations, and bridges opaque ciphertext to transports. It is split
   across `SessionManager.swift`, `+Messaging.swift`, `+Delivery.swift`,
   `+Reactions.swift`, and `+UI.swift` (UI passthroughs).
 - `Core/Contacts/` — `Contact` and `ContactCard` (the QR/scan payload: identity

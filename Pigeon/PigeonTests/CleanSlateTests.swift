@@ -78,7 +78,7 @@ final class CleanSlateTests: XCTestCase {
       core.wipe()
     }
     let persistence = SessionPersistence()
-    _ = try persistence.attach(store, identitySeed: Data(repeating: 4, count: 32))
+    _ = try persistence.attach(store)
     XCTAssertTrue(store.save(PersistedState(myName: "Before")))
     XCTAssertTrue(crypto.save(PersistedCrypto()))
     XCTAssertTrue(
@@ -114,7 +114,7 @@ final class CleanSlateTests: XCTestCase {
       })
     let store = EncryptedStore(key: SymmetricKey(size: .bits256), url: url, io: io)
     let persistence = SessionPersistence()
-    _ = try persistence.attach(store, identitySeed: Data(repeating: 5, count: 32))
+    _ = try persistence.attach(store)
     XCTAssertTrue(store.save(PersistedState(myName: "Before")))
     XCTAssertTrue(store.companion(suffix: ".crypto").save(PersistedCrypto()))
 

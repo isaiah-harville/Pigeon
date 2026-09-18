@@ -14,7 +14,8 @@ extension SessionManager {
   ) -> Bool {
     addContact(
       bundle, name: name, relayURLs: relayURLs,
-      prekeys: ContactPrekeyBundles(chat: prekeyBundle, control: nil), admission: admission)
+      prekeys: ContactPrekeyBundles(chat: prekeyBundle, control: prekeyBundle),
+      admission: admission)
   }
 
   /// Verifies and stores a scanned contact bundle, then begins establishing a
@@ -52,9 +53,6 @@ extension SessionManager {
     guard persist() else { return false }
     refreshRelay()
     note(.contactAdded)
-    rehandshakeGate.clear(bundle.identityKey)
-    resetSession(for: bundle.identityKey)
-    establishIfNeeded(contactID: bundle.identityKey)
     return true
   }
 

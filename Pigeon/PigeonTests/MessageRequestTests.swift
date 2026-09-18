@@ -93,11 +93,9 @@ final class MessageRequestTests: XCTestCase {
     XCTAssertTrue(a.canSendMessage(to: bOnA))
     a.activeChatID = b.myID
     a.reportScreenshotTaken()
-    let stagedAOnB = try XCTUnwrap(b.contacts.first { $0.id == a.myID })
-    XCTAssertFalse(
-      b.messages(with: stagedAOnB).contains { $0.event == .screenshot },
-      "system events cannot become an introduction")
-    XCTAssertFalse(stagedAOnB.introductionReceived)
+    XCTAssertNil(
+      b.contacts.first { $0.id == a.myID },
+      "system events cannot create an incoming request")
     a.send("Hello from Alice", to: bOnA)
 
     let aOnB = try XCTUnwrap(b.contacts.first { $0.id == a.myID })
@@ -167,11 +165,8 @@ final class MessageRequestTests: XCTestCase {
     let keyB = SymmetricKey(size: .bits256)
     wipe(keyA, "requests-order-a.store")
     wipe(keyB, "requests-order-b.store")
-    var sender = try launch(seed: seed(), key: keyA, file: "requests-order-a.store", bus: bus)
-    var recipient = try launch(seed: seed(), key: keyB, file: "requests-order-b.store", bus: bus)
-    if sender.isInitiator(toward: recipient.myID) {
-      swap(&sender, &recipient)
-    }
+    let sender = try launch(seed: seed(), key: keyA, file: "requests-order-a.store", bus: bus)
+    let recipient = try launch(seed: seed(), key: keyB, file: "requests-order-b.store", bus: bus)
 
     try addRemoteCard(of: recipient, to: sender)
     let contact = try XCTUnwrap(sender.contacts.first { $0.id == recipient.myID })
@@ -204,8 +199,7 @@ final class MessageRequestTests: XCTestCase {
 
     XCTAssertTrue(b.blockedContactIDs.contains(a.myID))
     XCTAssertFalse(b.contacts.contains { $0.id == a.myID })
-    a.resetSession(for: b.myID)
-    a.establishViaPrekey(try XCTUnwrap(a.contacts.first { $0.id == b.myID }))
+    a.send("blocked retry", to: try XCTUnwrap(a.contacts.first { $0.id == b.myID }))
     XCTAssertFalse(b.contacts.contains { $0.id == a.myID })
 
     b.unblockContact(id: a.myID)
@@ -278,15 +272,14 @@ final class MessageRequestTests: XCTestCase {
 
     try addRemoteCard(of: b, to: a)
     let bOnA = try XCTUnwrap(a.contacts.first { $0.id == b.myID })
-    a.establishIfNeeded(contactID: b.myID)
     a.applyEphemeral(true, for: b.myID, announce: false)
     a.sendEphemeralState(to: bOnA)
-    let aOnB = try XCTUnwrap(b.contacts.first { $0.id == a.myID })
-    XCTAssertFalse(b.isEphemeral(aOnB), "request-stage controls must not mutate chat state")
-    XCTAssertFalse(aOnB.introductionReceived)
+    XCTAssertNil(b.contacts.first { $0.id == a.myID })
 
     b.applyEphemeral(true, for: a.myID, announce: false)
     a.send("first introduction", to: bOnA)
+    let aOnB = try XCTUnwrap(b.contacts.first { $0.id == a.myID })
+    XCTAssertTrue(b.isEphemeral(aOnB), "the recipient's local setting remains active")
     XCTAssertTrue(b.isPersistenceHealthy)
     XCTAssertTrue(b.contacts.first { $0.id == a.myID }?.introductionReceived ?? false)
     XCTAssertEqual(b.messages(with: aOnB).filter { !$0.system }.count, 1)
@@ -399,29 +392,5 @@ final class MessageRequestTests: XCTestCase {
     XCTAssertTrue(local.contacts.isEmpty)
   }
 
-  func testPendingRequestIgnoresUnauthenticatedRehandshake() throws {
-    let bus = TestBus()
-    var sender = try launch(
-      seed: seed(), key: SymmetricKey(size: .bits256),
-      file: "requests-rehandshake-sender.store", bus: bus)
-    var recipient = try launch(
-      seed: seed(), key: SymmetricKey(size: .bits256),
-      file: "requests-rehandshake-recipient.store", bus: bus)
-    if !recipient.isInitiator(toward: sender.myID) {
-      swap(&sender, &recipient)
-    }
-    try addRemoteCard(of: recipient, to: sender)
-    let recipientOnSender = try XCTUnwrap(sender.contacts.first { $0.id == recipient.myID })
-    sender.establishIfNeeded(contactID: recipient.myID)
-    let senderOnRecipient = try XCTUnwrap(
-      recipient.contacts.first { $0.id == sender.myID })
-    let establishedSession = try XCTUnwrap(recipient.sessions[sender.myID])
-
-    recipient.handleRehandshakeRequest(from: senderOnRecipient)
-
-    XCTAssertTrue(recipient.sessions[sender.myID] === establishedSession)
-    XCTAssertEqual(sender.contacts.first { $0.id == recipient.myID }?.requestState, .outgoing)
-    XCTAssertEqual(recipientOnSender.requestState, .outgoing)
-  }
 }
 // swiftlint:enable type_body_length identifier_name

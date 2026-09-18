@@ -26,44 +26,15 @@ final class SessionCoreIntegrationTests: XCTestCase {
         .pairwisePrekeyBundle.isEmpty)
   }
 
-  func testAttachStoreMigratesLegacyPairwiseStateIntoCore() throws {
+  func testShareCardUsesOneCoreOwnedPairwiseIdentity() throws {
     let fixture = try makeFixture()
     defer { wipe(fixture.store) }
-    let legacyAccount = try PigeonAccount.fromIdentitySeed(
-      seed: fixture.manager.identity.identitySeed)
-    let peer = try PigeonAccount.generate()
-    let peerPrekey = try PigeonPrekeyBundle(decoding: peer.signedPrekeyBundle())
-    let outbound = try legacyAccount.establishOutbound(
-      peerBundle: peerPrekey.encoded, firstPlaintext: Data("migration".utf8))
-    _ = try peer.establishInbound(initiation: outbound.initiation)
-    let contact = Contact(
-      bundle: try PigeonIdentityBundle(decoding: peer.identityBundle()),
-      displayName: "Peer",
-      prekeyBundle: peerPrekey)
-    let legacyPersistence = SessionPersistence()
-    _ = try legacyPersistence.attach(
-      fixture.store, identitySeed: fixture.manager.identity.identitySeed)
-    XCTAssertTrue(
-      legacyPersistence.save(
-        SessionPersistence.Snapshot(
-          contacts: [contact], conversations: [:], ephemeralContactIDs: [],
-          bluetoothChatIDs: [], myName: "Alice", account: legacyAccount,
-          sessions: [contact.id: outbound.session], pendingInitiation: [:],
-          lastInitiationIn: [:], fallbackRotatedAt: nil)))
-
     try fixture.manager.attachStore(fixture.store)
 
-    let snapshot = try XCTUnwrap(fixture.manager.coreClient?.stateSnapshot())
-    let migratedPrekey = try PigeonPrekeyBundle(decoding: snapshot.pairwisePrekeyBundle)
-    let legacyIdentity = try PigeonIdentityBundle(decoding: legacyAccount.identityBundle())
-    XCTAssertEqual(migratedPrekey.curveIdentityKey, legacyIdentity.curveIdentityKey)
-    XCTAssertEqual(snapshot.pairwiseContacts.map(\.identity), [contact.id])
-    XCTAssertEqual(
-      fixture.manager.contacts.first?.pairwiseControlPrekeyBundle,
-      fixture.manager.contacts.first?.prekeyBundle)
-    XCTAssertTrue(
-      fixture.manager.canUseCorePairwise(
-        with: try XCTUnwrap(fixture.manager.contacts.first)))
+    let card = try XCTUnwrap(fixture.manager.myCard)
+
+    XCTAssertEqual(card.prekeyBundle, card.pairwiseControlPrekeyBundle)
+    XCTAssertEqual(card.bundle.curveIdentityKey, card.prekeyBundle?.curveIdentityKey)
   }
 
   func testCoreSnapshotAtomicallyReplacesGroupProjectionAndRejectsRollback() throws {
@@ -191,7 +162,6 @@ final class SessionCoreIntegrationTests: XCTestCase {
 
     XCTAssertThrowsError(try fixture.manager.attachStore(fixture.store))
     XCTAssertFalse(fixture.manager.isUnlocked)
-    XCTAssertNil(fixture.manager.account)
     XCTAssertNil(fixture.manager.coreClient)
   }
 
@@ -221,12 +191,11 @@ final class SessionCoreIntegrationTests: XCTestCase {
     defer { wipe(fixture.store) }
     try fixture.manager.attachStore(fixture.store)
     let initialGeneration = try fixture.manager.coreClient?.checkpointGeneration()
-    let peer = try PigeonAccount.fromIdentitySeed(seed: Data(repeating: 31, count: 32))
-    let peerBundle = try PigeonIdentityBundle(decoding: peer.identityBundle())
-    fixture.manager.contacts = [Contact(bundle: peerBundle, displayName: "Peer")]
+    let peer = try makeCorePeer(seedByte: 31)
+    fixture.manager.contacts = [Contact(bundle: peer.bundle, displayName: "Peer")]
     let envelope = SessionEnvelope(
       type: .pairwise,
-      sender: peerBundle.identityKey,
+      sender: peer.bundle.identityKey,
       recipient: fixture.manager.myID,
       payload: Data("malformed pairwise ciphertext".utf8))
 
@@ -278,16 +247,13 @@ extension SessionCoreIntegrationTests {
     try fixture.manager.attachStore(fixture.store)
     let relay = try XCTUnwrap(URL(string: "wss://relay.example/ws"))
     let peers = try [33, 34].map { seed -> Contact in
-      let account = try PigeonAccount.fromIdentitySeed(
-        seed: Data(repeating: UInt8(seed), count: 32))
-      let bundle = try PigeonIdentityBundle(decoding: account.identityBundle())
-      let prekey = try PigeonPrekeyBundle(decoding: account.signedPrekeyBundle())
+      let peer = try makeCorePeer(seedByte: UInt8(seed))
       XCTAssertTrue(
         fixture.manager.addContact(
-          bundle, name: "Peer \(seed)", relayURLs: [relay],
-          prekeys: ContactPrekeyBundles(chat: nil, control: prekey),
+          peer.bundle, name: "Peer \(seed)", relayURLs: [relay],
+          prekeys: ContactPrekeyBundles(chat: nil, control: peer.prekey),
           admission: .verifiedInPerson))
-      return try XCTUnwrap(fixture.manager.contacts.first { $0.id == bundle.identityKey })
+      return try XCTUnwrap(fixture.manager.contacts.first { $0.id == peer.bundle.identityKey })
     }
     let coordinatorKey = fixture.manager.myID
     fixture.manager.resolveGroupCoordinatorKey = { requestedRelay in
@@ -310,10 +276,8 @@ extension SessionCoreIntegrationTests {
     try fixture.manager.attachStore(fixture.store)
     let relay = try XCTUnwrap(URL(string: "wss://relay.example/ws"))
     let peers = try [35, 36].map { seed -> Contact in
-      let account = try PigeonAccount.fromIdentitySeed(
-        seed: Data(repeating: UInt8(seed), count: 32))
-      let bundle = try PigeonIdentityBundle(decoding: account.identityBundle())
-      return Contact(bundle: bundle, displayName: "Peer \(seed)", relayURLs: [relay])
+      let peer = try makeCorePeer(seedByte: UInt8(seed))
+      return Contact(bundle: peer.bundle, displayName: "Peer \(seed)", relayURLs: [relay])
     }
     fixture.manager.contacts = peers
     fixture.manager.resolveGroupCoordinatorKey = { _ in
@@ -359,22 +323,20 @@ extension SessionCoreIntegrationTests {
     let fixture = try makeFixture()
     defer { wipe(fixture.store) }
     try fixture.manager.attachStore(fixture.store)
-    let peer = try PigeonAccount.fromIdentitySeed(seed: Data(repeating: 32, count: 32))
-    let peerBundle = try PigeonIdentityBundle(decoding: peer.identityBundle())
-    let peerPrekey = try PigeonPrekeyBundle(decoding: peer.signedPrekeyBundle())
+    let peer = try makeCorePeer(seedByte: 32)
     let relay = try XCTUnwrap(URL(string: "wss://relay.example/ws"))
 
     XCTAssertTrue(
       fixture.manager.addContact(
-        peerBundle, name: "Peer", relayURLs: [relay],
-        prekeys: ContactPrekeyBundles(chat: nil, control: peerPrekey),
+        peer.bundle, name: "Peer", relayURLs: [relay],
+        prekeys: ContactPrekeyBundles(chat: nil, control: peer.prekey),
         admission: .outgoingRequest))
     let output = try fixture.manager.executeCore(
       PigeonCoreCommand(
         id: "send-registered-control",
         body: .sendPairwiseControl(
           PigeonSendPairwiseControl(
-            recipientIdentity: peerBundle.identityKey,
+            recipientIdentity: peer.bundle.identityKey,
             contentKind: .groupWelcome,
             payload: Data("opaque welcome".utf8)))))
 
@@ -388,9 +350,8 @@ extension SessionCoreIntegrationTests {
     let fixture = try makeFixture()
     defer { wipe(fixture.store) }
     try fixture.manager.attachStore(fixture.store)
-    let peer = try PigeonAccount.fromIdentitySeed(seed: Data(repeating: 61, count: 32))
-    let peerBundle = try PigeonIdentityBundle(decoding: peer.identityBundle())
-    let contact = Contact(bundle: peerBundle, displayName: "Peer")
+    let peer = try makeCorePeer(seedByte: 61)
+    let contact = Contact(bundle: peer.bundle, displayName: "Peer")
     fixture.manager.contacts = [contact]
     let contactID = contact.id
     var message = ChatMessage(mine: true, text: "hello", pending: true)

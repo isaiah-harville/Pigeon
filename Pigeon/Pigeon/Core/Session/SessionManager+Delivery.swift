@@ -13,7 +13,6 @@ import PigeonFFI
 extension SessionManager {
 
   func restoreLoadedState(_ loaded: SessionPersistence.Loaded) {
-    account = loaded.account
     contacts = loaded.contacts
     conversationStore.load(loaded.conversations)
     groupConversations = loaded.groupConversations
@@ -22,12 +21,6 @@ extension SessionManager {
     activeConversationIDs = loaded.activeConversationIDs
     blockedContacts = loaded.blockedContacts
     myName = loaded.myName
-    sessions = loaded.sessions
-    establishedContactIDs = Set(loaded.sessions.keys)
-    pendingInitiation = loaded.pendingInitiation
-    lastInitiationIn = loaded.lastInitiationIn
-    acceptedInitiationDigests = loaded.acceptedInitiationDigests
-    fallbackRotatedAt = loaded.fallbackRotatedAt
     if loaded.legacyPairwiseMigration != nil {
       for index in contacts.indices where contacts[index].pairwiseControlPrekeyBundle == nil {
         contacts[index].pairwiseControlPrekeyBundle = contacts[index].prekeyBundle
@@ -50,26 +43,8 @@ extension SessionManager {
   func flushOnConnectivity() {
     guard isUnlocked else { return }  // can't decrypt/sign or read contacts yet
     expireStaleDeliveries(now: Date())
-    for contact in contacts {
-      if canUseCorePairwise(with: contact) || establishedContactIDs.contains(contact.id) {
-        sendPending(to: contact)
-      } else {
-        ensureEstablishing(contactID: contact.id)
-      }
-    }
-  }
-
-  /// Drives (re)establishment for one contact according to our role: the
-  /// initiator (re)sends msg1; the responder nudges the initiator to start.
-  func ensureEstablishing(contactID: Data) {
-    guard !establishedContactIDs.contains(contactID) else { return }
-    guard let contact = contacts.first(where: { $0.id == contactID }),
-      contact.requestState != .incoming
-    else { return }
-    if contact.requestState == .outgoing || isInitiator(toward: contactID) {
-      establishIfNeeded(contactID: contactID)
-    } else {
-      sendEnvelope(.rehandshakeRequest, payload: Data(), to: contact)
+    for contact in contacts where canUseCorePairwise(with: contact) {
+      sendPending(to: contact)
     }
   }
 
@@ -99,27 +74,16 @@ extension SessionManager {
   /// cleared only when the peer ACKs, so a message survives disconnects and
   /// lost packets; duplicates are deduplicated by the recipient.
   func sendPending(to contact: Contact) {
-    if canUseCorePairwise(with: contact) {
-      if let snapshot = try? coreClient?.stateSnapshot() {
-        let contactItemIDs = snapshot.pendingOutbound
-          .filter { $0.kind == .pairwise && $0.destination == contact.id }
-          .map(\.id)
-        meshedPairwiseOutboundIDs.subtract(contactItemIDs)
-        fanOutPairwiseMesh(snapshot: snapshot)
-        if relay != nil {
-          pairwiseRelay.reconfigure(snapshot: snapshot)
-        }
+    guard canUseCorePairwise(with: contact) else { return }
+    if let snapshot = try? coreClient?.stateSnapshot() {
+      let contactItemIDs = snapshot.pendingOutbound
+        .filter { $0.kind == .pairwise && $0.destination == contact.id }
+        .map(\.id)
+      meshedPairwiseOutboundIDs.subtract(contactItemIDs)
+      fanOutPairwiseMesh(snapshot: snapshot)
+      if relay != nil {
+        pairwiseRelay.reconfigure(snapshot: snapshot)
       }
-      return
-    }
-    guard establishedContactIDs.contains(contact.id) else { return }
-    // For a session whose initiation isn't yet acknowledged, resend the
-    // initiation first so it always precedes the messages, even on reorder/loss.
-    if let initiation = pendingInitiation[contact.id] {
-      sendEnvelope(.x3dhInit, payload: initiation, to: contact)
-    }
-    for message in conversationStore.pending(for: contact.id) {
-      transmit(message, to: contact)
     }
   }
 
@@ -223,17 +187,6 @@ extension SessionManager {
     return recordSaveOutcome(persistence.save(snapshot()))
   }
 
-  /// Re-seals only the crypto blob (account + per-contact session pickles). The
-  /// fast path for a ratchet advance, where conversation history is unchanged —
-  /// avoids re-encoding the whole bulk store on every encrypted envelope. The
-  /// session pickle must be durable promptly (a stale one reuses Olm message
-  /// indices), so this is called on every session-encrypted send.
-  @discardableResult
-  func persistCrypto() -> Bool {
-    guard isUnlocked, isPersistenceHealthy else { return false }
-    return recordSaveOutcome(persistence.saveCrypto(snapshot()))
-  }
-
   /// Surfaces a failed write once per run of failures. A save that doesn't land
   /// means the sealed state is behind the live one — for the crypto blob that is
   /// a stale ratchet pickle, so it must not pass silently. Coalesced so a burst
@@ -251,9 +204,7 @@ extension SessionManager {
     return false
   }
 
-  /// Snapshots the live state (contacts, conversation mirror, ephemeral/Bluetooth
-  /// flags, Olm account + per-contact session state) for `SessionPersistence` to
-  /// seal at rest.
+  /// Snapshots app-owned state for `SessionPersistence` to seal at rest.
   private func snapshot() -> SessionPersistence.Snapshot {
     SessionPersistence.Snapshot(
       contacts: contacts,
@@ -263,12 +214,6 @@ extension SessionManager {
       bluetoothChatIDs: bluetoothChatIDs,
       activeConversationIDs: activeConversationIDs,
       blockedContacts: blockedContacts,
-      myName: myName,
-      account: account,
-      sessions: sessions,
-      pendingInitiation: pendingInitiation,
-      lastInitiationIn: lastInitiationIn,
-      acceptedInitiationDigests: acceptedInitiationDigests,
-      fallbackRotatedAt: fallbackRotatedAt)
+      myName: myName)
   }
 }

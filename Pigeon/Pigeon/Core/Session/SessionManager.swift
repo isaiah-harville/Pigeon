@@ -3,22 +3,14 @@
 //  Pigeon
 //
 //  Orchestrates end-to-end-encrypted messaging with verified contacts over the
-//  mesh: one Olm session per contact, async-first establishment routed through
-//  SessionEnvelopes, and the binding check that ties a session to a verified
-//  identity.
+//  mesh and relay transports. Pairwise and MLS protocol state remains inside
+//  pigeon-core; this coordinator projects core events into app state.
 //
 
 import Foundation
 import PigeonFFI
 
-/// Owns encrypted sessions with contacts and bridges them to the mesh.
-///
-/// Role assignment is deterministic so both ends agree without negotiation:
-/// the device whose identity key sorts first is the **initiator** (it opens the
-/// Olm session against the peer's published prekey), the other is the
-/// **responder**. Establishment and pending sends are re-driven by concrete
-/// connectivity events (a link coming up), since either device may add the
-/// contact (scan the QR) or come online at a different moment.
+/// Coordinates app state with the transactional core and available transports.
 @MainActor
 @Observable
 final class SessionManager {
@@ -63,34 +55,9 @@ final class SessionManager {
     get { presenter.onIncomingNotification }
     set { presenter.onIncomingNotification = newValue }
   }
-  /// This device's Olm account (Ed25519 identity + Olm keys), bound to the
-  /// long-term identity in `IdentityManager`. Built from the identity seed plus
-  /// the persisted Olm pickle in `attachStore` (so it is `nil` until unlock),
-  /// and re-sealed to the vault whenever it mutates.
-  var account: PigeonAccount?
-
-  /// Per-contact Olm session state (sessions, established set, initiations),
-  /// surfaced through the facade in the extension below.
-  let sessionRegistry = SessionRegistry()
-
-  /// When the device's signed-prekey (Olm fallback) was last rotated, restored
-  /// from and persisted to the crypto store. Drives periodic rotation to bound
-  /// the exposure window of the no-one-time-key async-first-contact path.
-  var fallbackRotatedAt: Date?
-  /// How often the signed prekey is rotated. Olm keeps the previous fallback
-  /// valid for one rotation, so a contact's stored QR card stays usable for first
-  /// contact for up to two intervals before they need a fresh code.
-  static let fallbackRotationInterval: TimeInterval = 7 * 24 * 3600
-
   /// Envelopes received while locked (we can't decrypt or persist yet), replayed
   /// once unlocked. See `LockedInbox`.
   var lockedInbox = LockedInbox()
-
-  /// Throttles re-handshakes that *network* input can trigger, so a spoofed or
-  /// replayed `.rehandshakeRequest` (or a flood of undecryptable `.message`
-  /// envelopes) can't force endless session resets. User-initiated resets
-  /// bypass it. See `RehandshakeGate`.
-  var rehandshakeGate = RehandshakeGate(cooldown: RehandshakeGate.defaultCooldown)
 
   /// Locked until the vault is unlocked with Face ID / Touch ID.
   private(set) var isUnlocked = false
@@ -104,8 +71,7 @@ final class SessionManager {
   /// Whether we've already reported that writes to the encrypted store are
   /// failing, so a run of failures logs once rather than per save.
   var didWarnAboutSaveFailure = false
-  /// Owns the encrypted store and the codec between the live state and disk
-  /// (including building the bound Olm account). See `SessionPersistence`.
+  /// Owns the encrypted store and the codec between app state and disk.
   let persistence: SessionPersistence
 
   /// Transactional application core. The host supplies signing and encrypted
@@ -194,10 +160,9 @@ final class SessionManager {
   /// Attaches the encrypted store after unlock: load persisted state and begin
   /// establishing sessions for known contacts.
   func attachStore(_ store: EncryptedStore) throws {
-    // Decode persisted state and (re)build the bound Olm account off the identity
-    // seed. The codec/account logic lives in `SessionPersistence`; here we just
-    // apply the result to the live state and run the post-unlock orchestration.
-    let loaded = try persistence.attach(store, identitySeed: identity.identitySeed)
+    // Decode app-owned state, construct the transactional core over its sealed
+    // checkpoint, then import any pre-1.4 pairwise state before unlocking.
+    let loaded = try persistence.attach(store)
     let coreIdentityProvider = CoreIdentityProvider(rootIdentity: identity)
     let coreCheckpointStore = CoreCheckpointStore(appStore: store)
     let coreClient = try PigeonCoreClient(
@@ -216,6 +181,7 @@ final class SessionManager {
     restoreLoadedState(loaded)
     applyCoreSnapshot(coreSnapshot)
     try registerPairwiseContacts()
+    guard persist() else { throw SessionPersistenceError.unreadableStore }
     guard purgeExpiredIncomingRequests(now: Date()) else {
       throw SessionPersistenceError.unreadableStore
     }
@@ -228,50 +194,20 @@ final class SessionManager {
       pairwiseRelay.reconfigure(snapshot: refreshedCoreSnapshot)
     }
     refreshRelay()  // pick up loaded contacts' relays
-    // Drain anything buffered while locked *before* re-driving establishment, so
-    // a buffered initiation/rehandshake stands up the session itself and the
-    // `ensureEstablishing` pass below then no-ops — rather than both firing and
-    // racing into two competing initiations (the relaunch handshake bug).
     // If anything was buffered while locked, re-subscribe our own relays: those
     // envelopes were surfaced but not acked (we couldn't consume them locked),
     // so the relay still holds them — pull them again now that we can ack.
     if drainLockedInbox() { relay?.resubscribeOwnRelays() }
-    for contact in contacts where contact.requestState != .incoming {
-      ensureEstablishing(contactID: contact.id)
-    }
     // Purge queue entries that outlived the retention window while the app was
     // closed, then re-arm/settle the deadlines lost to the relaunch so a
     // message killed mid-send doesn't read "Sending…" forever.
     expireStaleDeliveries(now: Date())
     reconcileDeliveryStatuses(now: Date())
-    maybeRotateFallbackKey()
   }
 
   /// Recomputes the relay connection pool (our relays plus every contact's).
   func refreshRelay() {
     relay?.reconfigure(RelaySettings.urls())
-  }
-
-  /// Rotates the signed (fallback) prekey if it's older than the rotation
-  /// interval, bounding the exposure window of the no-one-time-key first-contact
-  /// path (the only prekey path the QR card uses). A fresh account is stamped
-  /// without rotating — its fallback is already new. Called on unlock. No key
-  /// material is logged. Rotating changes our QR card's advertised prekey; Olm
-  /// keeps the previous fallback valid for one rotation so recently shared cards
-  /// still work for first contact.
-  func maybeRotateFallbackKey() {
-    guard let account else { return }
-    let now = Date()
-    guard let lastRotated = fallbackRotatedAt else {
-      fallbackRotatedAt = now  // first launch: stamp the already-fresh fallback
-      persist()
-      return
-    }
-    guard now.timeIntervalSince(lastRotated) >= Self.fallbackRotationInterval else { return }
-    account.rotateFallbackKey()
-    fallbackRotatedAt = now
-    note(.signedPrekeyRotated)
-    persist()
   }
 
   // MARK: - Sending
@@ -298,11 +234,11 @@ final class SessionManager {
     // window the status drops to "Not delivered" with a resend. A
     // successful transmit below moves it to `.sent`, which the deadline ignores.
     armDeliveryDeadline(messageID: message.id, contactID: contact.id)
-    if canUseCorePairwise(with: contact) || establishedContactIDs.contains(contact.id) {
+    if canUseCorePairwise(with: contact) {
       transmit(message, to: contact)
     } else {
       note(.messageQueued)
-      ensureEstablishing(contactID: contact.id)
+      note(.missingPrekey)
     }
   }
 
@@ -310,68 +246,19 @@ final class SessionManager {
   /// message with the link it's going out on now, so a pending message resent
   /// after a transport switch reflects reality in its long-press detail.
   func transmit(_ message: ChatMessage, to contact: Contact) {
-    if canUseCorePairwise(with: contact) {
-      guard transmitDirectCore(message, to: contact) else { return }
-      let channel = outboundChannel(for: contact)
-      if message.transport != channel {
-        setTransport(channel, messageID: message.id, contactID: contact.id)
-      }
-      if conversationStore.delivery(messageID: message.id, contactID: contact.id) != .delivered {
-        setDelivery(.sent, messageID: message.id, contactID: contact.id)
-        persist()
-      }
-      return
-    }
-    guard let session = sessions[contact.id],
-      let payload = Self.encodeMessage(message),
-      let ciphertext = try? session.encrypt(plaintext: payload)
+    guard canUseCorePairwise(with: contact),
+      transmitDirectCore(message, to: contact)
     else { return }
     let channel = outboundChannel(for: contact)
     if message.transport != channel {
       setTransport(channel, messageID: message.id, contactID: contact.id)
     }
-    guard sendEnvelope(.message, payload: ciphertext, to: contact) else { return }
-    // Encrypted and handed to the mesh — it's on its way (store-and-forward keeps
-    // it moving). Move it to `.sent` unless the peer's ack already made it
-    // `.delivered`, so a late resend can't clobber a confirmed delivery.
     if conversationStore.delivery(messageID: message.id, contactID: contact.id) != .delivered {
       setDelivery(.sent, messageID: message.id, contactID: contact.id)
       persist()
     }
   }
 
-}
-
-// MARK: - Session-state facade
-
-/// Stable property surface over `sessionRegistry`, so the establishment and
-/// messaging code is unchanged by the registry extraction. In an extension so it
-/// doesn't count against the coordinator's type-body length.
-extension SessionManager {
-  func resetSession(for contactID: Data) {
-    sessionRegistry.reset(contactID)
-  }
-
-  var sessions: [Data: PigeonSession] {
-    get { sessionRegistry.sessions }
-    set { sessionRegistry.sessions = newValue }
-  }
-  var establishedContactIDs: Set<Data> {
-    get { sessionRegistry.established }
-    set { sessionRegistry.established = newValue }
-  }
-  var pendingInitiation: [Data: Data] {
-    get { sessionRegistry.pendingInitiation }
-    set { sessionRegistry.pendingInitiation = newValue }
-  }
-  var lastInitiationIn: [Data: Data] {
-    get { sessionRegistry.lastInitiationIn }
-    set { sessionRegistry.lastInitiationIn = newValue }
-  }
-  var acceptedInitiationDigests: [Data: Set<Data>] {
-    get { sessionRegistry.acceptedInitiationDigests }
-    set { sessionRegistry.acceptedInitiationDigests = newValue }
-  }
 }
 
 // MARK: - Ephemeral chats
@@ -410,17 +297,11 @@ extension SessionManager {
 
   /// Sends our current ephemeral state for this chat to the peer (encrypted).
   func sendEphemeralState(to contact: Contact) {
-    if canUseCorePairwise(with: contact) {
-      _ = try? sendDirectCoreApplication(
-        .ephemeralState(enabled: ephemeralContactIDs.contains(contact.id)), id: UUID(), to: contact)
-      return
-    }
-    guard let session = sessions[contact.id], establishedContactIDs.contains(contact.id) else {
-      return
-    }
-    let byte: UInt8 = ephemeralContactIDs.contains(contact.id) ? 1 : 0
-    let command = Data([0x01, byte])  // 0x01 = ephemeral cmd
-    guard let ciphertext = try? session.encrypt(plaintext: command) else { return }
-    sendEnvelope(.control, payload: ciphertext, to: contact)
+    guard let current = contacts.first(where: { $0.id == contact.id }),
+      current.requestState == .none,
+      canUseCorePairwise(with: current)
+    else { return }
+    _ = try? sendDirectCoreApplication(
+      .ephemeralState(enabled: ephemeralContactIDs.contains(current.id)), id: UUID(), to: current)
   }
 }

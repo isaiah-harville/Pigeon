@@ -12,8 +12,7 @@ final class PairwiseAdmissionProjectionTests: XCTestCase {
     let manager = SessionManager(
       identity: identity,
       mesh: MeshService(transport: PairwiseAdmissionNoopTransport()))
-    let peer = try PigeonAccount.fromIdentitySeed(seed: Data(repeating: 24, count: 32))
-    let bundle = try PigeonIdentityBundle(decoding: peer.identityBundle())
+    let bundle = try makeCorePeer(seedByte: 24).bundle
     manager.contacts = [Contact(bundle: bundle, displayName: "Peer")]
 
     manager.applyCoreSnapshot(

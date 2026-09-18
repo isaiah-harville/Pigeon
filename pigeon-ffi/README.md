@@ -5,11 +5,10 @@ UniFFI bindings that expose [`pigeon-core`](../pigeon-core) (Pigeon's Olm/
 transport/mesh layer) to Swift. This crate is the only place that links UniFFI,
 so `pigeon-core` and `pigeon-mesh` themselves stay free of any bindings coupling.
 
-The FFI surface is deliberately thin: bundles and Olm messages cross as opaque
-bytes, and the only stateful objects are `FfiAccount` and `FfiSession`. The
-identity binding and prekey signatures are still verified inside Rust, so a
-session is only ever returned for a peer whose Ed25519 identity authenticated
-the channel.
+The FFI surface is deliberately thin: versioned commands, app events, and
+ciphertext cross as opaque bytes through the transactional `FfiClient`.
+Identity keys, pairwise ratchets, and MLS state remain inside `pigeon-core`;
+Swift cannot construct or advance cryptographic sessions directly.
 
 ## Build artifact, not source
 
