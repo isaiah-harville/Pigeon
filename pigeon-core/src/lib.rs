@@ -55,8 +55,9 @@ pub use group::{
     GroupAction, GroupApplication, GroupCiphertext, GroupCreationConfig, GroupDeliveryState,
     GroupEngine, GroupId, GroupMessageId, GroupMutationCandidate, GroupRelayCapability,
     GroupRelayControl, GroupRelayControlKind, GroupRelayRegistration, PendingMutation,
-    PigeonGroupPolicy, PolicyError, PolicyEvent, PolicyEventKind, coordinator_receipt_transcript,
-    select_canonical_candidate, validate_transition,
+    PigeonGroupPolicy, PolicyError, PolicyEvent, PolicyEventKind, RecoveryCertificate,
+    RecoveryEndorsement, RecoveryError, RecoveryProposal, coordinator_receipt_transcript,
+    relay_capability_id, select_canonical_candidate, validate_transition,
 };
 pub use identity::{
     Account, GroupJoinMaterial, GroupJoinRequest, GroupMemberKeys, IdentityBundle, IdentityError,

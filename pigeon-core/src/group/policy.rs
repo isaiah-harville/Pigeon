@@ -2,6 +2,7 @@ use core::fmt;
 
 use ed25519_dalek::VerifyingKey;
 use prost::Message;
+use sha2::{Digest, Sha256};
 use unicode_general_category::{GeneralCategory, get_general_category};
 use unicode_normalization::UnicodeNormalization;
 
@@ -310,6 +311,27 @@ impl PigeonGroupPolicy {
             .binary_search_by_key(&identity, GroupMemberKeys::member_identity)
             .ok()
             .map(|index| self.member_keys[index].capability_public_key())
+    }
+
+    pub fn member_recovery_key(&self, identity: [u8; 32]) -> Option<[u8; 32]> {
+        self.member_keys
+            .binary_search_by_key(&identity, GroupMemberKeys::member_identity)
+            .ok()
+            .map(|index| self.member_keys[index].recovery_public_key())
+    }
+
+    pub fn policy_hash(&self) -> [u8; 32] {
+        Sha256::digest(self.encode()).into()
+    }
+
+    pub fn roster_hash(&self) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(b"pigeon.group.roster.v1");
+        hasher.update((self.members.len() as u32).to_be_bytes());
+        for member in &self.members {
+            hasher.update(member);
+        }
+        hasher.finalize().into()
     }
 
     pub(crate) fn relay_capability_delta(

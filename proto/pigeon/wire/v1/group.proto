@@ -178,6 +178,33 @@ message GroupCoordinatorSubmission {
   bytes candidate = 3;
 }
 
+// Emergency coordinator replacement authorized by the current policy's
+// recovery keys. The signed proposal is bound to one exact durable group state.
+message GroupRecoveryProposal {
+  uint32 version = 1;
+  bytes group_id = 2;
+  uint64 base_epoch = 3;
+  uint64 base_policy_revision = 4;
+  bytes policy_hash = 5;
+  bytes roster_hash = 6;
+  bytes receipt_head = 7;
+  string replacement_relay_url = 8;
+  bytes replacement_coordination_id = 9;
+  bytes replacement_coordinator_public_key = 10;
+  bytes capability_set_hash = 11;
+}
+
+message GroupRecoveryEndorsement {
+  bytes signer_identity = 1;
+  bytes signature = 2;
+}
+
+message GroupRecoveryCertificate {
+  uint32 version = 1;
+  GroupRecoveryProposal proposal = 2;
+  repeated GroupRecoveryEndorsement endorsements = 3;
+}
+
 // The opaque value sequenced by the coordinator. Referenced MLS proposals must
 // accompany the commit so every member can queue them before processing it.
 message GroupMutationCandidate {
