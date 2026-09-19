@@ -55,7 +55,7 @@ fn root(byte: u8) -> [u8; 32] {
 }
 
 fn member_keys(byte: u8) -> GroupMemberKeys {
-    GroupMemberKeys::issue(&TestIdentity::new(byte), root(1), GROUP_ID, COORDINATION_ID).unwrap()
+    GroupMemberKeys::issue(&TestIdentity::new(byte), root(1), GROUP_ID).unwrap()
 }
 
 fn coordinator_key() -> [u8; 32] {
@@ -216,21 +216,24 @@ fn membership_transitions_derive_exact_relay_capability_changes() {
             subject: root(2),
         })
         .unwrap();
-    let promote = GroupRelayControl::for_transition(&initial, &promoted, &promoted_event)
+    let promote = GroupRelayControl::for_transition(&initial, &promoted, 1, 2, &promoted_event)
         .unwrap()
         .unwrap();
-    assert_eq!(promote.kind(), GroupRelayControlKind::PromoteAdmin);
-    assert_eq!(promote.public_key(), member_keys(2).capability_public_key());
+    assert_eq!(promote.kind(), GroupRelayControlKind::ReplaceAll);
+    assert!(promote.capabilities().iter().any(|capability| {
+        capability.public_key() == member_keys(2).capability_public_key()
+            && capability.can_control()
+    }));
     let (demoted, demoted_event) = promoted
         .apply(&GroupAction::Demote {
             actor: root(1),
             subject: root(2),
         })
         .unwrap();
-    let demote = GroupRelayControl::for_transition(&promoted, &demoted, &demoted_event)
+    let demote = GroupRelayControl::for_transition(&promoted, &demoted, 2, 3, &demoted_event)
         .unwrap()
         .unwrap();
-    assert_eq!(demote.kind(), GroupRelayControlKind::DemoteAdmin);
+    assert_eq!(demote.kind(), GroupRelayControlKind::ReplaceAll);
 
     let prior = policy();
     let dave_keys = member_keys(4);
@@ -241,11 +244,16 @@ fn membership_transitions_derive_exact_relay_capability_changes() {
             member_keys: Box::new(dave_keys),
         })
         .unwrap();
-    let grant = GroupRelayControl::for_transition(&prior, &with_dave, &added)
+    let grant = GroupRelayControl::for_transition(&prior, &with_dave, 1, 2, &added)
         .unwrap()
         .unwrap();
-    assert_eq!(grant.kind(), GroupRelayControlKind::Grant);
-    assert_eq!(grant.public_key(), dave_capability);
+    assert_eq!(grant.kind(), GroupRelayControlKind::ReplaceAll);
+    assert!(
+        grant
+            .capabilities()
+            .iter()
+            .any(|capability| capability.public_key() == dave_capability)
+    );
     assert_eq!(grant.coordination_id(), COORDINATION_ID);
     assert_eq!(GroupRelayControl::decode(&grant.encode()).unwrap(), grant);
 
@@ -255,11 +263,16 @@ fn membership_transitions_derive_exact_relay_capability_changes() {
             subject: root(4),
         })
         .unwrap();
-    let revoke = GroupRelayControl::for_transition(&with_dave, &without_dave, &removed)
+    let revoke = GroupRelayControl::for_transition(&with_dave, &without_dave, 2, 3, &removed)
         .unwrap()
         .unwrap();
-    assert_eq!(revoke.kind(), GroupRelayControlKind::Revoke);
-    assert_eq!(revoke.public_key(), dave_capability);
+    assert_eq!(revoke.kind(), GroupRelayControlKind::ReplaceAll);
+    assert!(
+        !revoke
+            .capabilities()
+            .iter()
+            .any(|capability| capability.public_key() == dave_capability)
+    );
 
     let (renamed, renamed_event) = without_dave
         .apply(&GroupAction::Rename {
@@ -267,12 +280,12 @@ fn membership_transitions_derive_exact_relay_capability_changes() {
             name: "Best Friends".into(),
         })
         .unwrap();
-    assert!(
-        GroupRelayControl::for_transition(&without_dave, &renamed, &renamed_event)
+    let renamed_control =
+        GroupRelayControl::for_transition(&without_dave, &renamed, 3, 4, &renamed_event)
             .unwrap()
-            .is_none()
-    );
-    assert!(GroupRelayControl::for_transition(&prior, &renamed, &added).is_err());
+            .unwrap();
+    assert_eq!(renamed_control.kind(), GroupRelayControlKind::ReplaceAll);
+    assert!(GroupRelayControl::for_transition(&prior, &renamed, 1, 2, &added).is_err());
 }
 
 #[test]
@@ -321,9 +334,9 @@ fn deterministic_policy_vectors_are_stable() {
     assert_eq!(
         hashes,
         [
-            "3045f22d34580be2d3d84628dda7dba4f8f0274500998066dcfeda03bd7975c9",
-            "0252110b6fcf515ab61d13fd710fecfd9795149375de4617aae6a758b2afbf90",
-            "3ac92d33a70427c8d266238494b7d6a0bb286598e35b736bde34975a8b11ac75",
+            "a3dd290b1711b69a698981bb7011b9f9694d26ec210efea305b862567b602cf8",
+            "7965587c041f9cbb49235126633758c1f49632e468b0d040786d1cf2184e03af",
+            "df3fad37abb18a65683d8b1bf05d7c6947c936606d4d4a4e26c8262b484e9338",
         ]
     );
 }

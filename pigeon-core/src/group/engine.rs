@@ -159,12 +159,7 @@ impl GroupEngine {
     ) -> Result<(Self, Vec<u8>, Vec<u8>), Error> {
         let owner = identity.ensure_public_key(crate::IdentityPurpose::Root)?;
         let mut member_keys = Vec::with_capacity(materials.len() + 1);
-        member_keys.push(GroupMemberKeys::issue(
-            identity,
-            owner,
-            config.group_id,
-            config.coordinator.coordination_id,
-        )?);
+        member_keys.push(GroupMemberKeys::issue(identity, owner, config.group_id)?);
         let mut key_packages = Vec::with_capacity(materials.len());
         for material in materials {
             material.verify_for_requester(

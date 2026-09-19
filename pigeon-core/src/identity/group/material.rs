@@ -7,14 +7,13 @@ use crate::group::GroupId;
 use crate::storage::TransactionalOpenMlsStorage;
 use crate::wire::{MAX_MLS_OBJECT_BYTES, proto};
 
-const MEMBER_KEYS_VERSION: u32 = 1;
+const MEMBER_KEYS_VERSION: u32 = 2;
 const JOIN_MATERIAL_VERSION: u32 = 1;
-const MEMBER_KEYS_DOMAIN: &[u8] = b"pigeon.identity.group-member-keys.v1";
+const MEMBER_KEYS_DOMAIN: &[u8] = b"pigeon.identity.group-member-keys.v2";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroupMemberKeys {
     group_id: GroupId,
-    coordination_id: [u8; 32],
     intended_creator: [u8; 32],
     member_identity: [u8; 32],
     capability_public_key: [u8; 32],
@@ -27,7 +26,6 @@ impl GroupMemberKeys {
         identity: &impl SecureIdentity,
         intended_creator: [u8; 32],
         group_id: GroupId,
-        coordination_id: [u8; 32],
     ) -> Result<Self, Error> {
         let member_identity = identity.ensure_public_key(IdentityPurpose::Root)?;
         let capability_public_key =
@@ -38,7 +36,6 @@ impl GroupMemberKeys {
             IdentityPurpose::Root,
             &member_keys_transcript(
                 group_id,
-                coordination_id,
                 intended_creator,
                 member_identity,
                 capability_public_key,
@@ -47,7 +44,6 @@ impl GroupMemberKeys {
         )?;
         Ok(Self {
             group_id,
-            coordination_id,
             intended_creator,
             member_identity,
             capability_public_key,
@@ -56,15 +52,9 @@ impl GroupMemberKeys {
         })
     }
 
-    pub fn verify(
-        &self,
-        intended_creator: [u8; 32],
-        group_id: GroupId,
-        coordination_id: [u8; 32],
-    ) -> Result<(), Error> {
+    pub fn verify(&self, intended_creator: [u8; 32], group_id: GroupId) -> Result<(), Error> {
         if self.intended_creator != intended_creator
             || self.group_id != group_id
-            || self.coordination_id != coordination_id
             || self.capability_public_key == [0; 32]
             || self.recovery_public_key == [0; 32]
         {
@@ -77,7 +67,6 @@ impl GroupMemberKeys {
         root.verify_strict(
             &member_keys_transcript(
                 self.group_id,
-                self.coordination_id,
                 self.intended_creator,
                 self.member_identity,
                 self.capability_public_key,
@@ -96,10 +85,6 @@ impl GroupMemberKeys {
         self.group_id
     }
 
-    pub fn coordination_id(&self) -> [u8; 32] {
-        self.coordination_id
-    }
-
     pub fn intended_creator(&self) -> [u8; 32] {
         self.intended_creator
     }
@@ -116,7 +101,6 @@ impl GroupMemberKeys {
         proto::GroupMemberKeys {
             version: MEMBER_KEYS_VERSION,
             group_id: self.group_id.as_bytes().to_vec(),
-            coordination_id: self.coordination_id.to_vec(),
             intended_creator: self.intended_creator.to_vec(),
             member_identity: self.member_identity.to_vec(),
             capability_public_key: self.capability_public_key.to_vec(),
@@ -134,7 +118,6 @@ impl GroupMemberKeys {
         }
         Ok(Self {
             group_id: GroupId::from_bytes(to_array(&keys.group_id)?),
-            coordination_id: to_array(&keys.coordination_id)?,
             intended_creator: to_array(&keys.intended_creator)?,
             member_identity: to_array(&keys.member_identity)?,
             capability_public_key: to_array(&keys.capability_public_key)?,
@@ -186,12 +169,7 @@ impl GroupJoinMaterial {
             group_id,
             coordination_id,
             key_package: ReservedKeyPackage::issue(identity, intended_consumer, storage)?,
-            member_keys: GroupMemberKeys::issue(
-                identity,
-                intended_creator,
-                group_id,
-                coordination_id,
-            )?,
+            member_keys: GroupMemberKeys::issue(identity, intended_creator, group_id)?,
         })
     }
 
@@ -220,8 +198,7 @@ impl GroupJoinMaterial {
             return Err(Error::InvalidSignature);
         }
         self.key_package.verify_for(intended_consumer)?;
-        self.member_keys
-            .verify(intended_creator, group_id, coordination_id)?;
+        self.member_keys.verify(intended_creator, group_id)?;
         if self.key_package.issuer() != self.member_keys.member_identity {
             return Err(Error::InvalidSignature);
         }
@@ -288,17 +265,15 @@ impl GroupJoinMaterial {
 
 fn member_keys_transcript(
     group_id: GroupId,
-    coordination_id: [u8; 32],
     intended_creator: [u8; 32],
     member_identity: [u8; 32],
     capability_public_key: [u8; 32],
     recovery_public_key: [u8; 32],
 ) -> Vec<u8> {
-    let mut transcript = Vec::with_capacity(MEMBER_KEYS_DOMAIN.len() + 4 + 32 * 6);
+    let mut transcript = Vec::with_capacity(MEMBER_KEYS_DOMAIN.len() + 4 + 32 * 5);
     transcript.extend_from_slice(MEMBER_KEYS_DOMAIN);
     transcript.extend_from_slice(&MEMBER_KEYS_VERSION.to_be_bytes());
     transcript.extend_from_slice(group_id.as_bytes());
-    transcript.extend_from_slice(&coordination_id);
     transcript.extend_from_slice(&intended_creator);
     transcript.extend_from_slice(&member_identity);
     transcript.extend_from_slice(&capability_public_key);

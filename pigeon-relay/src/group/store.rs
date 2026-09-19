@@ -21,6 +21,7 @@ pub struct Config {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CapabilityRegistration {
+    pub capability_id: [u8; CAPABILITY_KEY_BYTES],
     pub public_key: [u8; CAPABILITY_KEY_BYTES],
     pub can_append: bool,
     pub can_read: bool,
@@ -30,12 +31,15 @@ pub struct CapabilityRegistration {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GroupRegistration {
     pub coordination_id: [u8; GROUP_ID_BYTES],
+    pub authorization_generation: u64,
+    pub permanent_controller_public_key: [u8; CAPABILITY_KEY_BYTES],
     pub capabilities: Vec<CapabilityRegistration>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GroupCapability {
     pub coordination_id: [u8; GROUP_ID_BYTES],
+    pub capability_id: [u8; CAPABILITY_KEY_BYTES],
     pub public_key: [u8; CAPABILITY_KEY_BYTES],
 }
 
@@ -65,6 +69,7 @@ impl RegisteredGroup {
     fn capability(&self, index: usize) -> GroupCapability {
         GroupCapability {
             coordination_id: self.coordination_id,
+            capability_id: self.capabilities[index].capability_id,
             public_key: self.capabilities[index].public_key,
         }
     }
@@ -91,10 +96,12 @@ pub enum StoreError {
     OversizedEntry,
     StaleCursor,
     Unauthorized,
+    StaleGeneration,
 }
 
 #[derive(Clone, Debug)]
 struct CapabilityState {
+    public_key: [u8; CAPABILITY_KEY_BYTES],
     can_append: bool,
     can_read: bool,
     can_control: bool,
@@ -104,7 +111,8 @@ struct CapabilityState {
 #[derive(Debug)]
 struct StoredGroup {
     capabilities: HashMap<[u8; CAPABILITY_KEY_BYTES], CapabilityState>,
-    permanent_controller: [u8; CAPABILITY_KEY_BYTES],
+    permanent_controller_public_key: [u8; CAPABILITY_KEY_BYTES],
+    authorization_generation: u64,
     entries: VecDeque<GroupEntry>,
     next_sequence: u64,
 }
@@ -113,15 +121,18 @@ impl StoredGroup {
     fn matches_registration(
         &self,
         capabilities: &[CapabilityRegistration],
-        permanent_controller: [u8; CAPABILITY_KEY_BYTES],
+        permanent_controller_public_key: [u8; CAPABILITY_KEY_BYTES],
+        authorization_generation: u64,
     ) -> bool {
-        self.permanent_controller == permanent_controller
+        self.permanent_controller_public_key == permanent_controller_public_key
+            && self.authorization_generation == authorization_generation
             && self.capabilities.len() == capabilities.len()
             && capabilities.iter().all(|capability| {
                 self.capabilities
-                    .get(&capability.public_key)
+                    .get(&capability.capability_id)
                     .is_some_and(|stored| {
-                        stored.can_append == capability.can_append
+                        stored.public_key == capability.public_key
+                            && stored.can_append == capability.can_append
                             && stored.can_read == capability.can_read
                             && stored.can_control == capability.can_control
                     })
@@ -177,12 +188,18 @@ impl Store {
         {
             return Err(StoreError::CapabilityLimit);
         }
-        let unique: HashSet<_> = registration
+        let unique_ids: HashSet<_> = registration
+            .capabilities
+            .iter()
+            .map(|capability| capability.capability_id)
+            .collect();
+        let unique_keys: HashSet<_> = registration
             .capabilities
             .iter()
             .map(|capability| capability.public_key)
             .collect();
-        if unique.len() != registration.capabilities.len()
+        if unique_ids.len() != registration.capabilities.len()
+            || unique_keys.len() != registration.capabilities.len()
             || !registration
                 .capabilities
                 .iter()
@@ -191,26 +208,29 @@ impl Store {
                 .capabilities
                 .iter()
                 .any(|capability| capability.can_read)
-            || registration
+            || !registration
                 .capabilities
                 .iter()
-                .filter(|capability| capability.can_control)
-                .count()
-                != 1
+                .any(|capability| capability.can_control)
             || registration.capabilities.iter().any(|capability| {
                 !capability.can_append && !capability.can_read && !capability.can_control
             })
         {
             return Err(StoreError::InvalidRegistration);
         }
-        let permanent_controller = registration
-            .capabilities
-            .iter()
-            .find(|capability| capability.can_control)
-            .map(|capability| capability.public_key)
-            .ok_or(StoreError::InvalidRegistration)?;
+        let has_permanent_controller = registration.capabilities.iter().any(|capability| {
+            capability.can_control
+                && capability.public_key == registration.permanent_controller_public_key
+        });
+        if !has_permanent_controller {
+            return Err(StoreError::InvalidRegistration);
+        }
         if let Some(existing) = self.groups.get(&registration.coordination_id) {
-            if existing.matches_registration(&registration.capabilities, permanent_controller) {
+            if existing.matches_registration(
+                &registration.capabilities,
+                registration.permanent_controller_public_key,
+                registration.authorization_generation,
+            ) {
                 return Ok(RegisteredGroup {
                     coordination_id: registration.coordination_id,
                     capabilities: registration.capabilities,
@@ -226,8 +246,9 @@ impl Store {
             .iter()
             .map(|capability| {
                 (
-                    capability.public_key,
+                    capability.capability_id,
                     CapabilityState {
+                        public_key: capability.public_key,
                         can_append: capability.can_append,
                         can_read: capability.can_read,
                         can_control: capability.can_control,
@@ -240,7 +261,8 @@ impl Store {
             registration.coordination_id,
             StoredGroup {
                 capabilities,
-                permanent_controller,
+                permanent_controller_public_key: registration.permanent_controller_public_key,
+                authorization_generation: registration.authorization_generation,
                 entries: VecDeque::new(),
                 next_sequence: 1,
             },
@@ -267,8 +289,8 @@ impl Store {
             .ok_or(StoreError::Unauthorized)?;
         let authorized = group
             .capabilities
-            .get(&capability.public_key)
-            .is_some_and(|state| state.can_append);
+            .get(&capability.capability_id)
+            .is_some_and(|state| state.can_append && state.public_key == capability.public_key);
         if !authorized {
             return Err(StoreError::Unauthorized);
         }
@@ -311,8 +333,8 @@ impl Store {
             .ok_or(StoreError::Unauthorized)?;
         let reader = group
             .capabilities
-            .get(&capability.public_key)
-            .filter(|state| state.can_read)
+            .get(&capability.capability_id)
+            .filter(|state| state.can_read && state.public_key == capability.public_key)
             .ok_or(StoreError::Unauthorized)?;
         let effective_cursor = after_cursor.max(reader.cursor);
         let mut bytes: usize = 0;
@@ -345,8 +367,8 @@ impl Store {
         let last_sequence = group.next_sequence.saturating_sub(1);
         let reader = group
             .capabilities
-            .get_mut(&capability.public_key)
-            .filter(|state| state.can_read)
+            .get_mut(&capability.capability_id)
+            .filter(|state| state.can_read && state.public_key == capability.public_key)
             .ok_or(StoreError::Unauthorized)?;
         if sequence > 0 && sequence <= reader.cursor {
             return Ok(());
@@ -359,171 +381,111 @@ impl Store {
         Ok(())
     }
 
-    pub fn rotate_capability(
+    pub fn replace_capabilities(
         &mut self,
         controller: &GroupCapability,
-        old_public_key: [u8; CAPABILITY_KEY_BYTES],
-        replacement: CapabilityRegistration,
+        expected_generation: u64,
+        new_generation: u64,
+        permanent_controller_public_key: [u8; CAPABILITY_KEY_BYTES],
+        replacements: Vec<CapabilityRegistration>,
     ) -> Result<(), StoreError> {
         let group = self
             .groups
             .get_mut(&controller.coordination_id)
             .ok_or(StoreError::Unauthorized)?;
-        if !group
+        let authorized = group
             .capabilities
-            .get(&controller.public_key)
-            .is_some_and(|capability| capability.can_control)
-            || group.capabilities.contains_key(&replacement.public_key)
-        {
+            .get(&controller.capability_id)
+            .is_some_and(|capability| {
+                capability.can_control && capability.public_key == controller.public_key
+            });
+        if !authorized {
             return Err(StoreError::Unauthorized);
         }
-        let old = group
-            .capabilities
-            .remove(&old_public_key)
-            .ok_or(StoreError::Unauthorized)?;
-        if old.can_control != replacement.can_control {
-            group.capabilities.insert(old_public_key, old);
+        if group.authorization_generation != expected_generation
+            || new_generation != expected_generation.saturating_add(1)
+        {
+            return Err(StoreError::StaleGeneration);
+        }
+        if permanent_controller_public_key != group.permanent_controller_public_key
+            || replacements.len() < 3
+            || replacements.len() > self.config.max_capabilities_per_group
+        {
             return Err(StoreError::InvalidRegistration);
         }
-        group.capabilities.insert(
-            replacement.public_key,
-            CapabilityState {
-                can_append: replacement.can_append,
-                can_read: replacement.can_read,
-                can_control: replacement.can_control,
-                cursor: old.cursor,
-            },
-        );
-        if old_public_key == group.permanent_controller {
-            group.permanent_controller = replacement.public_key;
-        }
-        self.total_bytes = self.total_bytes.saturating_sub(group.collect_garbage());
-        Ok(())
-    }
-
-    pub fn update_capability(
-        &mut self,
-        controller: &GroupCapability,
-        public_key: [u8; CAPABILITY_KEY_BYTES],
-        can_control: bool,
-    ) -> Result<(), StoreError> {
-        let group = self
-            .groups
-            .get_mut(&controller.coordination_id)
-            .ok_or(StoreError::Unauthorized)?;
-        if !group
-            .capabilities
-            .get(&controller.public_key)
-            .is_some_and(|capability| capability.can_control)
+        let unique_ids: HashSet<_> = replacements
+            .iter()
+            .map(|capability| capability.capability_id)
+            .collect();
+        let unique_keys: HashSet<_> = replacements
+            .iter()
+            .map(|capability| capability.public_key)
+            .collect();
+        if unique_ids.len() != replacements.len()
+            || unique_keys.len() != replacements.len()
+            || replacements
+                .iter()
+                .any(|capability| !capability.can_append || !capability.can_read)
+            || !replacements.iter().any(|capability| {
+                capability.can_control && capability.public_key == permanent_controller_public_key
+            })
         {
-            return Err(StoreError::Unauthorized);
-        }
-        if public_key == group.permanent_controller && !can_control {
             return Err(StoreError::InvalidRegistration);
         }
-        let capability = group
-            .capabilities
-            .get_mut(&public_key)
-            .ok_or(StoreError::Unauthorized)?;
-        capability.can_control = can_control;
-        Ok(())
-    }
-
-    pub fn grant_capability(
-        &mut self,
-        controller: &GroupCapability,
-        granted: CapabilityRegistration,
-    ) -> Result<(), StoreError> {
-        let group = self
-            .groups
-            .get_mut(&controller.coordination_id)
-            .ok_or(StoreError::Unauthorized)?;
-        if !group
-            .capabilities
-            .get(&controller.public_key)
-            .is_some_and(|capability| capability.can_control)
-        {
-            return Err(StoreError::Unauthorized);
-        }
-        if !granted.can_append || !granted.can_read || granted.can_control {
-            return Err(StoreError::InvalidRegistration);
-        }
-        if let Some(existing) = group.capabilities.get(&granted.public_key) {
-            return if existing.can_append && existing.can_read && !existing.can_control {
-                Ok(())
-            } else {
-                Err(StoreError::Unauthorized)
-            };
-        }
-        if group.capabilities.len() >= self.config.max_capabilities_per_group {
-            return Err(StoreError::CapabilityLimit);
-        }
-        group.capabilities.insert(
-            granted.public_key,
-            CapabilityState {
-                can_append: true,
-                can_read: true,
-                can_control: false,
-                cursor: group.next_sequence.saturating_sub(1),
-            },
-        );
-        Ok(())
-    }
-
-    pub fn revoke_capability(
-        &mut self,
-        controller: &GroupCapability,
-        public_key: [u8; CAPABILITY_KEY_BYTES],
-    ) -> Result<(), StoreError> {
-        let group = self
-            .groups
-            .get_mut(&controller.coordination_id)
-            .ok_or(StoreError::Unauthorized)?;
-        if !group
-            .capabilities
-            .get(&controller.public_key)
-            .is_some_and(|capability| capability.can_control)
-        {
-            return Err(StoreError::Unauthorized);
-        }
-        let Some(removed) = group.capabilities.get(&public_key) else {
-            return Ok(());
-        };
-        if public_key == group.permanent_controller
-            || (removed.can_read
-                && group
+        let current_sequence = group.next_sequence.saturating_sub(1);
+        let next = replacements
+            .into_iter()
+            .map(|capability| {
+                let cursor = group
                     .capabilities
                     .values()
-                    .filter(|capability| capability.can_read)
-                    .count()
-                    == 1)
-        {
-            return Err(StoreError::InvalidRegistration);
-        }
-        group.capabilities.remove(&public_key);
+                    .find(|state| state.public_key == capability.public_key)
+                    .map_or(current_sequence, |state| state.cursor);
+                (
+                    capability.capability_id,
+                    CapabilityState {
+                        public_key: capability.public_key,
+                        can_append: capability.can_append,
+                        can_read: capability.can_read,
+                        can_control: capability.can_control,
+                        cursor,
+                    },
+                )
+            })
+            .collect();
+        group.capabilities = next;
+        group.authorization_generation = new_generation;
         self.total_bytes = self.total_bytes.saturating_sub(group.collect_garbage());
         Ok(())
     }
 
-    pub fn is_authorized(&self, capability: &GroupCapability) -> bool {
+    pub fn resolve_capability(
+        &self,
+        coordination_id: [u8; GROUP_ID_BYTES],
+        capability_id: [u8; CAPABILITY_KEY_BYTES],
+    ) -> Option<GroupCapability> {
         self.groups
-            .get(&capability.coordination_id)
-            .and_then(|group| group.capabilities.get(&capability.public_key))
-            .is_some()
+            .get(&coordination_id)
+            .and_then(|group| group.capabilities.get(&capability_id))
+            .map(|state| GroupCapability {
+                coordination_id,
+                capability_id,
+                public_key: state.public_key,
+            })
     }
 
     pub fn can_read(&self, capability: &GroupCapability) -> bool {
         self.groups
             .get(&capability.coordination_id)
-            .and_then(|group| group.capabilities.get(&capability.public_key))
-            .is_some_and(|capability| capability.can_read)
+            .and_then(|group| group.capabilities.get(&capability.capability_id))
+            .is_some_and(|state| state.can_read && state.public_key == capability.public_key)
     }
 
     pub fn can_append(&self, capability: &GroupCapability) -> bool {
         self.groups
             .get(&capability.coordination_id)
-            .and_then(|group| group.capabilities.get(&capability.public_key))
-            .is_some_and(|capability| capability.can_append)
+            .and_then(|group| group.capabilities.get(&capability.capability_id))
+            .is_some_and(|state| state.can_append && state.public_key == capability.public_key)
     }
 
     pub fn reader_keys(

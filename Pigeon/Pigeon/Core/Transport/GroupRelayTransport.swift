@@ -16,6 +16,7 @@ final class GroupRelayTransport {
   var onMessage: MessageConsumer?
   var onCoordinatorCandidate: CoordinatorConsumer?
   var onEffectDelivered: ((String) -> Bool)?
+  var onAuthenticated: ((_ groupID: Data, _ capabilityID: Data) -> Bool)?
 
   private let signer: ChallengeSigner
   private let session: URLSession
@@ -66,6 +67,7 @@ final class GroupRelayTransport {
     let active = snapshot.groups.filter { group in
       !group.dissolved
         && group.capabilityPublicKey.count == 32
+        && group.capabilityID.count == 32
         && Self.endpoint(for: URL(string: group.relayURL)) != nil
     }
     let activeIDs = Set(active.map(\.coordinationID))
@@ -177,7 +179,7 @@ extension GroupRelayTransport {
     try await send(
       GroupRelayProtocol.authenticate(
         coordinationID: connection.group.coordinationID,
-        capabilityKey: connection.group.capabilityPublicKey),
+        capabilityID: connection.group.capabilityID),
       over: socket)
     guard case .challenge(let nonce) = try await receive(over: socket) else {
       throw RelayError.handshake
@@ -185,6 +187,9 @@ extension GroupRelayTransport {
     let signature = try signer(connection.group.groupID, nonce)
     try await send(GroupRelayProtocol.auth(signature: signature), over: socket)
     guard case .ok = try await receive(over: socket) else { throw RelayError.handshake }
+    guard onAuthenticated?(connection.group.groupID, connection.group.capabilityID) == true else {
+      throw RelayError.protocolError
+    }
   }
 
   private func handle(
@@ -351,6 +356,7 @@ extension GroupRelayTransport {
   private func sameEndpoint(_ lhs: PigeonGroupState, _ rhs: PigeonGroupState) -> Bool {
     lhs.groupID == rhs.groupID && lhs.relayURL == rhs.relayURL
       && lhs.capabilityPublicKey == rhs.capabilityPublicKey
+      && lhs.capabilityID == rhs.capabilityID
   }
 
   private func send(_ data: Data, over socket: URLSessionWebSocketTask) async throws {

@@ -145,7 +145,7 @@ fn group_policy_authenticates_every_member_key_binding() {
     let owner = creator.root_public_key();
     let keys = [&creator, &bob, &carol]
         .into_iter()
-        .map(|identity| GroupMemberKeys::issue(identity, owner, group_id, coordination_id).unwrap())
+        .map(|identity| GroupMemberKeys::issue(identity, owner, group_id).unwrap())
         .collect();
     let policy = PigeonGroupPolicy::new(
         group_id,
@@ -163,20 +163,16 @@ fn group_policy_authenticates_every_member_key_binding() {
         Some(bob.capability.verifying_key().to_bytes())
     );
 
-    let cross_group = GroupMemberKeys::issue(
-        &TestIdentity::new(40),
-        owner,
-        GroupId::from_bytes([8; 32]),
-        coordination_id,
-    )
-    .unwrap();
+    let cross_group =
+        GroupMemberKeys::issue(&TestIdentity::new(40), owner, GroupId::from_bytes([8; 32]))
+            .unwrap();
     assert_eq!(
         PigeonGroupPolicy::new(
             group_id,
             owner,
             vec![
-                GroupMemberKeys::issue(&creator, owner, group_id, coordination_id).unwrap(),
-                GroupMemberKeys::issue(&bob, owner, group_id, coordination_id).unwrap(),
+                GroupMemberKeys::issue(&creator, owner, group_id).unwrap(),
+                GroupMemberKeys::issue(&bob, owner, group_id).unwrap(),
                 cross_group,
             ],
             "Birds",

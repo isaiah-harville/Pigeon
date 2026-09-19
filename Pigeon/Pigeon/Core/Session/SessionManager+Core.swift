@@ -192,6 +192,9 @@ extension SessionManager {
     transport.onEffectDelivered = { [weak self] itemID in
       self?.acknowledgeCoreOutbound(itemID) ?? false
     }
+    transport.onAuthenticated = { [weak self] groupID, capabilityID in
+      self?.confirmGroupRelayAuthorization(groupID: groupID, capabilityID: capabilityID) ?? false
+    }
     return transport
   }
 

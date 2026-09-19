@@ -207,14 +207,6 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             .iter()
             .map(|material| material.package_hash().to_vec())
             .collect();
-        let registration = GroupRelayRegistration::create(
-            &self.identity,
-            group_id,
-            coordination_id,
-            materials
-                .iter()
-                .map(GroupJoinMaterial::capability_public_key),
-        )?;
         let mut mls_storage = if candidate.openmls_checkpoint.is_empty() {
             TransactionalOpenMlsStorage::new()
         } else {
@@ -239,6 +231,8 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             },
             materials,
         )?;
+        let registration =
+            GroupRelayRegistration::create(&self.identity, engine.policy(), engine.epoch())?;
         candidate
             .consumed_key_package_hashes
             .extend(consumed_hashes);

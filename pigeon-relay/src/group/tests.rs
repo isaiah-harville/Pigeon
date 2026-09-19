@@ -8,27 +8,6 @@ use super::store::{
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
-use pigeon_core::{
-    GroupId, GroupRelayRegistration, IdentityError, IdentityPurpose, SecureIdentity,
-};
-
-struct CoreIdentity(SigningKey);
-
-impl SecureIdentity for CoreIdentity {
-    fn ensure_public_key(&self, purpose: IdentityPurpose) -> Result<[u8; 32], IdentityError> {
-        match purpose {
-            IdentityPurpose::GroupCapability(_) => Ok(self.0.verifying_key().to_bytes()),
-            _ => Err(IdentityError::Unavailable),
-        }
-    }
-
-    fn sign(&self, purpose: IdentityPurpose, message: &[u8]) -> Result<[u8; 64], IdentityError> {
-        match purpose {
-            IdentityPurpose::GroupCapability(_) => Ok(self.0.sign(message).to_bytes()),
-            _ => Err(IdentityError::Unavailable),
-        }
-    }
-}
 
 fn config() -> Config {
     Config {
@@ -45,8 +24,11 @@ fn config() -> Config {
 fn registration(readers: usize) -> GroupRegistration {
     GroupRegistration {
         coordination_id: [9; 32],
+        authorization_generation: 0,
+        permanent_controller_public_key: [1; 32],
         capabilities: (0..readers)
             .map(|index| CapabilityRegistration {
+                capability_id: [(index + 101) as u8; 32],
                 public_key: [(index + 1) as u8; 32],
                 can_append: true,
                 can_read: true,
@@ -102,7 +84,7 @@ fn group_capability_and_cursor_checks_fail_closed() {
         Err(StoreError::StaleCursor)
     );
     let mut forged = group.reader(0);
-    forged.public_key[0] ^= 1;
+    forged.capability_id[0] ^= 1;
     assert_eq!(store.fetch(&forged, 0), Err(StoreError::Unauthorized));
 }
 
@@ -140,12 +122,14 @@ fn group_registration_and_challenge_require_valid_capability_signatures() {
     let reader = SigningKey::from_bytes(&[42; 32]);
     let registrations = vec![
         CapabilityRegistration {
+            capability_id: [81; 32],
             public_key: controller.verifying_key().to_bytes(),
             can_append: true,
             can_read: true,
             can_control: true,
         },
         CapabilityRegistration {
+            capability_id: [82; 32],
             public_key: reader.verifying_key().to_bytes(),
             can_append: true,
             can_read: true,
@@ -155,24 +139,40 @@ fn group_registration_and_challenge_require_valid_capability_signatures() {
     let wires = registrations
         .iter()
         .map(|capability| CapabilityWire {
+            capability_id: hex::encode(capability.capability_id),
             public_key: hex::encode(capability.public_key),
             can_append: capability.can_append,
             can_read: capability.can_read,
             can_control: capability.can_control,
         })
         .collect::<Vec<_>>();
-    let transcript = registration_transcript([7; 32], &registrations);
+    let permanent = controller.verifying_key().to_bytes();
+    let transcript = registration_transcript([7; 32], 0, permanent, &registrations);
     let signature = B64.encode(controller.sign(&transcript).to_bytes());
-    assert!(verify_registration(&hex::encode([7; 32]), &wires, &signature).is_ok());
+    assert!(verify_registration(
+        &hex::encode([7; 32]),
+        0,
+        &hex::encode(permanent),
+        &wires,
+        &signature
+    )
+    .is_ok());
 
     let forged = B64.encode(reader.sign(&transcript).to_bytes());
     assert_eq!(
-        verify_registration(&hex::encode([7; 32]), &wires, &forged),
+        verify_registration(
+            &hex::encode([7; 32]),
+            0,
+            &hex::encode(permanent),
+            &wires,
+            &forged,
+        ),
         Err(StoreError::Unauthorized)
     );
 
     let capability = GroupCapability {
         coordination_id: [7; 32],
+        capability_id: [82; 32],
         public_key: reader.verifying_key().to_bytes(),
     };
     let nonce = [8; 32];
@@ -198,43 +198,11 @@ fn identical_group_registration_retry_is_idempotent_but_conflicts_fail() {
     store.register(original).unwrap();
 
     let mut conflicting = registration(3);
-    conflicting.capabilities[0].public_key = [99; 32];
+    conflicting.capabilities[0].capability_id = [99; 32];
     assert_eq!(
         store.register(conflicting),
         Err(StoreError::AlreadyRegistered)
     );
-}
-
-#[test]
-fn relay_accepts_the_registration_emitted_by_core() {
-    let owner = CoreIdentity(SigningKey::from_bytes(&[71; 32]));
-    let registration = GroupRelayRegistration::create(
-        &owner,
-        GroupId::from_bytes([72; 32]),
-        [73; 32],
-        [
-            SigningKey::from_bytes(&[74; 32]).verifying_key().to_bytes(),
-            SigningKey::from_bytes(&[75; 32]).verifying_key().to_bytes(),
-        ],
-    )
-    .unwrap();
-    let capabilities = registration
-        .capabilities()
-        .iter()
-        .map(|capability| CapabilityWire {
-            public_key: hex::encode(capability.public_key()),
-            can_append: capability.can_append(),
-            can_read: capability.can_read(),
-            can_control: capability.can_control(),
-        })
-        .collect::<Vec<_>>();
-
-    assert!(verify_registration(
-        &hex::encode(registration.coordination_id()),
-        &capabilities,
-        &B64.encode(registration.signature()),
-    )
-    .is_ok());
 }
 
 #[test]
@@ -255,12 +223,12 @@ fn group_protocol_requires_current_version_negotiation() {
         gate_group_message(
             GroupClientMsg::Hello {
                 min_protocol_version: 1,
-                max_protocol_version: 4,
+                max_protocol_version: 5,
             },
             &mut negotiated
         ),
         GroupProtocolGate::Reply(GroupServerMsg::Compatible {
-            protocol_version: 4,
+            protocol_version: 5,
             ..
         })
     ));
@@ -283,160 +251,73 @@ fn group_wake_and_error_frames_disclose_no_group_metadata() {
 }
 
 #[test]
-fn group_control_capability_rotates_and_revokes_without_resetting_entries() {
+fn atomic_replacement_rotates_all_ids_and_revokes_removed_members() {
     let mut store = Store::bounded(config());
     let group = store.register(registration(3)).unwrap();
     store
         .append(&group.writer(0), b"ciphertext".to_vec(), 1)
         .unwrap();
-    let replacement = CapabilityRegistration {
-        public_key: [44; 32],
-        can_append: true,
-        can_read: true,
-        can_control: false,
-    };
+    let replacements = vec![
+        CapabilityRegistration {
+            capability_id: [111; 32],
+            public_key: [1; 32],
+            can_append: true,
+            can_read: true,
+            can_control: true,
+        },
+        CapabilityRegistration {
+            capability_id: [112; 32],
+            public_key: [2; 32],
+            can_append: true,
+            can_read: true,
+            can_control: false,
+        },
+        CapabilityRegistration {
+            capability_id: [114; 32],
+            public_key: [4; 32],
+            can_append: true,
+            can_read: true,
+            can_control: false,
+        },
+    ];
     store
-        .rotate_capability(&group.writer(0), [2; 32], replacement)
+        .replace_capabilities(&group.writer(0), 0, 1, [1; 32], replacements)
         .unwrap();
-    assert_eq!(
-        store.fetch(&group.reader(1), 0),
-        Err(StoreError::Unauthorized)
-    );
-    let replacement = GroupCapability {
-        coordination_id: *group.id(),
-        public_key: [44; 32],
-    };
-    assert_eq!(store.fetch(&replacement, 0).unwrap().len(), 1);
-    store.revoke_capability(&group.writer(0), [3; 32]).unwrap();
-    assert_eq!(
-        store.fetch(&group.reader(2), 0),
-        Err(StoreError::Unauthorized)
-    );
-    assert_eq!(store.entry_count(group.id()), 1);
+
+    for old in [group.reader(0), group.reader(1), group.reader(2)] {
+        assert_eq!(store.fetch(&old, 0), Err(StoreError::Unauthorized));
+    }
+    let retained = store.resolve_capability(*group.id(), [112; 32]).unwrap();
+    assert_eq!(store.fetch(&retained, 0).unwrap().len(), 1);
+    let joined = store.resolve_capability(*group.id(), [114; 32]).unwrap();
+    assert!(store.fetch(&joined, 0).unwrap().is_empty());
 }
 
 #[test]
-fn controller_grants_members_from_the_current_cursor_only() {
+fn replacement_rejects_replay_and_cannot_demote_permanent_owner() {
     let mut store = Store::bounded(config());
     let group = store.register(registration(3)).unwrap();
+    let replacements = (0..3)
+        .map(|index| CapabilityRegistration {
+            capability_id: [(index + 111) as u8; 32],
+            public_key: [(index + 1) as u8; 32],
+            can_append: true,
+            can_read: true,
+            can_control: index == 0,
+        })
+        .collect::<Vec<_>>();
     store
-        .append(&group.writer(0), b"before join".to_vec(), 1)
+        .replace_capabilities(&group.writer(0), 0, 1, [1; 32], replacements.clone())
         .unwrap();
-    let granted = CapabilityRegistration {
-        public_key: [44; 32],
-        can_append: true,
-        can_read: true,
-        can_control: false,
-    };
-
-    store.grant_capability(&group.writer(0), granted).unwrap();
-    let new_member = GroupCapability {
-        coordination_id: *group.id(),
-        public_key: [44; 32],
-    };
-    assert!(store.fetch(&new_member, 1).unwrap().is_empty());
-    assert!(store.fetch(&new_member, 0).unwrap().is_empty());
-
-    store
-        .append(&group.writer(0), b"after join".to_vec(), 2)
-        .unwrap();
-    let entries = store.fetch(&new_member, 1).unwrap();
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].ciphertext, b"after join");
-    store
-        .grant_capability(
-            &group.writer(0),
-            CapabilityRegistration {
-                public_key: [44; 32],
-                can_append: true,
-                can_read: true,
-                can_control: false,
-            },
-        )
-        .unwrap();
-    store.revoke_capability(&group.writer(0), [44; 32]).unwrap();
-    store.revoke_capability(&group.writer(0), [44; 32]).unwrap();
-}
-
-#[test]
-fn capability_grants_enforce_controller_role_shape_and_group_cap() {
-    let mut store = Store::bounded(config());
-    let group = store.register(registration(3)).unwrap();
-    let member = CapabilityRegistration {
-        public_key: [44; 32],
-        can_append: true,
-        can_read: true,
-        can_control: false,
-    };
+    let owner = store.resolve_capability(*group.id(), [111; 32]).unwrap();
     assert_eq!(
-        store.grant_capability(&group.writer(1), member.clone()),
-        Err(StoreError::Unauthorized)
+        store.replace_capabilities(&owner, 0, 1, [1; 32], replacements.clone()),
+        Err(StoreError::StaleGeneration)
     );
+    let mut demoted = replacements;
+    demoted[0].can_control = false;
     assert_eq!(
-        store.grant_capability(
-            &group.writer(0),
-            CapabilityRegistration {
-                can_control: true,
-                ..member
-            },
-        ),
+        store.replace_capabilities(&owner, 1, 2, [1; 32], demoted),
         Err(StoreError::InvalidRegistration)
-    );
-
-    let full = store.register(GroupRegistration {
-        coordination_id: [10; 32],
-        capabilities: registration(128).capabilities,
-    });
-    let full = full.unwrap();
-    assert_eq!(
-        store.grant_capability(
-            &full.writer(0),
-            CapabilityRegistration {
-                public_key: [200; 32],
-                can_append: true,
-                can_read: true,
-                can_control: false,
-            },
-        ),
-        Err(StoreError::CapabilityLimit)
-    );
-}
-
-#[test]
-fn promoted_admin_controls_members_without_weakening_permanent_owner() {
-    let mut store = Store::bounded(config());
-    let group = store.register(registration(4)).unwrap();
-    store
-        .update_capability(&group.writer(0), [2; 32], true)
-        .unwrap();
-    let admin = group.writer(1);
-    store
-        .grant_capability(
-            &admin,
-            CapabilityRegistration {
-                public_key: [44; 32],
-                can_append: true,
-                can_read: true,
-                can_control: false,
-            },
-        )
-        .unwrap();
-    store.revoke_capability(&admin, [3; 32]).unwrap();
-    assert_eq!(
-        store.fetch(&group.reader(2), 0),
-        Err(StoreError::Unauthorized)
-    );
-    assert_eq!(
-        store.update_capability(&admin, [1; 32], false),
-        Err(StoreError::InvalidRegistration),
-        "the original owner controller is permanent"
-    );
-
-    store
-        .update_capability(&group.writer(0), [2; 32], false)
-        .unwrap();
-    assert_eq!(
-        store.revoke_capability(&admin, [4; 32]),
-        Err(StoreError::Unauthorized)
     );
 }

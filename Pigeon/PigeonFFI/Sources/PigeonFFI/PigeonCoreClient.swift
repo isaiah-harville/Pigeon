@@ -7,6 +7,7 @@ public struct PigeonCoreCommand: Equatable, Sendable {
     case applyInbound(PigeonApplyInbound)
     case changeGroupPolicy(PigeonChangeGroupPolicy)
     case acknowledgeEffects(PigeonAcknowledgeEffects)
+    case confirmGroupRelayAuthorization(PigeonConfirmGroupRelayAuthorization)
     case ensurePairwiseAccount
     case registerPairwiseContact(PigeonRegisterPairwiseContact)
     case sendPairwiseControl(PigeonSendPairwiseControl)
@@ -22,16 +23,6 @@ public struct PigeonCoreCommand: Equatable, Sendable {
   public init(id: String, body: Body) {
     self.id = id
     self.body = body
-  }
-}
-
-public struct PigeonAcknowledgeEffects: Equatable, Sendable {
-  public let outboundItemIDs: [String]
-  public let eventIDs: [String]
-
-  public init(outboundItemIDs: [String] = [], eventIDs: [String] = []) {
-    self.outboundItemIDs = outboundItemIDs
-    self.eventIDs = eventIDs
   }
 }
 
@@ -195,13 +186,14 @@ public struct PigeonGroupState: Equatable, Sendable {
   public let policyRevision: UInt64
   public let dissolved: Bool
   public let capabilityPublicKey: Data
+  public let capabilityID: Data
   public let coordinatorPublicKey: Data
 
   public init(
     groupID: Data, ownerIdentity: Data, adminIdentities: [Data],
     memberIdentities: [Data], name: String, relayURL: String, coordinationID: Data,
     meshEnabled: Bool, epoch: UInt64, policyRevision: UInt64, dissolved: Bool,
-    capabilityPublicKey: Data, coordinatorPublicKey: Data
+    capabilityPublicKey: Data, capabilityID: Data, coordinatorPublicKey: Data
   ) {
     self.groupID = groupID
     self.ownerIdentity = ownerIdentity
@@ -215,6 +207,7 @@ public struct PigeonGroupState: Equatable, Sendable {
     self.policyRevision = policyRevision
     self.dissolved = dissolved
     self.capabilityPublicKey = capabilityPublicKey
+    self.capabilityID = capabilityID
     self.coordinatorPublicKey = coordinatorPublicKey
   }
 }

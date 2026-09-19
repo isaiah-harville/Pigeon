@@ -17,32 +17,35 @@ final class GroupRelayProtocolTests: XCTestCase {
     XCTAssertNil(GroupRelayTransport.endpoint(for: URL(string: "file:///tmp/relay")))
   }
 
-  func testClientFramesMatchRelayVersionFourWireFormat() throws {
+  func testClientFramesMatchRelayVersionFiveWireFormat() throws {
     XCTAssertEqual(
       try object(GroupRelayProtocol.hello()),
-      ["type": "hello", "min_protocol_version": 4, "max_protocol_version": 4])
+      ["type": "hello", "min_protocol_version": 5, "max_protocol_version": 5])
 
     let registration = PigeonGroupRelayRegistration(
       coordinationID: coordinationID,
       capabilities: [
         PigeonGroupRelayCapability(
+          capabilityID: Data(repeating: 6, count: 32),
           publicKey: Data(repeating: 7, count: 32), canAppend: true,
           canRead: true, canControl: true)
       ],
-      signature: Data(repeating: 8, count: 64))
+      signature: Data(repeating: 8, count: 64), authorizationGeneration: 3,
+      permanentControllerPublicKey: Data(repeating: 7, count: 32))
     let register = try object(GroupRelayProtocol.register(registration))
     XCTAssertEqual(register["type"] as? String, "register")
     XCTAssertEqual(register["coordination_id"] as? String, coordinationID.hexEncoded)
     XCTAssertEqual(register["signature"] as? String, registration.signature.base64EncodedString())
+    XCTAssertEqual(register["authorization_generation"] as? UInt64, 3)
 
     XCTAssertEqual(
       try object(
         GroupRelayProtocol.authenticate(
           coordinationID: coordinationID,
-          capabilityKey: Data(repeating: 9, count: 32))),
+          capabilityID: Data(repeating: 9, count: 32))),
       [
         "type": "authenticate", "coordination_id": coordinationID.hexEncoded,
-        "capability_key": Data(repeating: 9, count: 32).hexEncoded,
+        "capability_id": Data(repeating: 9, count: 32).hexEncoded,
       ])
     XCTAssertEqual(
       try object(GroupRelayProtocol.auth(signature: Data([1, 2]))),
@@ -65,11 +68,25 @@ final class GroupRelayProtocolTests: XCTestCase {
         GroupRelayProtocol.action(
           .control(
             PigeonGroupRelayControl(
-              coordinationID: coordinationID, kind: .promoteAdmin,
-              publicKey: Data(repeating: 4, count: 32))))),
+              coordinationID: coordinationID, kind: .replaceAll, publicKey: Data(),
+              capabilities: [
+                PigeonGroupRelayCapability(
+                  capabilityID: Data(repeating: 10, count: 32),
+                  publicKey: Data(repeating: 4, count: 32), canAppend: true,
+                  canRead: true, canControl: true)
+              ], expectedGeneration: 4, newGeneration: 5,
+              permanentControllerPublicKey: Data(repeating: 4, count: 32))))),
       [
-        "type": "update", "public_key": Data(repeating: 4, count: 32).hexEncoded,
-        "can_control": true,
+        "type": "replace_capabilities", "expected_generation": 4,
+        "new_generation": 5,
+        "permanent_controller_public_key": Data(repeating: 4, count: 32).hexEncoded,
+        "capabilities": [
+          [
+            "capability_id": Data(repeating: 10, count: 32).hexEncoded,
+            "public_key": Data(repeating: 4, count: 32).hexEncoded,
+            "can_append": true, "can_read": true, "can_control": true,
+          ]
+        ],
       ])
     XCTAssertEqual(
       try object(

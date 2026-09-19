@@ -133,6 +133,12 @@ pub(crate) fn validate_client_command(command: &proto::ClientCommand) -> Result<
                 check_bytes(id.len(), MAX_STABLE_ID_BYTES, "effect id")?;
             }
         }
+        proto::client_command::Body::ConfirmGroupRelayAuthorization(confirmation) => {
+            check_exact_group_id(&confirmation.group_id)?;
+            if confirmation.capability_id.len() != IDENTITY_KEY_BYTES {
+                return Err(Error::InvalidKey);
+            }
+        }
         proto::client_command::Body::EnsurePairwiseAccount(_) => {}
         proto::client_command::Body::MigrateLegacyPairwiseState(migration) => {
             if migration.format_version != LEGACY_PAIRWISE_MIGRATION_VERSION {

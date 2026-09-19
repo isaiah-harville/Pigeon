@@ -6,6 +6,7 @@ use crate::client::{AppEvent, ClientOutput, OutboundItem};
 use crate::group::{
     CoordinatorChain, CoordinatorChainError, CoordinatorReceipt, GroupAction, GroupEngine,
     GroupMutationCandidate, GroupRelayControl, PigeonGroupPolicy, PolicyEvent, PolicyEventKind,
+    relay_capability_id,
 };
 use crate::identity::{GroupJoinMaterial, GroupJoinRequest, IdentityPurpose, SecureIdentity};
 use crate::storage::{StateStore, TransactionalOpenMlsStorage};
@@ -103,7 +104,13 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         let event = engine.merge_canonical_candidate(&mut mls_storage, &mutation)?;
         let local_identity = self.identity.ensure_public_key(IdentityPurpose::Root)?;
         let relay_control = if prior.is_admin(local_identity) {
-            GroupRelayControl::for_transition(&prior, engine.policy(), &event)?
+            GroupRelayControl::for_transition(
+                &prior,
+                engine.policy(),
+                stored.epoch,
+                engine.epoch(),
+                &event,
+            )?
         } else {
             None
         };
@@ -114,32 +121,49 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         if let Some(index) = pending_index {
             candidate.pending_group_mutations.remove(index);
         }
-        output.events.push(AppEvent {
-            inner: proto::AppEvent {
-                version: PROTOCOL_VERSION,
-                event_id: format!("{command_id}:policy"),
-                body: Some(proto::app_event::Body::GroupPolicyChanged(
-                    proto::GroupPolicyChanged {
-                        kind: event_kind(event.kind) as i32,
-                        group_id: engine.group_id().as_bytes().to_vec(),
-                        actor_identity: event.actor.to_vec(),
-                        subject_identity: event
-                            .subject
-                            .map(|subject| subject.to_vec())
-                            .unwrap_or_default(),
-                        epoch: engine.epoch(),
-                        policy_revision: event.revision,
-                        name: engine.policy().name().to_owned(),
-                        mesh_enabled: engine.policy().mesh_enabled(),
-                        relay_url: engine.policy().relay_url().to_owned(),
-                    },
-                )),
-            },
-        });
+        let app_event = proto::AppEvent {
+            version: PROTOCOL_VERSION,
+            event_id: format!("{command_id}:policy"),
+            body: Some(proto::app_event::Body::GroupPolicyChanged(
+                proto::GroupPolicyChanged {
+                    kind: event_kind(event.kind) as i32,
+                    group_id: engine.group_id().as_bytes().to_vec(),
+                    actor_identity: event.actor.to_vec(),
+                    subject_identity: event
+                        .subject
+                        .map(|subject| subject.to_vec())
+                        .unwrap_or_default(),
+                    epoch: engine.epoch(),
+                    policy_revision: event.revision,
+                    name: engine.policy().name().to_owned(),
+                    mesh_enabled: engine.policy().mesh_enabled(),
+                    relay_url: engine.policy().relay_url().to_owned(),
+                },
+            )),
+        };
         if let Some(control) = relay_control {
+            let item_id = format!("{command_id}:relay-control");
+            let active_public_key = prior
+                .member_capability_key(local_identity)
+                .ok_or(Error::InvalidKey)?;
+            candidate.deferred_events.push(proto::DeferredAppEvent {
+                outbound_item_id: item_id.clone(),
+                group_id: engine.group_id().as_bytes().to_vec(),
+                active_capability_id: relay_capability_id(
+                    *engine.group_id().as_bytes(),
+                    prior.coordination_id(),
+                    stored.epoch,
+                    prior.revision(),
+                    prior.roster_hash(),
+                    active_public_key,
+                )
+                .to_vec(),
+                event: Some(app_event),
+                release_capability_id: Vec::new(),
+            });
             output.outbound.push(OutboundItem {
                 inner: proto::OutboundItem {
-                    item_id: format!("{command_id}:relay-control"),
+                    item_id,
                     kind: proto::OutboundKind::GroupRelayControl as i32,
                     relay_url: prior.relay_url().to_owned(),
                     destination: prior.coordination_id().to_vec(),
@@ -147,6 +171,28 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     local_only: false,
                 },
             });
+        } else if engine.policy().members().contains(&local_identity) {
+            let capability_public_key = engine
+                .policy()
+                .member_capability_key(local_identity)
+                .ok_or(Error::InvalidKey)?;
+            candidate.deferred_events.push(proto::DeferredAppEvent {
+                outbound_item_id: String::new(),
+                group_id: engine.group_id().as_bytes().to_vec(),
+                active_capability_id: Vec::new(),
+                event: Some(app_event),
+                release_capability_id: relay_capability_id(
+                    *engine.group_id().as_bytes(),
+                    engine.policy().coordination_id(),
+                    engine.epoch(),
+                    engine.policy().revision(),
+                    engine.policy().roster_hash(),
+                    capability_public_key,
+                )
+                .to_vec(),
+            });
+        } else {
+            output.events.push(AppEvent { inner: app_event });
         }
         if canonical_is_local
             && pending

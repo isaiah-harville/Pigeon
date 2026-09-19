@@ -93,13 +93,21 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
         match message {
             GroupClientMsg::Register {
                 coordination_id,
+                authorization_generation,
+                permanent_controller_public_key,
                 capabilities,
                 signature,
             } => {
-                let result = verify_registration(&coordination_id, &capabilities, &signature)
-                    .and_then(|registration| {
-                        state.service.store.lock().unwrap().register(registration)
-                    });
+                let result = verify_registration(
+                    &coordination_id,
+                    authorization_generation,
+                    &permanent_controller_public_key,
+                    &capabilities,
+                    &signature,
+                )
+                .and_then(|registration| {
+                    state.service.store.lock().unwrap().register(registration)
+                });
                 reply(
                     &tx,
                     if result.is_ok() {
@@ -111,24 +119,25 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
             }
             GroupClientMsg::Authenticate {
                 coordination_id,
-                capability_key,
+                capability_id,
             } => {
-                let capability = decode_group_capability(&coordination_id, &capability_key);
-                let authorized = capability.as_ref().is_ok_and(|capability| {
-                    state
-                        .service
-                        .store
-                        .lock()
-                        .unwrap()
-                        .is_authorized(capability)
-                });
-                if !authorized {
+                let capability = decode_group_capability(&coordination_id, &capability_id)
+                    .ok()
+                    .and_then(|(coordination_id, capability_id)| {
+                        state
+                            .service
+                            .store
+                            .lock()
+                            .unwrap()
+                            .resolve_capability(coordination_id, capability_id)
+                    });
+                if capability.is_none() {
                     reply(&tx, generic_error());
                     continue;
                 }
                 let mut nonce = [0_u8; 32];
                 rand::thread_rng().fill_bytes(&mut nonce);
-                pending = capability.ok().map(|capability| (capability, nonce));
+                pending = capability.map(|capability| (capability, nonce));
                 reply(
                     &tx,
                     GroupServerMsg::Challenge {
@@ -242,61 +251,32 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
                 });
                 reply(&tx, ok_or_error(result));
             }
-            GroupClientMsg::Rotate {
-                old_public_key,
-                replacement,
+            GroupClientMsg::ReplaceCapabilities {
+                expected_generation,
+                new_generation,
+                permanent_controller_public_key,
+                capabilities,
             } => {
                 let result = authenticated.as_ref().map_or(Err(()), |controller| {
-                    let old = decode_public_key(&old_public_key).map_err(|_| ())?;
-                    let replacement = decode_capability(&replacement).map_err(|_| ())?;
+                    let permanent_controller_public_key =
+                        decode_public_key(&permanent_controller_public_key).map_err(|_| ())?;
+                    let capabilities = capabilities
+                        .iter()
+                        .map(decode_capability)
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|_| ())?;
                     state
                         .service
                         .store
                         .lock()
                         .unwrap()
-                        .rotate_capability(controller, old, replacement)
-                        .map_err(|_| ())
-                });
-                reply(&tx, ok_or_error(result));
-            }
-            GroupClientMsg::Grant { capability } => {
-                let result = authenticated.as_ref().map_or(Err(()), |controller| {
-                    let capability = decode_capability(&capability).map_err(|_| ())?;
-                    state
-                        .service
-                        .store
-                        .lock()
-                        .unwrap()
-                        .grant_capability(controller, capability)
-                        .map_err(|_| ())
-                });
-                reply(&tx, ok_or_error(result));
-            }
-            GroupClientMsg::Update {
-                public_key,
-                can_control,
-            } => {
-                let result = authenticated.as_ref().map_or(Err(()), |controller| {
-                    let public_key = decode_public_key(&public_key).map_err(|_| ())?;
-                    state
-                        .service
-                        .store
-                        .lock()
-                        .unwrap()
-                        .update_capability(controller, public_key, can_control)
-                        .map_err(|_| ())
-                });
-                reply(&tx, ok_or_error(result));
-            }
-            GroupClientMsg::Revoke { public_key } => {
-                let result = authenticated.as_ref().map_or(Err(()), |controller| {
-                    let key = decode_public_key(&public_key).map_err(|_| ())?;
-                    state
-                        .service
-                        .store
-                        .lock()
-                        .unwrap()
-                        .revoke_capability(controller, key)
+                        .replace_capabilities(
+                            controller,
+                            expected_generation,
+                            new_generation,
+                            permanent_controller_public_key,
+                            capabilities,
+                        )
                         .map_err(|_| ())
                 });
                 reply(&tx, ok_or_error(result));
@@ -307,7 +287,7 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
                         && state.push.enabled()
                         && push::is_valid_token(&token)
                         && state.push.register(
-                            &push_scope(capability.coordination_id, capability.public_key),
+                            &push_scope(capability.coordination_id, capability.capability_id),
                             token,
                         )
                 });
@@ -323,7 +303,7 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
             GroupClientMsg::UnregisterPush { token } => {
                 if let Some(capability) = authenticated.as_ref() {
                     state.push.unregister(
-                        &push_scope(capability.coordination_id, capability.public_key),
+                        &push_scope(capability.coordination_id, capability.capability_id),
                         &token,
                     );
                     reply(&tx, GroupServerMsg::Ok);

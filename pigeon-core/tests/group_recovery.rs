@@ -56,13 +56,7 @@ fn identity(byte: u8) -> TestIdentity {
 }
 
 fn member_keys(byte: u8) -> GroupMemberKeys {
-    GroupMemberKeys::issue(
-        &identity(byte),
-        identity(1).root_public(),
-        GROUP_ID,
-        COORDINATION_ID,
-    )
-    .unwrap()
+    GroupMemberKeys::issue(&identity(byte), identity(1).root_public(), GROUP_ID).unwrap()
 }
 
 fn policy_with_non_owner_admins() -> PigeonGroupPolicy {

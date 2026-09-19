@@ -16,6 +16,11 @@ extension PigeonCoreCommand {
       command.changeGroupPolicy = try value.proto()
     case .acknowledgeEffects(let value):
       command.acknowledgeEffects = value.proto()
+    case .confirmGroupRelayAuthorization(let value):
+      var confirmation = Pigeon_Wire_V1_ConfirmGroupRelayAuthorization()
+      confirmation.groupID = value.groupID
+      confirmation.capabilityID = value.capabilityID
+      command.confirmGroupRelayAuthorization = confirmation
     case .ensurePairwiseAccount:
       command.ensurePairwiseAccount = Pigeon_Wire_V1_EnsurePairwiseAccount()
     case .registerPairwiseContact(let value):

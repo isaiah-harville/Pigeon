@@ -211,20 +211,25 @@ final class PigeonCoreFacadeTests: XCTestCase {
 extension PigeonCoreFacadeTests {
   func testOutboundRelayActionsDecodeIntoPublicTransportValues() throws {
     var capability = Pigeon_Wire_V1_GroupRelayCapability()
+    capability.capabilityID = Data(repeating: 6, count: 32)
     capability.publicKey = Data(repeating: 1, count: 32)
     capability.canAppend = true
     capability.canRead = true
     var registration = Pigeon_Wire_V1_GroupRelayRegistration()
-    registration.version = 1
+    registration.version = 2
     registration.coordinationID = Data(repeating: 2, count: 32)
     registration.capabilities = [capability]
     registration.signature = Data(repeating: 3, count: 64)
+    registration.permanentControllerPublicKey = capability.publicKey
 
     var control = Pigeon_Wire_V1_GroupRelayControl()
-    control.version = 1
+    control.version = 2
     control.coordinationID = Data(repeating: 2, count: 32)
-    control.kind = .promoteAdmin
-    control.publicKey = Data(repeating: 4, count: 32)
+    control.kind = .replaceAll
+    control.capabilities = [capability]
+    control.expectedGeneration = 4
+    control.newGeneration = 5
+    control.permanentControllerPublicKey = capability.publicKey
 
     var submission = Pigeon_Wire_V1_GroupCoordinatorSubmission()
     submission.version = 1
@@ -268,16 +273,24 @@ extension PigeonCoreFacadeTests {
           coordinationID: coordinationID,
           capabilities: [
             PigeonGroupRelayCapability(
+              capabilityID: Data(repeating: 6, count: 32),
               publicKey: Data(repeating: 1, count: 32), canAppend: true,
               canRead: true, canControl: false)
           ],
-          signature: Data(repeating: 3, count: 64))))
+          signature: Data(repeating: 3, count: 64), authorizationGeneration: 0,
+          permanentControllerPublicKey: Data(repeating: 1, count: 32))))
     XCTAssertEqual(
       actions[1],
       .control(
         PigeonGroupRelayControl(
-          coordinationID: coordinationID, kind: .promoteAdmin,
-          publicKey: Data(repeating: 4, count: 32))))
+          coordinationID: coordinationID, kind: .replaceAll, publicKey: Data(),
+          capabilities: [
+            PigeonGroupRelayCapability(
+              capabilityID: Data(repeating: 6, count: 32),
+              publicKey: Data(repeating: 1, count: 32), canAppend: true,
+              canRead: true, canControl: false)
+          ], expectedGeneration: 4, newGeneration: 5,
+          permanentControllerPublicKey: Data(repeating: 1, count: 32))))
     XCTAssertEqual(
       actions[2],
       .coordinatorSubmission(
@@ -361,6 +374,7 @@ extension PigeonCoreFacadeTests {
     group.policyRevision = 7
     group.dissolved = false
     group.capabilityPublicKey = Data([8])
+    group.capabilityID = Data([10])
     group.coordinatorPublicKey = Data([9])
     var snapshot = Pigeon_Wire_V1_ClientSnapshot()
     snapshot.checkpointGeneration = 10
@@ -379,7 +393,8 @@ extension PigeonCoreFacadeTests {
             memberIdentities: [Data([2]), Data([3]), Data([4])], name: "Birds",
             relayURL: "https://relay.example", coordinationID: Data([5]),
             meshEnabled: true, epoch: 6, policyRevision: 7, dissolved: false,
-            capabilityPublicKey: Data([8]), coordinatorPublicKey: Data([9]))
+            capabilityPublicKey: Data([8]), capabilityID: Data([10]),
+            coordinatorPublicKey: Data([9]))
         ]))
   }
 }

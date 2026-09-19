@@ -35,6 +35,7 @@ extension PigeonGroupState {
       meshEnabled: proto.meshEnabled, epoch: proto.epoch,
       policyRevision: proto.policyRevision, dissolved: proto.dissolved,
       capabilityPublicKey: proto.capabilityPublicKey,
+      capabilityID: proto.capabilityID,
       coordinatorPublicKey: proto.coordinatorPublicKey)
   }
 }

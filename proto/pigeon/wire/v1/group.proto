@@ -133,6 +133,7 @@ message GroupRelayCapability {
   bool can_append = 2;
   bool can_read = 3;
   bool can_control = 4;
+  bytes capability_id = 5;
 }
 
 message GroupRelayRegistration {
@@ -140,6 +141,8 @@ message GroupRelayRegistration {
   bytes coordination_id = 2;
   repeated GroupRelayCapability capabilities = 3;
   bytes signature = 4;
+  uint64 authorization_generation = 5;
+  bytes permanent_controller_public_key = 6;
 }
 
 enum GroupRelayControlKind {
@@ -148,6 +151,7 @@ enum GroupRelayControlKind {
   GROUP_RELAY_CONTROL_KIND_REVOKE = 2;
   GROUP_RELAY_CONTROL_KIND_PROMOTE_ADMIN = 3;
   GROUP_RELAY_CONTROL_KIND_DEMOTE_ADMIN = 4;
+  GROUP_RELAY_CONTROL_KIND_REPLACE_ALL = 5;
 }
 
 message GroupRelayControl {
@@ -155,6 +159,10 @@ message GroupRelayControl {
   bytes coordination_id = 2;
   GroupRelayControlKind kind = 3;
   bytes public_key = 4;
+  repeated GroupRelayCapability capabilities = 5;
+  uint64 expected_generation = 6;
+  uint64 new_generation = 7;
+  bytes permanent_controller_public_key = 8;
 }
 
 message CoordinatorReceipt {

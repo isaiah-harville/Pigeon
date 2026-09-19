@@ -491,18 +491,21 @@ impl PigeonGroupPolicy {
         {
             return Err(PolicyError::InvalidRoster);
         }
-        if self.member_keys.iter().any(|keys| {
-            keys.verify(self.owner, self.group_id, self.coordination_id)
-                .is_err()
-        }) || !is_unique_keys(
-            self.member_keys
-                .iter()
-                .map(GroupMemberKeys::capability_public_key),
-        ) || !is_unique_keys(
-            self.member_keys
-                .iter()
-                .map(GroupMemberKeys::recovery_public_key),
-        ) {
+        if self
+            .member_keys
+            .iter()
+            .any(|keys| keys.verify(self.owner, self.group_id).is_err())
+            || !is_unique_keys(
+                self.member_keys
+                    .iter()
+                    .map(GroupMemberKeys::capability_public_key),
+            )
+            || !is_unique_keys(
+                self.member_keys
+                    .iter()
+                    .map(GroupMemberKeys::recovery_public_key),
+            )
+        {
             return Err(PolicyError::InvalidRoster);
         }
         validate_name(&self.name)?;
@@ -576,7 +579,7 @@ fn transition_body(
                 return Err(PolicyError::InvalidRoster);
             }
             member_keys
-                .verify(prior.owner, prior.group_id, prior.coordination_id)
+                .verify(prior.owner, prior.group_id)
                 .map_err(|_| PolicyError::InvalidRoster)?;
             next.members.push(subject);
             next.members.sort_unstable();

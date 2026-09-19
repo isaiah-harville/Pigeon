@@ -229,6 +229,7 @@ final class SessionCoreIntegrationTests: XCTestCase {
       coordinationID: Data(repeating: 5, count: 32), meshEnabled: false,
       epoch: 3, policyRevision: revision, dissolved: false,
       capabilityPublicKey: Data(repeating: 6, count: 32),
+      capabilityID: Data(repeating: 8, count: 32),
       coordinatorPublicKey: Data(repeating: 7, count: 32))
   }
 

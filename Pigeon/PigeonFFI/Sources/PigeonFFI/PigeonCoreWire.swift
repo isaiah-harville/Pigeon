@@ -91,11 +91,12 @@ extension PigeonCoreOutboundItem {
 
   private func decodeRegistration() throws -> PigeonCoreRelayAction {
     let value = try Pigeon_Wire_V1_GroupRelayRegistration(serializedBytes: payload)
-    guard value.version == 1,
+    guard value.version == 2,
       value.coordinationID == destination,
       value.signature.count == 64,
+      value.permanentControllerPublicKey.count == 32,
       !value.capabilities.isEmpty,
-      value.capabilities.allSatisfy({ $0.publicKey.count == 32 })
+      value.capabilities.allSatisfy({ $0.capabilityID.count == 32 && $0.publicKey.count == 32 })
     else {
       throw PigeonCoreWireError.malformedRelayAction
     }
@@ -103,14 +104,17 @@ extension PigeonCoreOutboundItem {
       PigeonGroupRelayRegistration(
         coordinationID: value.coordinationID,
         capabilities: value.capabilities.map(PigeonGroupRelayCapability.init(proto:)),
-        signature: value.signature))
+        signature: value.signature,
+        authorizationGeneration: value.authorizationGeneration,
+        permanentControllerPublicKey: value.permanentControllerPublicKey))
   }
 
   private func decodeControl() throws -> PigeonCoreRelayAction {
     let value = try Pigeon_Wire_V1_GroupRelayControl(serializedBytes: payload)
-    guard value.version == 1,
+    guard value.version == 2,
       value.coordinationID == destination,
-      value.publicKey.count == 32
+      value.permanentControllerPublicKey.count == 32,
+      value.capabilities.allSatisfy({ $0.capabilityID.count == 32 && $0.publicKey.count == 32 })
     else {
       throw PigeonCoreWireError.malformedRelayAction
     }
@@ -142,7 +146,7 @@ extension PigeonCoreOutboundItem {
 extension PigeonGroupRelayCapability {
   init(proto: Pigeon_Wire_V1_GroupRelayCapability) {
     self.init(
-      publicKey: proto.publicKey, canAppend: proto.canAppend,
+      capabilityID: proto.capabilityID, publicKey: proto.publicKey, canAppend: proto.canAppend,
       canRead: proto.canRead, canControl: proto.canControl)
   }
 }
@@ -152,7 +156,11 @@ extension PigeonGroupRelayControl {
     self.init(
       coordinationID: proto.coordinationID,
       kind: PigeonGroupRelayControlKind(proto: proto.kind),
-      publicKey: proto.publicKey)
+      publicKey: proto.publicKey,
+      capabilities: proto.capabilities.map(PigeonGroupRelayCapability.init(proto:)),
+      expectedGeneration: proto.expectedGeneration,
+      newGeneration: proto.newGeneration,
+      permanentControllerPublicKey: proto.permanentControllerPublicKey)
   }
 }
 
@@ -160,10 +168,8 @@ extension PigeonGroupRelayControlKind {
   init(proto: Pigeon_Wire_V1_GroupRelayControlKind) {
     switch proto {
     case .unspecified: self = .unspecified
-    case .grant: self = .grant
-    case .revoke: self = .revoke
-    case .promoteAdmin: self = .promoteAdmin
-    case .demoteAdmin: self = .demoteAdmin
+    case .replaceAll: self = .replaceAll
+    case .grant, .revoke, .promoteAdmin, .demoteAdmin: self = .unknown(proto.rawValue)
     case .UNRECOGNIZED(let raw): self = .unknown(raw)
     }
   }

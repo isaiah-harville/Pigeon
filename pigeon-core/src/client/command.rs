@@ -312,6 +312,25 @@ impl ClientCommand {
         Ok(Self { inner })
     }
 
+    pub fn confirm_group_relay_authorization(
+        command_id: impl Into<String>,
+        group_id: GroupId,
+        capability_id: [u8; 32],
+    ) -> Result<Self, Error> {
+        let inner = proto::ClientCommand {
+            version: PROTOCOL_VERSION,
+            command_id: command_id.into(),
+            body: Some(proto::client_command::Body::ConfirmGroupRelayAuthorization(
+                proto::ConfirmGroupRelayAuthorization {
+                    group_id: group_id.as_bytes().to_vec(),
+                    capability_id: capability_id.to_vec(),
+                },
+            )),
+        };
+        wire::validate_client_command(&inner)?;
+        Ok(Self { inner })
+    }
+
     pub fn apply_group_join_request(
         command_id: impl Into<String>,
         request_id: impl Into<String>,

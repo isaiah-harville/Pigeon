@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 use crate::Error;
 use crate::client::{ClientCommand, ClientOutput, ClientSnapshot};
-use crate::group::{PigeonGroupPolicy, group_relay_challenge_transcript};
+use crate::group::{PigeonGroupPolicy, group_relay_challenge_transcript, relay_capability_id};
 use crate::identity::PlatformAccount;
 use crate::identity::{IdentityPurpose, SecureIdentity};
 use crate::storage::StateStore;
@@ -45,6 +45,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 pairwise_contacts: Vec::new(),
                 pairwise_sessions: Vec::new(),
                 consumed_pairwise_envelope_hashes: Vec::new(),
+                deferred_events: Vec::new(),
             },
         };
         Ok(Self {
@@ -100,6 +101,21 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 )?;
             }
             proto::client_command::Body::AcknowledgeEffects(acknowledgement) => {
+                let mut released_events = Vec::new();
+                candidate.deferred_events.retain(|deferred| {
+                    if acknowledgement
+                        .outbound_item_ids
+                        .iter()
+                        .any(|id| id == &deferred.outbound_item_id)
+                    {
+                        if let Some(event) = deferred.event.clone() {
+                            released_events.push(event);
+                        }
+                        false
+                    } else {
+                        true
+                    }
+                });
                 candidate.pending_outbound.retain(|item| {
                     !acknowledgement
                         .outbound_item_ids
@@ -112,6 +128,52 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                         .iter()
                         .any(|id| id == &event.event_id)
                 });
+                output.events.extend(
+                    released_events
+                        .into_iter()
+                        .map(|inner| crate::client::AppEvent { inner }),
+                );
+            }
+            proto::client_command::Body::ConfirmGroupRelayAuthorization(confirmation) => {
+                let stored = candidate
+                    .groups
+                    .iter()
+                    .find(|stored| stored.group_id == confirmation.group_id)
+                    .ok_or(Error::InvalidKey)?;
+                let policy = PigeonGroupPolicy::decode(&stored.policy)?;
+                let local_identity = self.identity.ensure_public_key(IdentityPurpose::Root)?;
+                let capability_public_key = policy
+                    .member_capability_key(local_identity)
+                    .ok_or(Error::InvalidKey)?;
+                let current_capability_id = relay_capability_id(
+                    *policy.group_id().as_bytes(),
+                    policy.coordination_id(),
+                    stored.epoch,
+                    policy.revision(),
+                    policy.roster_hash(),
+                    capability_public_key,
+                );
+                if confirmation.capability_id.as_slice() != current_capability_id {
+                    return Err(Error::InvalidSignature);
+                }
+                let mut released_events = Vec::new();
+                candidate.deferred_events.retain(|deferred| {
+                    if deferred.group_id == confirmation.group_id
+                        && !deferred.release_capability_id.is_empty()
+                    {
+                        if let Some(event) = deferred.event.clone() {
+                            released_events.push(event);
+                        }
+                        false
+                    } else {
+                        true
+                    }
+                });
+                output.events.extend(
+                    released_events
+                        .into_iter()
+                        .map(|inner| crate::client::AppEvent { inner }),
+                );
             }
             proto::client_command::Body::EnsurePairwiseAccount(_) => {
                 if candidate.pairwise_account_state.is_empty()
@@ -158,6 +220,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             > crate::MAX_PENDING_OUTBOUND_ENTRIES
             || candidate.pending_events.len() + output.events.len()
                 > crate::MAX_PENDING_OUTBOUND_ENTRIES
+            || candidate.deferred_events.len() > crate::MAX_PENDING_OUTBOUND_ENTRIES
         {
             return Err(Error::ResourceLimit("pending core effects"));
         }
@@ -174,6 +237,12 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             .chain(
                 candidate
                     .pending_events
+                    .iter()
+                    .map(prost::Message::encoded_len),
+            )
+            .chain(
+                candidate
+                    .deferred_events
                     .iter()
                     .map(prost::Message::encoded_len),
             )
@@ -210,6 +279,16 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             .iter()
             .map(|stored| {
                 let policy = PigeonGroupPolicy::decode(&stored.policy)?;
+                let capability_public_key = policy.member_capability_key(local_identity);
+                let pending_capability_id = self
+                    .state
+                    .deferred_events
+                    .iter()
+                    .find(|deferred| {
+                        deferred.group_id.as_slice() == policy.group_id().as_bytes()
+                            && !deferred.active_capability_id.is_empty()
+                    })
+                    .map(|deferred| deferred.active_capability_id.clone());
                 Ok(proto::GroupState {
                     group_id: policy.group_id().as_bytes().to_vec(),
                     owner_identity: policy.owner().to_vec(),
@@ -230,10 +309,22 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     epoch: stored.epoch,
                     policy_revision: policy.revision(),
                     dissolved: policy.dissolved(),
-                    capability_public_key: policy
-                        .member_capability_key(local_identity)
+                    capability_public_key: capability_public_key
                         .map_or_else(Vec::new, |key| key.to_vec()),
                     coordinator_public_key: policy.coordinator_public_key().to_vec(),
+                    capability_id: pending_capability_id.unwrap_or_else(|| {
+                        capability_public_key.map_or_else(Vec::new, |key| {
+                            relay_capability_id(
+                                *policy.group_id().as_bytes(),
+                                policy.coordination_id(),
+                                stored.epoch,
+                                policy.revision(),
+                                policy.roster_hash(),
+                                key,
+                            )
+                            .to_vec()
+                        })
+                    }),
                 })
             })
             .collect::<Result<Vec<_>, Error>>()?;
@@ -289,14 +380,29 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         if policy_capability != signing_capability {
             return Err(Error::InvalidSignature);
         }
+        let capability_id = self
+            .state
+            .deferred_events
+            .iter()
+            .find(|deferred| deferred.group_id.as_slice() == policy.group_id().as_bytes())
+            .filter(|deferred| !deferred.active_capability_id.is_empty())
+            .map(|deferred| deferred.active_capability_id.as_slice().try_into())
+            .transpose()
+            .map_err(|_| Error::Serialization)?
+            .unwrap_or_else(|| {
+                relay_capability_id(
+                    *policy.group_id().as_bytes(),
+                    policy.coordination_id(),
+                    stored.epoch,
+                    policy.revision(),
+                    policy.roster_hash(),
+                    policy_capability,
+                )
+            });
         self.identity
             .sign(
                 IdentityPurpose::GroupCapability(*group_id.as_bytes()),
-                &group_relay_challenge_transcript(
-                    policy.coordination_id(),
-                    policy_capability,
-                    nonce,
-                ),
+                &group_relay_challenge_transcript(policy.coordination_id(), capability_id, nonce),
             )
             .map_err(Error::from)
     }

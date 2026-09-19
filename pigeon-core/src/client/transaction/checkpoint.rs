@@ -132,6 +132,18 @@ pub(super) fn decode_checkpoint(
             .consumed_pairwise_envelope_hashes
             .iter()
             .any(|hash| hash.len() != 32)
+        || state.deferred_events.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state.deferred_events.iter().any(|deferred| {
+            let waits_for_outbound = !deferred.outbound_item_id.is_empty()
+                && deferred.active_capability_id.len() == 32
+                && deferred.release_capability_id.is_empty();
+            let waits_for_authorization = deferred.outbound_item_id.is_empty()
+                && deferred.active_capability_id.is_empty()
+                && deferred.release_capability_id.len() == 32;
+            deferred.group_id.len() != 32
+                || deferred.event.is_none()
+                || !(waits_for_outbound || waits_for_authorization)
+        })
     {
         return Err(Error::Persistence(StorageError::Corrupt));
     }

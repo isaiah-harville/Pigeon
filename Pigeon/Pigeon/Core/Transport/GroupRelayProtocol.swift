@@ -2,7 +2,7 @@ import Foundation
 import PigeonFFI
 
 enum GroupRelayProtocol {
-  nonisolated static let version = 4
+  nonisolated static let version = 5
   nonisolated private static let identifierBytes = 32
 
   nonisolated static func hello() throws -> Data {
@@ -17,19 +17,21 @@ enum GroupRelayProtocol {
     try encode([
       "type": "register",
       "coordination_id": registration.coordinationID.hexEncoded,
+      "authorization_generation": registration.authorizationGeneration,
+      "permanent_controller_public_key": registration.permanentControllerPublicKey.hexEncoded,
       "capabilities": registration.capabilities.map(capabilityObject),
       "signature": registration.signature.base64EncodedString(),
     ])
   }
 
-  nonisolated static func authenticate(coordinationID: Data, capabilityKey: Data) throws -> Data {
-    guard coordinationID.count == identifierBytes, capabilityKey.count == identifierBytes else {
+  nonisolated static func authenticate(coordinationID: Data, capabilityID: Data) throws -> Data {
+    guard coordinationID.count == identifierBytes, capabilityID.count == identifierBytes else {
       throw RelayError.protocolError
     }
     return try encode([
       "type": "authenticate",
       "coordination_id": coordinationID.hexEncoded,
-      "capability_key": capabilityKey.hexEncoded,
+      "capability_id": capabilityID.hexEncoded,
     ])
   }
 
@@ -74,19 +76,13 @@ enum GroupRelayProtocol {
 
   nonisolated private static func control(_ value: PigeonGroupRelayControl) throws -> Data {
     switch value.kind {
-    case .grant:
+    case .replaceAll:
       return try encode([
-        "type": "grant",
-        "capability": capabilityObject(
-          PigeonGroupRelayCapability(
-            publicKey: value.publicKey, canAppend: true, canRead: true, canControl: false)),
-      ])
-    case .revoke:
-      return try encode(["type": "revoke", "public_key": value.publicKey.hexEncoded])
-    case .promoteAdmin, .demoteAdmin:
-      return try encode([
-        "type": "update", "public_key": value.publicKey.hexEncoded,
-        "can_control": value.kind == .promoteAdmin,
+        "type": "replace_capabilities",
+        "expected_generation": value.expectedGeneration,
+        "new_generation": value.newGeneration,
+        "permanent_controller_public_key": value.permanentControllerPublicKey.hexEncoded,
+        "capabilities": value.capabilities.map(capabilityObject),
       ])
     case .unspecified, .unknown:
       throw RelayError.protocolError
@@ -97,6 +93,7 @@ enum GroupRelayProtocol {
     _ value: PigeonGroupRelayCapability
   ) -> [String: Any] {
     [
+      "capability_id": value.capabilityID.hexEncoded,
       "public_key": value.publicKey.hexEncoded,
       "can_append": value.canAppend,
       "can_read": value.canRead,

@@ -270,6 +270,22 @@ fn create_group_with_dave() -> GroupWithDave {
         .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
         .find(|item| item.kind == wire_proto::OutboundKind::GroupWelcome as i32)
         .unwrap();
+    let relay_control = merged
+        .outbound
+        .iter()
+        .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
+        .find(|item| item.kind == wire_proto::OutboundKind::GroupRelayControl as i32)
+        .unwrap();
+    owner
+        .execute(
+            ClientCommand::acknowledge_effects(
+                "helper-ack-add-relay-control",
+                vec![relay_control.item_id],
+                Vec::new(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
     dave.execute(ClientCommand::apply_group_welcome("helper-join-dave", welcome.payload).unwrap())
         .unwrap();
     dave.execute(
@@ -291,6 +307,80 @@ fn create_group_with_dave() -> GroupWithDave {
         coordination_id,
         receipt_head,
     }
+}
+
+#[test]
+fn non_admin_policy_event_waits_for_replacement_relay_authentication() {
+    let group = create_group_with_dave();
+    let mut owner = group.owner;
+    let mut dave = group.dave;
+
+    let staged = owner
+        .execute(ClientCommand::rename_group("rename", group.group_id, "Renamed").unwrap())
+        .unwrap();
+    let submission_item =
+        wire_proto::OutboundItem::decode(staged.outbound[0].encode().as_slice()).unwrap();
+    let submission =
+        wire_proto::GroupCoordinatorSubmission::decode(submission_item.payload.as_slice()).unwrap();
+    let canonical =
+        coordinator_candidate(&submission, 3, group.receipt_head, group.coordination_id);
+
+    owner
+        .execute(
+            ClientCommand::apply_group_coordinator_candidate(
+                "owner-merges-rename",
+                canonical.clone(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let observed = dave
+        .execute(
+            ClientCommand::apply_group_coordinator_candidate("dave-observes-rename", canonical)
+                .unwrap(),
+        )
+        .unwrap();
+    assert!(observed.events.is_empty());
+    assert!(observed.outbound.is_empty());
+
+    let snapshot =
+        wire_proto::ClientSnapshot::decode(dave.snapshot().unwrap().encode().as_slice()).unwrap();
+    let capability_id: [u8; 32] = snapshot.groups[0]
+        .capability_id
+        .as_slice()
+        .try_into()
+        .unwrap();
+    assert!(
+        dave.execute(
+            ClientCommand::confirm_group_relay_authorization(
+                "reject-wrong-relay-generation",
+                group.group_id,
+                [9; 32],
+            )
+            .unwrap(),
+        )
+        .is_err()
+    );
+    let confirmed = dave
+        .execute(
+            ClientCommand::confirm_group_relay_authorization(
+                "confirm-renamed-relay-generation",
+                group.group_id,
+                capability_id,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(confirmed.events.len(), 1);
+    let event = wire_proto::AppEvent::decode(confirmed.events[0].encode().as_slice()).unwrap();
+    let wire_proto::app_event::Body::GroupPolicyChanged(change) = event.body.unwrap() else {
+        panic!("expected policy event after relay authentication");
+    };
+    assert_eq!(
+        change.kind,
+        wire_proto::GroupPolicyChangeKind::NameChanged as i32
+    );
+    assert_eq!(change.name, "Renamed");
 }
 
 #[test]
@@ -855,6 +945,7 @@ fn snapshot_rebuilds_group_projection_without_advancing_checkpoint() {
     assert_eq!(group.relay_url, "https://relay.example");
     assert_eq!(group.coordination_id, anchored.coordination_id);
     assert_eq!(group.capability_public_key.len(), 32);
+    assert_eq!(group.capability_id.len(), 32);
     assert_eq!(
         group.coordinator_public_key,
         TestIdentity::new(60).root_public()
@@ -880,9 +971,10 @@ fn relay_challenge_signature_is_bound_to_the_authenticated_group_capability() {
             .unwrap();
     let group = &snapshot.groups[0];
     let capability_key: [u8; 32] = group.capability_public_key.as_slice().try_into().unwrap();
-    let mut transcript = b"pigeon.relay.group.challenge.v1".to_vec();
+    let capability_id: [u8; 32] = group.capability_id.as_slice().try_into().unwrap();
+    let mut transcript = b"pigeon.relay.group.challenge.v2".to_vec();
     transcript.extend_from_slice(&anchored.coordination_id);
-    transcript.extend_from_slice(&capability_key);
+    transcript.extend_from_slice(&capability_id);
     transcript.extend_from_slice(&nonce);
 
     ed25519_dalek::VerifyingKey::from_bytes(&capability_key)
@@ -1102,9 +1194,24 @@ fn policy_change_persists_before_releasing_a_coordinator_submission() {
         )
         .unwrap();
     assert_eq!(merged.checkpoint_generation, 6);
-    assert_eq!(merged.events.len(), 1);
-    assert!(merged.outbound.is_empty());
-    let event = wire_proto::AppEvent::decode(merged.events[0].encode().as_slice()).unwrap();
+    assert!(merged.events.is_empty());
+    assert_eq!(merged.outbound.len(), 1);
+    let control = wire_proto::OutboundItem::decode(merged.outbound[0].encode().as_slice()).unwrap();
+    assert_eq!(
+        control.kind,
+        wire_proto::OutboundKind::GroupRelayControl as i32
+    );
+    let acknowledged = client
+        .execute(
+            ClientCommand::acknowledge_effects(
+                "ack-rename-relay-control",
+                vec![control.item_id],
+                Vec::new(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let event = wire_proto::AppEvent::decode(acknowledged.events[0].encode().as_slice()).unwrap();
     let wire_proto::app_event::Body::GroupPolicyChanged(change) = event.body.unwrap() else {
         panic!("expected canonical policy event");
     };
@@ -1216,19 +1323,15 @@ fn membership_changes_release_relay_controls_and_welcome_only_after_canonical_me
         .0
         .receipt_hash();
 
+    let before_merge =
+        wire_proto::ClientSnapshot::decode(owner_client.snapshot().unwrap().encode().as_slice())
+            .unwrap();
+    let prior_capability_id = before_merge.groups[0].capability_id.clone();
+
     let merged = owner_client
         .execute(ClientCommand::apply_group_coordinator_candidate("merge-dave", canonical).unwrap())
         .unwrap();
-    assert_eq!(merged.events.len(), 1);
-    let event = wire_proto::AppEvent::decode(merged.events[0].encode().as_slice()).unwrap();
-    let wire_proto::app_event::Body::GroupPolicyChanged(change) = event.body.unwrap() else {
-        panic!("expected member-added policy event");
-    };
-    assert_eq!(
-        change.kind,
-        wire_proto::GroupPolicyChangeKind::MemberAdded as i32
-    );
-    assert_eq!(change.subject_identity, TestIdentity::new(4).root_public());
+    assert!(merged.events.is_empty());
     assert_eq!(merged.outbound.len(), 2);
     let outbound: Vec<_> = merged
         .outbound
@@ -1240,11 +1343,46 @@ fn membership_changes_release_relay_controls_and_welcome_only_after_canonical_me
         .find(|item| item.kind == wire_proto::OutboundKind::GroupRelayControl as i32)
         .unwrap();
     let control = GroupRelayControl::decode(&control_item.payload).unwrap();
-    assert_eq!(control.kind(), GroupRelayControlKind::Grant);
+    assert_eq!(control.kind(), GroupRelayControlKind::ReplaceAll);
+    assert!(control.capabilities().iter().any(|capability| {
+        capability.public_key() == TestIdentity::new(4).capability.verifying_key().to_bytes()
+    }));
+    let before_control_ack =
+        wire_proto::ClientSnapshot::decode(owner_client.snapshot().unwrap().encode().as_slice())
+            .unwrap();
     assert_eq!(
-        control.public_key(),
-        TestIdentity::new(4).capability.verifying_key().to_bytes()
+        before_control_ack.groups[0].capability_id,
+        prior_capability_id
     );
+
+    let acknowledged = owner_client
+        .execute(
+            ClientCommand::acknowledge_effects(
+                "ack-add-relay-control",
+                vec![control_item.item_id.clone()],
+                Vec::new(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(acknowledged.events.len(), 1);
+    let event = wire_proto::AppEvent::decode(acknowledged.events[0].encode().as_slice()).unwrap();
+    let wire_proto::app_event::Body::GroupPolicyChanged(change) = event.body.unwrap() else {
+        panic!("expected member-added policy event");
+    };
+    assert_eq!(
+        change.kind,
+        wire_proto::GroupPolicyChangeKind::MemberAdded as i32
+    );
+    assert_eq!(change.subject_identity, TestIdentity::new(4).root_public());
+    let after_control_ack =
+        wire_proto::ClientSnapshot::decode(owner_client.snapshot().unwrap().encode().as_slice())
+            .unwrap();
+    assert_ne!(
+        after_control_ack.groups[0].capability_id,
+        prior_capability_id
+    );
+
     let welcome = outbound
         .iter()
         .find(|item| item.kind == wire_proto::OutboundKind::GroupWelcome as i32)
@@ -1278,21 +1416,35 @@ fn membership_changes_release_relay_controls_and_welcome_only_after_canonical_me
                 .unwrap(),
         )
         .unwrap();
-    let event = wire_proto::AppEvent::decode(removed.events[0].encode().as_slice()).unwrap();
+    assert!(removed.events.is_empty());
+    let revoke_item = removed
+        .outbound
+        .iter()
+        .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
+        .find(|item| item.kind == wire_proto::OutboundKind::GroupRelayControl as i32)
+        .unwrap();
+    let revoke = GroupRelayControl::decode(&revoke_item.payload).unwrap();
+    assert_eq!(revoke.kind(), GroupRelayControlKind::ReplaceAll);
+    assert!(!revoke.capabilities().iter().any(|capability| {
+        capability.public_key() == TestIdentity::new(4).capability.verifying_key().to_bytes()
+    }));
+    let acknowledged = owner_client
+        .execute(
+            ClientCommand::acknowledge_effects(
+                "ack-remove-relay-control",
+                vec![revoke_item.item_id],
+                Vec::new(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let event = wire_proto::AppEvent::decode(acknowledged.events[0].encode().as_slice()).unwrap();
     let wire_proto::app_event::Body::GroupPolicyChanged(change) = event.body.unwrap() else {
         panic!("expected member-removed policy event");
     };
     assert_eq!(
         change.kind,
         wire_proto::GroupPolicyChangeKind::MemberRemoved as i32
-    );
-    let revoke_item =
-        wire_proto::OutboundItem::decode(removed.outbound[0].encode().as_slice()).unwrap();
-    let revoke = GroupRelayControl::decode(&revoke_item.payload).unwrap();
-    assert_eq!(revoke.kind(), GroupRelayControlKind::Revoke);
-    assert_eq!(
-        revoke.public_key(),
-        TestIdentity::new(4).capability.verifying_key().to_bytes()
     );
 }
 
@@ -1342,7 +1494,29 @@ fn ordinary_member_leave_is_committed_by_an_online_admin() {
                 .unwrap(),
         )
         .unwrap();
-    let event = wire_proto::AppEvent::decode(merged.events[0].encode().as_slice()).unwrap();
+    assert!(merged.events.is_empty());
+    let revoke_item = merged
+        .outbound
+        .iter()
+        .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
+        .find(|item| item.kind == wire_proto::OutboundKind::GroupRelayControl as i32)
+        .unwrap();
+    let revoke = GroupRelayControl::decode(&revoke_item.payload).unwrap();
+    assert_eq!(revoke.kind(), GroupRelayControlKind::ReplaceAll);
+    assert!(!revoke.capabilities().iter().any(|capability| {
+        capability.public_key() == TestIdentity::new(4).capability.verifying_key().to_bytes()
+    }));
+    let acknowledged = owner
+        .execute(
+            ClientCommand::acknowledge_effects(
+                "ack-leave-relay-control",
+                vec![revoke_item.item_id],
+                Vec::new(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let event = wire_proto::AppEvent::decode(acknowledged.events[0].encode().as_slice()).unwrap();
     let wire_proto::app_event::Body::GroupPolicyChanged(change) = event.body.unwrap() else {
         panic!("expected member-left policy event");
     };
@@ -1351,15 +1525,6 @@ fn ordinary_member_leave_is_committed_by_an_online_admin() {
         wire_proto::GroupPolicyChangeKind::MemberLeft as i32
     );
     assert_eq!(change.subject_identity, TestIdentity::new(4).root_public());
-    let revoke_item =
-        wire_proto::OutboundItem::decode(merged.outbound[0].encode().as_slice()).unwrap();
-    let revoke = GroupRelayControl::decode(&revoke_item.payload).unwrap();
-    assert_eq!(revoke.kind(), GroupRelayControlKind::Revoke);
-    assert_eq!(
-        revoke.public_key(),
-        TestIdentity::new(4).capability.verifying_key().to_bytes()
-    );
-
     let departed = dave
         .execute(
             ClientCommand::apply_group_coordinator_candidate("observe-own-leave", canonical)

@@ -21,6 +21,7 @@ message ClientCommand {
     SetPairwiseRelationship set_pairwise_relationship = 19;
     RemovePairwiseContact remove_pairwise_contact = 20;
     MigrateLegacyPairwiseState migrate_legacy_pairwise_state = 21;
+    ConfirmGroupRelayAuthorization confirm_group_relay_authorization = 22;
   }
 }
 
@@ -120,6 +121,14 @@ message AcknowledgeEffects {
   repeated string event_ids = 2;
 }
 
+// Confirms that the host completed a relay challenge using the capability for
+// this exact authorization generation. This releases policy events held on
+// non-admin devices until the relay has installed an admin's replacement set.
+message ConfirmGroupRelayAuthorization {
+  bytes group_id = 1;
+  bytes capability_id = 2;
+}
+
 message AppEvent {
   uint32 version = 1;
   string event_id = 2;
@@ -196,6 +205,7 @@ message GroupState {
   bool dissolved = 11;
   bytes capability_public_key = 12;
   bytes coordinator_public_key = 13;
+  bytes capability_id = 14;
 }
 
 message ClientCheckpoint {
@@ -218,6 +228,20 @@ message ClientCheckpoint {
   repeated StoredPairwiseContact pairwise_contacts = 17;
   repeated StoredPairwiseSession pairwise_sessions = 18;
   repeated bytes consumed_pairwise_envelope_hashes = 19;
+  repeated DeferredAppEvent deferred_events = 20;
+}
+
+// A host-visible event held until either a security-critical outbound effect
+// is acknowledged or a non-admin proves that the replacement relay generation
+// is active. active_capability_id keeps an admin on the generation authorized
+// to perform a pending replacement; release_capability_id identifies the new
+// generation a non-admin must authenticate.
+message DeferredAppEvent {
+  string outbound_item_id = 1;
+  bytes group_id = 2;
+  bytes active_capability_id = 3;
+  AppEvent event = 4;
+  bytes release_capability_id = 5;
 }
 
 message StoredPairwiseContact {

@@ -11,13 +11,14 @@ use serde::{Deserialize, Serialize};
 use crate::coordinator::protocol::{CandidateWire, ReceiptWire};
 use crate::group::store::{CapabilityRegistration, GroupCapability, GroupRegistration, StoreError};
 
-pub const GROUP_PROTOCOL_VERSION: u32 = 4;
+pub const GROUP_PROTOCOL_VERSION: u32 = 5;
 pub const MAX_GROUP_FRAME_BYTES: usize = 2 * 1024 * 1024;
-pub const GROUP_REGISTRATION_DOMAIN: &[u8] = b"pigeon.relay.group.registration.v1";
-pub const GROUP_CHALLENGE_DOMAIN: &[u8] = b"pigeon.relay.group.challenge.v1";
+pub const GROUP_REGISTRATION_DOMAIN: &[u8] = b"pigeon.relay.group.registration.v2";
+pub const GROUP_CHALLENGE_DOMAIN: &[u8] = b"pigeon.relay.group.challenge.v2";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CapabilityWire {
+    pub capability_id: String,
     pub public_key: String,
     pub can_append: bool,
     pub can_read: bool,
@@ -33,12 +34,14 @@ pub enum GroupClientMsg {
     },
     Register {
         coordination_id: String,
+        authorization_generation: u64,
+        permanent_controller_public_key: String,
         capabilities: Vec<CapabilityWire>,
         signature: String,
     },
     Authenticate {
         coordination_id: String,
-        capability_key: String,
+        capability_id: String,
     },
     Auth {
         signature: String,
@@ -52,19 +55,11 @@ pub enum GroupClientMsg {
     Advance {
         sequence: u64,
     },
-    Rotate {
-        old_public_key: String,
-        replacement: CapabilityWire,
-    },
-    Grant {
-        capability: CapabilityWire,
-    },
-    Update {
-        public_key: String,
-        can_control: bool,
-    },
-    Revoke {
-        public_key: String,
+    ReplaceCapabilities {
+        expected_generation: u64,
+        new_generation: u64,
+        permanent_controller_public_key: String,
+        capabilities: Vec<CapabilityWire>,
     },
     RegisterPush {
         token: String,
@@ -164,6 +159,8 @@ pub fn gate_group_message(message: GroupClientMsg, negotiated: &mut bool) -> Gro
 
 pub fn verify_registration(
     coordination_id: &str,
+    authorization_generation: u64,
+    permanent_controller_public_key: &str,
     capabilities: &[CapabilityWire],
     signature: &str,
 ) -> Result<GroupRegistration, StoreError> {
@@ -172,18 +169,34 @@ pub fn verify_registration(
         .iter()
         .map(decode_capability)
         .collect::<Result<Vec<_>, _>>()?;
-    let controller = capabilities
-        .iter()
-        .find(|capability| capability.can_control)
-        .ok_or(StoreError::InvalidRegistration)?;
+    let permanent_controller_public_key = decode_fixed(permanent_controller_public_key)?;
+    if !capabilities.iter().any(|capability| {
+        capability.can_control && capability.public_key == permanent_controller_public_key
+    }) {
+        return Err(StoreError::InvalidRegistration);
+    }
     let signature = decode_signature(signature)?;
-    let transcript = registration_transcript(coordination_id, &capabilities);
-    VerifyingKey::from_bytes(&controller.public_key)
-        .map_err(|_| StoreError::InvalidRegistration)?
-        .verify_strict(&transcript, &signature)
-        .map_err(|_| StoreError::Unauthorized)?;
+    let transcript = registration_transcript(
+        coordination_id,
+        authorization_generation,
+        permanent_controller_public_key,
+        &capabilities,
+    );
+    let valid_signers = capabilities
+        .iter()
+        .filter(|capability| capability.can_control)
+        .filter(|capability| {
+            VerifyingKey::from_bytes(&capability.public_key)
+                .is_ok_and(|key| key.verify_strict(&transcript, &signature).is_ok())
+        })
+        .count();
+    if valid_signers != 1 {
+        return Err(StoreError::Unauthorized);
+    }
     Ok(GroupRegistration {
         coordination_id,
+        authorization_generation,
+        permanent_controller_public_key,
         capabilities,
     })
 }
@@ -201,14 +214,19 @@ pub fn verify_challenge(capability: &GroupCapability, nonce: &[u8; 32], signatur
 
 pub fn registration_transcript(
     coordination_id: [u8; 32],
+    authorization_generation: u64,
+    permanent_controller_public_key: [u8; 32],
     capabilities: &[CapabilityRegistration],
 ) -> Vec<u8> {
     let mut transcript =
-        Vec::with_capacity(GROUP_REGISTRATION_DOMAIN.len() + 32 + 4 + capabilities.len() * 35);
+        Vec::with_capacity(GROUP_REGISTRATION_DOMAIN.len() + 76 + capabilities.len() * 67);
     transcript.extend_from_slice(GROUP_REGISTRATION_DOMAIN);
     transcript.extend_from_slice(&coordination_id);
+    transcript.extend_from_slice(&authorization_generation.to_be_bytes());
+    transcript.extend_from_slice(&permanent_controller_public_key);
     transcript.extend_from_slice(&(capabilities.len() as u32).to_be_bytes());
     for capability in capabilities {
+        transcript.extend_from_slice(&capability.capability_id);
         transcript.extend_from_slice(&capability.public_key);
         transcript.push(capability.can_append.into());
         transcript.push(capability.can_read.into());
@@ -221,7 +239,7 @@ pub fn challenge_transcript(capability: &GroupCapability, nonce: &[u8; 32]) -> V
     let mut transcript = Vec::with_capacity(GROUP_CHALLENGE_DOMAIN.len() + 96);
     transcript.extend_from_slice(GROUP_CHALLENGE_DOMAIN);
     transcript.extend_from_slice(&capability.coordination_id);
-    transcript.extend_from_slice(&capability.public_key);
+    transcript.extend_from_slice(&capability.capability_id);
     transcript.extend_from_slice(nonce);
     transcript
 }
@@ -230,8 +248,10 @@ pub fn decode_capability(
     capability: &CapabilityWire,
 ) -> Result<CapabilityRegistration, StoreError> {
     let public_key = decode_fixed(&capability.public_key)?;
+    let capability_id = decode_fixed(&capability.capability_id)?;
     VerifyingKey::from_bytes(&public_key).map_err(|_| StoreError::InvalidRegistration)?;
     Ok(CapabilityRegistration {
+        capability_id,
         public_key,
         can_append: capability.can_append,
         can_read: capability.can_read,
@@ -241,12 +261,9 @@ pub fn decode_capability(
 
 pub fn decode_group_capability(
     coordination_id: &str,
-    public_key: &str,
-) -> Result<GroupCapability, StoreError> {
-    Ok(GroupCapability {
-        coordination_id: decode_fixed(coordination_id)?,
-        public_key: decode_fixed(public_key)?,
-    })
+    capability_id: &str,
+) -> Result<([u8; 32], [u8; 32]), StoreError> {
+    Ok((decode_fixed(coordination_id)?, decode_fixed(capability_id)?))
 }
 
 pub fn decode_public_key(encoded: &str) -> Result<[u8; 32], StoreError> {

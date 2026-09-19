@@ -72,6 +72,7 @@ final class GroupMeshBridgeTests: XCTestCase {
       coordinationID: Data(repeating: 5, count: 32), meshEnabled: meshEnabled,
       epoch: 2, policyRevision: 1, dissolved: false,
       capabilityPublicKey: Data(repeating: 6, count: 32),
+      capabilityID: Data(repeating: 8, count: 32),
       coordinatorPublicKey: Data(repeating: 7, count: 32))
   }
 }

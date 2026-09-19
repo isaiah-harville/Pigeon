@@ -1,6 +1,16 @@
 import Foundation
 import SwiftProtobuf
 
+public struct PigeonConfirmGroupRelayAuthorization: Equatable, Sendable {
+  public let groupID: Data
+  public let capabilityID: Data
+
+  public init(groupID: Data, capabilityID: Data) {
+    self.groupID = groupID
+    self.capabilityID = capabilityID
+  }
+}
+
 public enum PigeonCoreRelayAction: Equatable, Sendable {
   case append(PigeonGroupRelayAppend)
   case registration(PigeonGroupRelayRegistration)
@@ -20,12 +30,16 @@ public struct PigeonGroupRelayAppend: Equatable, Sendable {
 }
 
 public struct PigeonGroupRelayCapability: Equatable, Sendable {
+  public let capabilityID: Data
   public let publicKey: Data
   public let canAppend: Bool
   public let canRead: Bool
   public let canControl: Bool
 
-  public init(publicKey: Data, canAppend: Bool, canRead: Bool, canControl: Bool) {
+  public init(
+    capabilityID: Data, publicKey: Data, canAppend: Bool, canRead: Bool, canControl: Bool
+  ) {
+    self.capabilityID = capabilityID
     self.publicKey = publicKey
     self.canAppend = canAppend
     self.canRead = canRead
@@ -37,24 +51,25 @@ public struct PigeonGroupRelayRegistration: Equatable, Sendable {
   public let coordinationID: Data
   public let capabilities: [PigeonGroupRelayCapability]
   public let signature: Data
+  public let authorizationGeneration: UInt64
+  public let permanentControllerPublicKey: Data
 
   public init(
     coordinationID: Data,
     capabilities: [PigeonGroupRelayCapability],
-    signature: Data
+    signature: Data, authorizationGeneration: UInt64, permanentControllerPublicKey: Data
   ) {
     self.coordinationID = coordinationID
     self.capabilities = capabilities
     self.signature = signature
+    self.authorizationGeneration = authorizationGeneration
+    self.permanentControllerPublicKey = permanentControllerPublicKey
   }
 }
 
 public enum PigeonGroupRelayControlKind: Equatable, Sendable {
   case unspecified
-  case grant
-  case revoke
-  case promoteAdmin
-  case demoteAdmin
+  case replaceAll
   case unknown(Int)
 }
 
@@ -62,11 +77,23 @@ public struct PigeonGroupRelayControl: Equatable, Sendable {
   public let coordinationID: Data
   public let kind: PigeonGroupRelayControlKind
   public let publicKey: Data
+  public let capabilities: [PigeonGroupRelayCapability]
+  public let expectedGeneration: UInt64
+  public let newGeneration: UInt64
+  public let permanentControllerPublicKey: Data
 
-  public init(coordinationID: Data, kind: PigeonGroupRelayControlKind, publicKey: Data) {
+  public init(
+    coordinationID: Data, kind: PigeonGroupRelayControlKind, publicKey: Data,
+    capabilities: [PigeonGroupRelayCapability], expectedGeneration: UInt64,
+    newGeneration: UInt64, permanentControllerPublicKey: Data
+  ) {
     self.coordinationID = coordinationID
     self.kind = kind
     self.publicKey = publicKey
+    self.capabilities = capabilities
+    self.expectedGeneration = expectedGeneration
+    self.newGeneration = newGeneration
+    self.permanentControllerPublicKey = permanentControllerPublicKey
   }
 }
 
