@@ -131,16 +131,17 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 
 ### 🔭 Horizon
 
-**Group chats** (E2E; no central authority for ordering/membership):
-- **A1 — Pairwise fan-out:** encrypt to each member over existing sessions, tagged
-  with a `groupID`. Reuses everything; O(n) bandwidth; good for small groups.
-- **A2 — Sender keys (WhatsApp/Signal model):** each member distributes a sender
-  key once; O(1) per message. The practical mid-term target.
-- **A3 — MLS (RFC 9420):** TreeKEM, log(n) membership changes; the modern standard
-  but a large surface — needs a vetted/auditable implementation. Long-term.
-- Cross-cutting: signed membership/roster, causal ordering (Lamport/vector clocks,
-  eventual consistency), per-group seen-tracking over the flood mesh.
-- *Path:* A1 → A2, defer A3.
+**Group chats (1.4.0 implementation):** OpenMLS-based group encryption and
+authenticated mutable policy live in `pigeon-core`; the selected relay hosts the
+opaque group mailbox and signed commit coordinator. Groups support 3–128 members,
+a permanent owner, delegated admins, post-join history, owner-controlled name,
+owner-controlled explicit mesh opt-in, member leave, and permanent dissolve.
+The implementation includes adversarial state-machine tests, authenticated
+coordinator failover without owner availability, atomic capability rotation,
+and transactional crash recovery. Physical multi-device and locked-delivery
+validation remain release gates. Metadata minimization and independent
+cryptographic review remain audit-readiness work; do not describe Pigeon as
+audited or production-secure without that evidence.
 
 **Long-distance / non-Bluetooth transport** (same E2E ciphertext across local or
 federated paths):

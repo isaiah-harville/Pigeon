@@ -15,18 +15,18 @@ import XCTest
 
 @MainActor
 final class ContactCardTests: XCTestCase {
+  private var nextIdentitySeed: UInt8 = 100
 
-  /// A fresh identity plus its valid, signed identity bundle. Built from a real
-  /// `PigeonAccount`, which also exercises the byte-stability invariant the relay
-  /// signature relies on: the Ed25519 seed reproduces the same public key in
-  /// CryptoKit here and in `ed25519-dalek` inside pigeon-core, so `idKey` signs
-  /// what the card later verifies against `bundle.identityKey`.
+  /// A fresh platform identity plus the public bundle produced by pigeon-core.
+  /// This exercises the byte-stability invariant the relay signature relies on:
+  /// CryptoKit and pigeon-core agree on the Ed25519 public key for the same seed.
   private func makeIdentity() throws -> (
     idKey: Curve25519.Signing.PrivateKey, bundle: PigeonIdentityBundle
   ) {
-    let account = try PigeonAccount.generate()
-    let idKey = try Curve25519.Signing.PrivateKey(rawRepresentation: account.exportSeed())
-    let bundle = try PigeonIdentityBundle(decoding: account.identityBundle())
+    let peer = try makeCorePeer(seedByte: nextIdentitySeed)
+    nextIdentitySeed &+= 1
+    let idKey = peer.identity.signingKey
+    let bundle = peer.bundle
     XCTAssertEqual(idKey.publicKey.rawRepresentation, bundle.identityKey)
     return (idKey, bundle)
   }
@@ -39,6 +39,18 @@ final class ContactCardTests: XCTestCase {
     XCTAssertEqual(decoded?.name, "Alice")
     XCTAssertEqual(decoded?.bundle, bundle)
     XCTAssertEqual(decoded?.relayURLs, [])
+  }
+
+  func testCorePairwiseControlPrekeyRoundTripsIndependently() throws {
+    let peer = try makeCorePeer(seedByte: 17)
+    let card = ContactCard(
+      name: "Alice", bundle: peer.bundle, relayURLs: [], relaySignature: Data(),
+      prekeyBundle: nil, pairwiseControlPrekeyBundle: peer.prekey)
+
+    let decoded = try XCTUnwrap(ContactCard(scanned: card.encoded()))
+
+    XCTAssertNil(decoded.prekeyBundle)
+    XCTAssertEqual(decoded.pairwiseControlPrekeyBundle, peer.prekey)
   }
 
   func testSignedRelayURLsAreHonoured() throws {

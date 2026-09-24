@@ -47,6 +47,8 @@ struct Contact: Identifiable, Equatable {
   /// `establishOutbound` against it. `nil` only for cards without one (which then
   /// cannot be reached, since Olm is async-first with no interactive fallback).
   var prekeyBundle: PigeonPrekeyBundle?
+  /// Core-owned pairwise control prekey used for MLS bootstrap traffic.
+  var pairwiseControlPrekeyBundle: PigeonPrekeyBundle?
   /// Whether this contact was added by scanning their QR **in person** (so the
   /// safety number was exchanged face to face) rather than pasted from a code
   /// shared over some other channel. Drives the "not verified in person" cue.

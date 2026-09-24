@@ -168,20 +168,15 @@ final class DeliveryStatusTests: XCTestCase {
     let a = try launch(seed: newSeed(), key: keyA, storeFile: "dsA.store", bus: bus)
     let b = try launch(seed: newSeed(), key: keyB, storeFile: "dsB.store", bus: bus)
 
-    let aIsInitiator = a.isInitiator(toward: b.myID)
-    let initiator = aIsInitiator ? a : b
-    let responder = aIsInitiator ? b : a
-    let (iBundle, iPrekey) = try card(initiator)
-    let (rBundle, rPrekey) = try card(responder)
-    responder.addContact(
-      iBundle, name: "I", relayURLs: [], prekeyBundle: iPrekey, verifiedInPerson: true)
-    initiator.addContact(
-      rBundle, name: "R", relayURLs: [], prekeyBundle: rPrekey, verifiedInPerson: true)
-    let peer = try XCTUnwrap(initiator.contacts.first { $0.id == responder.myID })
+    let (aBundle, aPrekey) = try card(a)
+    let (bBundle, bPrekey) = try card(b)
+    b.addContact(aBundle, name: "A", relayURLs: [], prekeyBundle: aPrekey, verifiedInPerson: true)
+    a.addContact(bBundle, name: "B", relayURLs: [], prekeyBundle: bPrekey, verifiedInPerson: true)
+    let peer = try XCTUnwrap(a.contacts.first { $0.id == b.myID })
 
-    initiator.send("hello", to: peer)
+    a.send("hello", to: peer)
 
-    let mine = try XCTUnwrap(initiator.messages(with: peer).last { $0.mine && !$0.system })
+    let mine = try XCTUnwrap(a.messages(with: peer).last { $0.mine && !$0.system })
     XCTAssertEqual(mine.delivery, .delivered, "the responder's ack proves delivery")
   }
 
@@ -217,11 +212,8 @@ final class DeliveryStatusTests: XCTestCase {
 
   private func card(_ manager: SessionManager) throws -> (PigeonIdentityBundle, PigeonPrekeyBundle)
   {
-    let account = try XCTUnwrap(manager.account)
-    return (
-      try PigeonIdentityBundle(decoding: account.identityBundle()),
-      try PigeonPrekeyBundle(decoding: account.signedPrekeyBundle())
-    )
+    let card = try XCTUnwrap(manager.myCard)
+    return (card.bundle, try XCTUnwrap(card.prekeyBundle))
   }
 
   private func newSeed() -> Data { Curve25519.Signing.PrivateKey().rawRepresentation }

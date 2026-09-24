@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" role="img" aria-labelledby="title desc">
+  <title id="title">MLS membership epochs and history boundaries</title>
+  <desc id="desc">A three-member group advances from epoch seven to epoch eight when Bob joins. It advances again when Carol leaves, leaving the required minimum of Alice, Bob, and Dana. Bob cannot read earlier messages and Carol cannot read later messages.</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#071426"/><stop offset="1" stop-color="#102b4f"/></linearGradient>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0 0 12 6 0 12z" fill="#7894b4"/></marker>
+    <style>.eyebrow{font-family:system-ui,sans-serif;font-size:15px;font-weight:700;letter-spacing:2px;fill:#79c8ff}.heading{font-family:system-ui,sans-serif;font-size:31px;font-weight:750;fill:#f8fbff}.sub{font-family:system-ui,sans-serif;font-size:17px;fill:#b9c9dc}.epoch{font-family:system-ui,sans-serif;font-size:20px;font-weight:750;fill:#fff}.label{font-family:system-ui,sans-serif;font-size:16px;font-weight:650;fill:#eef6ff}.small{font-family:system-ui,sans-serif;font-size:15px;fill:#b9c9dc}.old{fill:#18283c;stroke:#6f849d;stroke-width:2}.join{fill:#12372e;stroke:#54d8a2;stroke-width:2}.later{fill:#0e3156;stroke:#57b8ff;stroke-width:2}.commit{fill:#2c1d4a;stroke:#b889ff;stroke-width:2}.denied{fill:#351b2c;stroke:#ff6b7a;stroke-width:2}.timeline{stroke:#7894b4;stroke-width:4;fill:none;marker-end:url(#arrow)}.boundary{stroke:#b889ff;stroke-width:4;stroke-dasharray:8 7}</style>
+  </defs>
+  <rect width="1200" height="700" rx="28" fill="url(#bg)"/>
+  <text class="eyebrow" x="52" y="52">MLS KEY SCHEDULE · MEMBERSHIP WINDOWS</text>
+  <text class="heading" x="52" y="91">Membership changes cut cryptographic boundaries.</text>
+  <text class="sub" x="52" y="122">Each authenticated commit advances the epoch and replaces the secrets used for later messages.</text>
+  <path class="timeline" d="M83 326 H1122"/>
+  <rect class="old" x="62" y="192" width="304" height="216" rx="23"/>
+  <text class="eyebrow" x="92" y="231">EPOCH 7</text><text class="epoch" x="92" y="269">Alice · Carol · Dana</text>
+  <text class="small" x="92" y="306">Three current members</text>
+  <rect class="denied" x="92" y="341" width="244" height="43" rx="13"/><text class="small" x="214" y="368" text-anchor="middle">Bob has no epoch-7 secrets</text>
+  <line class="boundary" x1="389" y1="166" x2="389" y2="457"/>
+  <rect class="commit" x="324" y="441" width="130" height="82" rx="16"/>
+  <text class="label" x="389" y="471" text-anchor="middle">COMMIT</text><text class="small" x="389" y="500" text-anchor="middle">Bob joins</text>
+  <rect class="join" x="411" y="192" width="374" height="216" rx="23"/>
+  <text class="eyebrow" x="441" y="231">EPOCH 8</text><text class="epoch" x="441" y="269">Alice · Bob · Carol · Dana</text>
+  <text class="small" x="441" y="306">Welcome grants current secrets only</text>
+  <rect class="join" x="441" y="341" width="314" height="43" rx="13"/><text class="small" x="598" y="368" text-anchor="middle">All four decrypt epoch-8 messages</text>
+  <line class="boundary" x1="808" y1="166" x2="808" y2="457"/>
+  <rect class="commit" x="743" y="441" width="130" height="82" rx="16"/>
+  <text class="label" x="808" y="471" text-anchor="middle">COMMIT</text><text class="small" x="808" y="500" text-anchor="middle">Carol leaves</text>
+  <rect class="later" x="830" y="192" width="308" height="216" rx="23"/>
+  <text class="eyebrow" x="860" y="231">EPOCH 9</text><text class="epoch" x="860" y="269">Alice · Bob · Dana</text>
+  <text class="small" x="860" y="306">Minimum group size remains three</text>
+  <rect class="denied" x="860" y="341" width="248" height="43" rx="13"/><text class="small" x="984" y="368" text-anchor="middle">Carol lacks epoch-9 secrets</text>
+  <rect class="old" x="90" y="570" width="1020" height="79" rx="20"/>
+  <text class="label" x="600" y="600" text-anchor="middle">WHAT THE RELAY CANNOT DO</text>
+  <text class="small" x="600" y="628" text-anchor="middle">Stored ciphertext cannot bridge an MLS epoch boundary: no pre-join history for Bob, no post-leave messages for Carol.</text>
+</svg>

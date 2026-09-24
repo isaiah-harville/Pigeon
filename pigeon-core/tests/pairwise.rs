@@ -224,9 +224,9 @@ fn account_persistence_preserves_identity_and_keys() {
 
     // ...meanwhile Bob is persisted and reloaded (e.g. app relaunch).
     let seed = *bob.export_identity_seed();
-    let pickle = bob.export_olm_pickle();
+    let state = bob.export_pairwise_state().unwrap();
     let fallback = bob.export_fallback_key();
-    let mut bob_reloaded = Account::import(seed, pickle, fallback);
+    let mut bob_reloaded = Account::import_pairwise_state(seed, &state, fallback).unwrap();
 
     assert_eq!(
         bob_reloaded.identity_public_key(),
@@ -239,6 +239,22 @@ fn account_persistence_preserves_identity_and_keys() {
         Session::establish_inbound(&mut bob_reloaded, &initiation.identity, &initiation.message)
             .unwrap();
     assert_eq!(plaintext, b"saved?");
+}
+
+#[test]
+fn session_state_is_serialized_and_restored_by_core() {
+    let (alice, bob, alice_session, bob_session) = converged_pair();
+
+    let alice_state = alice_session.export_state().unwrap();
+    let bob_state = bob_session.export_state().unwrap();
+    let mut alice_restored =
+        Session::import_state(&alice_state, bob.identity_public_key()).unwrap();
+    let mut bob_restored = Session::import_state(&bob_state, alice.identity_public_key()).unwrap();
+
+    let message = alice_restored.encrypt(b"after restart").unwrap();
+    assert_eq!(bob_restored.decrypt(&message).unwrap(), b"after restart");
+    let reply = bob_restored.encrypt(b"still ratcheting").unwrap();
+    assert_eq!(alice_restored.decrypt(&reply).unwrap(), b"still ratcheting");
 }
 
 #[test]

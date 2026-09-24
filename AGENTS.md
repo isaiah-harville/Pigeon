@@ -48,8 +48,7 @@ deleted; do not reintroduce it.
   generated bindings are build artifacts (gitignored) — regenerate them, don't
   commit them.
 - `Pigeon/PigeonFFI/` is the Swift package the app links (module `PigeonFFI`): a
-  `binaryTarget` for the XCFramework plus a thin Swift facade (`PigeonAccount`,
-  `PigeonSession`,
+  `binaryTarget` for the XCFramework plus a thin Swift facade (`PigeonCoreClient`,
   `PigeonIdentityBundle`, `PigeonPrekeyBundle`, contact-card codec) over the
   generated bindings.
 - `pigeon-mesh/` is a dependency-free, platform-agnostic Rust crate
@@ -85,8 +84,8 @@ App `Core/`:
   persistence (`KeychainStore`), `IdentityManager`, fingerprints, and
   `SafetyNumber` generation.
 - `Core/Session/` — `SessionManager` (`@MainActor @Observable`) is the central
-  coordinator: owns one Olm `PigeonSession` per contact, drives async-first
-  establishment, contacts, conversations, and bridges to transports. It is split
+  coordinator: projects transactional core state, manages contacts and
+  conversations, and bridges opaque ciphertext to transports. It is split
   across `SessionManager.swift`, `+Messaging.swift`, `+Delivery.swift`,
   `+Reactions.swift`, and `+UI.swift` (UI passthroughs).
 - `Core/Contacts/` — `Contact` and `ContactCard` (the QR/scan payload: identity
@@ -103,12 +102,12 @@ App `Features/`: `Onboarding/` (`UnlockView`, `OnboardingNameView`), `Home/`
 `Contacts/` (`AddContactView` = scan/paste flow, `IdentityQRView` = show my QR,
 `QRScanner`, `QRCode`), `Components/`.
 
-`pigeon-core/src/`: `identity.rs` (`IdentityKeypair` + `IdentityBundle` binding),
-`account.rs` (`Account`: Ed25519 identity + Olm account + prekeys + persistence),
-`prekey.rs` (`PrekeyBundle`), `session.rs` (`Session`, `Initiation`),
-`wire.rs` (protobuf encode/decode for the `pigeon.wire.v1` schema), `error.rs`.
-The shared schema is `proto/pigeon/wire/v1/pigeon_wire.proto`. Behavioral tests
-in `pigeon-core/tests/pairwise.rs`.
+`pigeon-core/src/`: `identity/` owns root identity, MLS identity, and the private
+`identity/pairwise/` Olm implementation; `client/` owns commands, events, and
+transactions; `storage/` owns checkpoint and OpenMLS state boundaries; `wire/`
+owns bounded protobuf decoding; `error.rs` holds shared errors. The protobuf
+schemas are split by domain under `proto/pigeon/wire/v1/`. Behavioral tests live
+under `pigeon-core/tests/`.
 
 `Pigeon/PigeonFFI/Sources/PigeonFFI/`: `PigeonCore.swift` (the crypto facade),
 `PigeonMesh.swift` (the mesh facade over the generated bindings); `Generated/`

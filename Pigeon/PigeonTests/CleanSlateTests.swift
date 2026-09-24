@@ -70,24 +70,33 @@ final class CleanSlateTests: XCTestCase {
     let store = EncryptedStore(key: key, url: url)
     let crypto = store.companion(suffix: ".crypto")
     let transaction = store.companion(suffix: ".transaction")
+    let core = store.companion(suffix: CoreCheckpointStore.companionSuffix)
     defer {
       store.wipe()
       crypto.wipe()
       transaction.wipe()
+      core.wipe()
     }
     let persistence = SessionPersistence()
-    _ = try persistence.attach(store, identitySeed: Data(repeating: 4, count: 32))
+    _ = try persistence.attach(store)
     XCTAssertTrue(store.save(PersistedState(myName: "Before")))
     XCTAssertTrue(crypto.save(PersistedCrypto()))
     XCTAssertTrue(
       transaction.save(
         PersistedStateTransaction(bulk: PersistedState(), crypto: PersistedCrypto())))
+    XCTAssertTrue(
+      core.save(
+        PersistedCoreCheckpoint(
+          generation: 1,
+          bytes: Data("core".utf8),
+          sha256: Data(SHA256.hash(data: Data("core".utf8))))))
 
     XCTAssertTrue(persistence.wipeAll())
 
     XCTAssertNil(try store.load(PersistedState.self))
     XCTAssertNil(try crypto.load(PersistedCrypto.self))
     XCTAssertNil(try transaction.load(PersistedStateTransaction.self))
+    XCTAssertNil(try core.load(PersistedCoreCheckpoint.self))
   }
 
   func testPartialStoreFamilyWipeCanBeRetried() throws {
@@ -105,7 +114,7 @@ final class CleanSlateTests: XCTestCase {
       })
     let store = EncryptedStore(key: SymmetricKey(size: .bits256), url: url, io: io)
     let persistence = SessionPersistence()
-    _ = try persistence.attach(store, identitySeed: Data(repeating: 5, count: 32))
+    _ = try persistence.attach(store)
     XCTAssertTrue(store.save(PersistedState(myName: "Before")))
     XCTAssertTrue(store.companion(suffix: ".crypto").save(PersistedCrypto()))
 
@@ -151,12 +160,20 @@ final class CleanSlateTests: XCTestCase {
     let oldIdentity = manager.myID
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("pigeon-clean-slate-failure-\(UUID().uuidString).store")
+    var failRemoval = false
     let io = EncryptedStoreIO(
       write: { try $0.write(to: $1, options: $2) },
-      remove: { _ in throw CocoaError(.fileWriteNoPermission) })
+      remove: { target in
+        guard failRemoval else {
+          try FileManager.default.removeItem(at: target)
+          return
+        }
+        throw CocoaError(.fileWriteNoPermission)
+      })
     let store = EncryptedStore(key: SymmetricKey(size: .bits256), url: url, io: io)
     try manager.attachStore(store)
     manager.setMyName("Must trigger deletion")
+    failRemoval = true
 
     do {
       try await manager.prepareCleanSlate(

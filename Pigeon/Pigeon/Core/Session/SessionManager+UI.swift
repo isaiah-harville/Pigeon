@@ -7,6 +7,9 @@ import Foundation
 import PigeonFFI
 
 extension SessionManager {
+  var myID: Data { identity.publicKey.rawRepresentation }
+  var banner: InAppBanner? { presenter.banner }
+  var isAppActive: Bool { presenter.isAppActive }
 
   func setAppActive(_ active: Bool) { presenter.setAppActive(active) }
   func dismissBanner() { presenter.dismissBanner() }
@@ -21,7 +24,8 @@ extension SessionManager {
     prekeyBundle: PigeonPrekeyBundle?, verifiedInPerson: Bool
   ) -> Bool {
     addContact(
-      bundle, name: name, relayURLs: relayURLs, prekeyBundle: prekeyBundle,
+      bundle, name: name, relayURLs: relayURLs,
+      prekeys: ContactPrekeyBundles(chat: prekeyBundle, control: prekeyBundle),
       admission: verifiedInPerson ? .verifiedInPerson : .unverified)
   }
 
@@ -197,23 +201,22 @@ extension SessionManager {
 
   /// Our shareable card (identity bundle + display name + the relays we can be
   /// reached at) for the QR, so scanners learn where to deposit for us. The
-  /// identity bundle and signed prekey come from the Olm `account`, which owns
-  /// the Curve25519 identity key the binding signs; `nil` before unlock (the
-  /// account isn't built yet, and the QR is only shown unlocked anyway).
+  /// identity bundle and signed prekey come from the transactional Rust core,
+  /// so the app never needs direct access to pairwise account state.
   var myCard: ContactCard? {
-    guard let account,
-      let bundle = try? PigeonIdentityBundle(decoding: account.identityBundle()),
-      let prekeyBundle = try? PigeonPrekeyBundle(decoding: account.signedPrekeyBundle())
+    guard let corePrekeyBytes = try? coreClient?.stateSnapshot().pairwisePrekeyBundle,
+      let prekeyBundle = try? PigeonPrekeyBundle(decoding: corePrekeyBytes)
     else { return nil }
     let relayURLs = self.relayURLs
     let payload = ContactCard.relayPayload(relayURLs)
     let signature = (try? identity.sign(payload)) ?? Data()
     return ContactCard(
       name: myName,
-      bundle: bundle,
+      bundle: prekeyBundle.identityBundle,
       relayURLs: relayURLs,
       relaySignature: signature,
-      prekeyBundle: prekeyBundle)  // enables async first contact
+      prekeyBundle: prekeyBundle,
+      pairwiseControlPrekeyBundle: prekeyBundle)
   }
 
   /// Whether `contact` was verified in person (QR scanned face to face) rather
@@ -277,11 +280,7 @@ extension SessionManager {
     for messageID in conversationStore.reviveExpired(contactID: contact.id) {
       armDeliveryDeadline(messageID: messageID, contactID: contact.id)
     }
-    if establishedContactIDs.contains(contact.id) {
-      sendPending(to: contact)
-    } else {
-      ensureEstablishing(contactID: contact.id)
-    }
+    if canUseCorePairwise(with: contact) { sendPending(to: contact) }
     note(.manualRetry)
     persist()
   }
@@ -311,6 +310,11 @@ extension SessionManager {
     guard let index = contacts.firstIndex(where: { $0.id == contact.id }),
       contacts[index].requestState == .incoming
     else { return }
+    do {
+      try setCorePairwiseRelationship(.contact, for: contact.id)
+    } catch {
+      return
+    }
     contacts[index].requestState = .none
     activeConversationIDs.insert(contact.id)
     var accepted = ChatMessage(
@@ -338,13 +342,12 @@ extension SessionManager {
     if !blockedContactIDs.contains(contact.id) {
       blockedContacts.append(BlockedContact(id: contact.id, displayName: contact.displayName))
     }
+    removeCorePairwiseContact(contact.id)
     conversationStore.clear(contactID: contact.id)
     activeConversationIDs.remove(contact.id)
     ephemeralContactIDs.remove(contact.id)
     bluetoothChatIDs.remove(contact.id)
     contacts.removeAll { $0.id == contact.id }
-    resetSession(for: contact.id)
-    rehandshakeGate.clear(contact.id)
     persist()
     refreshRelay()
   }
@@ -383,8 +386,8 @@ extension SessionManager {
 
   /// Deletes the conversation with `contact`: clears its message history (memory +
   /// disk mirror) and removes it from the home list. The contact stays in the
-  /// book and its Olm session is untouched, so re-opening the chat continues
-  /// without a re-handshake or re-scan. Per-chat transport/ephemeral preferences
+  /// book and its core-owned pairwise relationship is untouched. Per-chat
+  /// transport/ephemeral preferences
   /// belong to the contact's session, so they are deliberately left intact.
   func deleteConversation(with contact: Contact) {
     conversationStore.clear(contactID: contact.id)
@@ -392,18 +395,13 @@ extension SessionManager {
     persist()
   }
 
-  /// Fully forgets a contact: clears its conversation, drops it from the book, and
-  /// resets its Olm session. The compact replay tombstone remains so removing
-  /// and re-adding the same identity cannot make a recorded initiation fresh.
-  /// Reaching this contact again requires re-scanning their QR (the deliberate,
-  /// documented reset path). The opposite of `deleteConversation`, which keeps
-  /// the contact.
+  /// Fully forgets a contact and its core-owned pairwise relationship. Reaching
+  /// this contact again requires re-scanning their QR.
   func removeContact(_ contact: Contact) {
+    removeCorePairwiseContact(contact.id)
     conversationStore.clear(contactID: contact.id)
     activeConversationIDs.remove(contact.id)
     contacts.removeAll { $0.id == contact.id }
-    resetSession(for: contact.id)
-    rehandshakeGate.clear(contact.id)  // don't keep a cooldown for a forgotten contact
     persist()
     refreshRelay()
   }

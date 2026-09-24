@@ -1,0 +1,135 @@
+syntax = "proto3";
+
+package pigeon.wire.v1;
+
+import "pigeon/wire/v1/identity.proto";
+
+message OlmMessage {
+  uint32 message_type = 1;
+  bytes ciphertext = 2;
+}
+
+message Initiation {
+  IdentityBundle identity = 1;
+  OlmMessage message = 2;
+}
+
+message PairwiseEnvelope {
+  uint32 version = 1;
+  bytes sender_identity = 2;
+  bytes recipient_identity = 3;
+  // Present only on the first message of a one-sided contact request. The core
+  // verifies it before admitting the unknown sender.
+  bytes sender_contact_card = 4;
+  oneof body {
+    bytes initiation = 10;
+    bytes message = 11;
+  }
+}
+
+message PairwisePayload {
+  uint32 version = 1;
+  bytes sender_identity = 2;
+  bytes recipient_identity = 3;
+  reserved 4, 5;
+  oneof body {
+    PairwiseGroupControl group_control = 10;
+    DirectApplication direct_application = 11;
+  }
+}
+
+message PairwiseGroupControl {
+  uint32 content_kind = 1;
+  bytes payload = 2;
+}
+
+message DirectMessage {
+  string text = 1;
+  string reply_snippet = 2;
+  int64 sender_timestamp_ms = 3;
+}
+
+message DirectApplication {
+  string application_id = 1;
+  oneof body {
+    DirectMessage message = 10;
+    DirectAcknowledgement acknowledgement = 11;
+    DirectReaction reaction = 12;
+    DirectEphemeralState ephemeral_state = 13;
+    DirectTransportState transport_state = 14;
+    DirectScreenshotNotice screenshot_notice = 15;
+    DirectContactAcceptance contact_acceptance = 16;
+    DirectRelayRecommendation relay_recommendation = 17;
+  }
+}
+
+message DirectAcknowledgement {
+  string message_id = 1;
+}
+
+message DirectReaction {
+  string message_id = 1;
+  optional string emoji = 2;
+}
+
+message DirectEphemeralState {
+  bool enabled = 1;
+}
+
+enum DirectTransportMode {
+  DIRECT_TRANSPORT_MODE_UNSPECIFIED = 0;
+  DIRECT_TRANSPORT_MODE_RELAY = 1;
+  DIRECT_TRANSPORT_MODE_LOCAL = 2;
+}
+
+message DirectTransportState {
+  DirectTransportMode mode = 1;
+}
+
+message DirectScreenshotNotice {}
+
+message DirectContactAcceptance {}
+
+message DirectRelayRecommendation {
+  repeated string relay_urls = 1;
+}
+
+message X3DHPrekeyBundle {
+  IdentityBundle identity = 1;
+  uint32 signed_prekey_id = 2;
+  bytes signed_prekey = 3;
+  bytes signed_prekey_signature = 4;
+  optional uint32 one_time_prekey_id = 5;
+  bytes one_time_prekey = 6;
+  bytes one_time_prekey_signature = 7;
+}
+
+message X3DHInitiation {
+  IdentityBundle initiator_identity = 1;
+  bytes ephemeral_key = 2;
+  uint32 signed_prekey_id = 3;
+  optional uint32 one_time_prekey_id = 4;
+}
+
+message RatchetHeader {
+  bytes dh_public = 1;
+  uint32 previous_chain_length = 2;
+  uint32 message_number = 3;
+}
+
+message RatchetMessage {
+  RatchetHeader header = 1;
+  bytes ciphertext = 2;
+}
+
+message AppMessagePayload {
+  string id = 1;
+  string text = 2;
+  string reply_snippet = 3;
+  double sent_at_unix = 4;
+}
+
+message ReactionPayload {
+  string message_id = 1;
+  string emoji = 2;
+}

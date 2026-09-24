@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="980" viewBox="0 0 1200 980" role="img" aria-labelledby="title desc">
+  <title id="title">Pigeon identity and trust protocol</title>
+  <desc id="desc">A sequence diagram. Alice and Bob create private identity and Olm state, exchange signed public contact cards in both directions, verify each identity-to-Olm binding, and compare a safety number before marking the contact verified.</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#071426"/><stop offset="1" stop-color="#102b4f"/></linearGradient>
+    <marker id="publicArrow" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto"><path d="M0 0 11 5.5 0 11z" fill="#57b8ff"/></marker>
+    <style>.kicker{font-family:system-ui,sans-serif;font-size:15px;font-weight:700;letter-spacing:2px;fill:#79c8ff}.heading{font-family:system-ui,sans-serif;font-size:31px;font-weight:750;fill:#f8fbff}.sub{font-family:system-ui,sans-serif;font-size:16px;fill:#b9c9dc}.actor{font-family:system-ui,sans-serif;font-size:22px;font-weight:750;fill:#fff}.label{font-family:system-ui,sans-serif;font-size:16px;font-weight:650;fill:#eef6ff}.body{font-family:system-ui,sans-serif;font-size:15px;fill:#c4d2e2}.tiny{font-family:system-ui,sans-serif;font-size:13px;fill:#9fb2c9}.actorBox{fill:#112942;stroke:#57b8ff;stroke-width:2}.private{fill:#351b2c;stroke:#ff6b7a;stroke-width:2}.public{fill:#0e3156;stroke:#57b8ff;stroke-width:2}.verify{fill:#12372e;stroke:#54d8a2;stroke-width:2}.note{fill:#17283c;stroke:#6f849d;stroke-width:1.5}.life{stroke:#57708c;stroke-width:2;stroke-dasharray:6 8}.publine{stroke:#57b8ff;stroke-width:3;fill:none;marker-end:url(#publicArrow)}</style>
+  </defs>
+  <rect width="1200" height="980" rx="28" fill="url(#bg)"/>
+  <text class="kicker" x="48" y="47">PROTOCOL SEQUENCE · IDENTITY BOOTSTRAP</text>
+  <text class="heading" x="48" y="86">Contact exchange binds a human to cryptographic keys.</text>
+  <text class="sub" x="48" y="116">Only signed public material crosses the channel. Red state remains on the originating device.</text>
+  <rect class="actorBox" x="100" y="157" width="280" height="66" rx="16"/><text class="actor" x="240" y="198" text-anchor="middle">Alice · device A</text>
+  <rect class="actorBox" x="820" y="157" width="280" height="66" rx="16"/><text class="actor" x="960" y="198" text-anchor="middle">Bob · device B</text>
+  <rect class="private" x="92" y="244" width="296" height="103" rx="15"/>
+  <text class="label" x="240" y="275" text-anchor="middle">PRIVATE STATE · ON DEVICE</text><text class="body" x="240" y="303" text-anchor="middle">Ed25519 signing key</text><text class="body" x="240" y="329" text-anchor="middle">Olm Curve25519 account + prekeys</text>
+  <rect class="private" x="812" y="244" width="296" height="103" rx="15"/>
+  <text class="label" x="960" y="275" text-anchor="middle">PRIVATE STATE · ON DEVICE</text><text class="body" x="960" y="303" text-anchor="middle">Ed25519 signing key</text><text class="body" x="960" y="329" text-anchor="middle">Olm Curve25519 account + prekeys</text>
+  <line class="life" x1="240" y1="347" x2="240" y2="878"/><line class="life" x1="960" y1="347" x2="960" y2="878"/>
+  <rect class="note" x="82" y="374" width="316" height="72" rx="14"/><text class="label" x="240" y="403" text-anchor="middle">1 · Generate locally</text><text class="body" x="240" y="430" text-anchor="middle">Sign Olm identity + prekey bundle</text>
+  <rect class="note" x="802" y="374" width="316" height="72" rx="14"/><text class="label" x="960" y="403" text-anchor="middle">1 · Generate locally</text><text class="body" x="960" y="430" text-anchor="middle">Sign Olm identity + prekey bundle</text>
+  <path class="publine" d="M240 503 H948"/><text class="label" x="600" y="486" text-anchor="middle">2 · QR / link: Alice ContactCard</text><text class="tiny" x="600" y="523" text-anchor="middle">public Ed25519 key · public Olm key · signed prekeys · display name · relay URLs</text>
+  <path class="publine" d="M960 592 H252"/><text class="label" x="600" y="575" text-anchor="middle">3 · QR back / link: Bob ContactCard</text><text class="tiny" x="600" y="612" text-anchor="middle">same deterministic, signature-bound public structure</text>
+  <rect class="public" x="78" y="648" width="324" height="82" rx="14"/><text class="label" x="240" y="679" text-anchor="middle">4 · Verify Bob’s signature</text><text class="body" x="240" y="708" text-anchor="middle">Ed25519 identity binds Olm key</text>
+  <rect class="public" x="798" y="648" width="324" height="82" rx="14"/><text class="label" x="960" y="679" text-anchor="middle">4 · Verify Alice’s signature</text><text class="body" x="960" y="708" text-anchor="middle">Ed25519 identity binds Olm key</text>
+  <rect class="verify" x="247" y="762" width="706" height="86" rx="18"/><text class="label" x="600" y="795" text-anchor="middle">5 · Compare the same 60-digit safety number</text><text class="body" x="600" y="824" text-anchor="middle">Derived from both public identity keys in canonical order; substitution changes the result.</text>
+  <rect class="verify" x="392" y="881" width="416" height="58" rx="16"/><text class="label" x="600" y="916" text-anchor="middle">VERIFIED CONTACT · persist trust deliberately</text>
+  <text class="tiny" x="600" y="963" text-anchor="middle">Red = private state · Blue = public material · Green = authenticated trust decision</text>
+</svg>

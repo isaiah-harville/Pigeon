@@ -3,21 +3,26 @@
 //  PigeonFFI
 //
 //  A thin ergonomic layer over the generated UniFFI bindings (Generated/). The
-//  generated types are already usable; these aliases just give the app
-//  Pigeon-flavoured names and keep the `Ffi`-prefixed binding detail out of app
-//  code. Anything richer (typed bundle wrappers, persistence helpers) is added
-//  as the app actually needs it during the cutover.
+//  generated types are already usable; this facade gives the app typed,
+//  transport-neutral commands, events, snapshots, and verified public bundles.
+//  Ratchet and MLS objects are intentionally not exposed to Swift.
 //
 
 import Foundation
 import SwiftProtobuf
 
-/// One device's cryptographic account: its long-term Ed25519 identity plus its
-/// Olm account. See `FfiAccount` for the full API.
-public typealias PigeonAccount = FfiAccount
+/// The transactional application core. It accepts and returns versioned wire
+/// messages while keeping identity, pairwise, and MLS state inside Rust.
+public typealias PigeonCoreClient = FfiClient
 
-/// One end of a pairwise end-to-end-encrypted session (Olm Double Ratchet).
-public typealias PigeonSession = FfiSession
+extension FfiClient {
+  func execute(_ command: Pigeon_Wire_V1_ClientCommand) throws
+    -> Pigeon_Wire_V1_ClientOutput
+  {
+    let encoded = try command.serializedData()
+    return try Pigeon_Wire_V1_ClientOutput(serializedBytes: execute(command: encoded))
+  }
+}
 
 /// A device's public identity: its Ed25519 identity key, its Olm Curve25519
 /// identity key, and the binding signature — the QR payload. Decoding verifies
@@ -50,6 +55,7 @@ public struct PigeonContactCardPayload: Equatable, Sendable {
   public var relayURLs: [String]
   public var relaySignature: Data
   public var prekeyBundle: Data
+  public var pairwiseControlPrekeyBundle: Data
 
   public init(
     version: UInt32,
@@ -57,7 +63,8 @@ public struct PigeonContactCardPayload: Equatable, Sendable {
     name: String,
     relayURLs: [String],
     relaySignature: Data,
-    prekeyBundle: Data
+    prekeyBundle: Data,
+    pairwiseControlPrekeyBundle: Data = Data()
   ) {
     self.version = version
     self.identityBundle = identityBundle
@@ -65,6 +72,7 @@ public struct PigeonContactCardPayload: Equatable, Sendable {
     self.relayURLs = relayURLs
     self.relaySignature = relaySignature
     self.prekeyBundle = prekeyBundle
+    self.pairwiseControlPrekeyBundle = pairwiseControlPrekeyBundle
   }
 }
 
@@ -80,6 +88,7 @@ public func encodeContactCardPayload(_ payload: PigeonContactCardPayload) throws
   card.relayUrls = payload.relayURLs
   card.relaySignature = payload.relaySignature
   card.prekeyBundle = payload.prekeyBundle
+  card.pairwiseControlPrekeyBundle = payload.pairwiseControlPrekeyBundle
   return try card.serializedData()
 }
 
@@ -94,7 +103,8 @@ public func decodeContactCardPayload(_ data: Data) throws -> PigeonContactCardPa
     name: card.name,
     relayURLs: card.relayUrls,
     relaySignature: card.relaySignature,
-    prekeyBundle: card.prekeyBundle
+    prekeyBundle: card.prekeyBundle,
+    pairwiseControlPrekeyBundle: card.pairwiseControlPrekeyBundle
   )
 }
 
@@ -104,6 +114,8 @@ public func decodeContactCardPayload(_ data: Data) throws -> PigeonContactCardPa
 public struct PigeonPrekeyBundle: Equatable, Sendable {
   /// The full encoding, as transported in the QR card and persisted.
   public let encoded: Data
+  /// The verified identity bundle embedded in this prekey bundle.
+  public let identityBundle: PigeonIdentityBundle
   /// Ed25519 identity public key (32 bytes) the bundle is bound to.
   public let identityKey: Data
   /// Olm Curve25519 identity public key (32 bytes).
@@ -118,7 +130,10 @@ public struct PigeonPrekeyBundle: Equatable, Sendable {
   /// Throws if malformed or any signature does not verify.
   public init(decoding data: Data) throws {
     let view = try parsePrekeyBundle(encoded: data)
+    let proto = try Pigeon_Wire_V1_PrekeyBundle(serializedBytes: data)
+    guard proto.hasIdentity else { throw PigeonWireError.missingIdentity }
     self.encoded = Data(data)
+    self.identityBundle = try PigeonIdentityBundle(decoding: proto.identity.serializedData())
     self.identityKey = view.identityKey
     self.curveIdentityKey = view.curveIdentityKey
     self.prekey = view.prekey

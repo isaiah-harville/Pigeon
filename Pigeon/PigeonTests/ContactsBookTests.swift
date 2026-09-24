@@ -34,11 +34,8 @@ final class ContactsBookTests: XCTestCase {
 
   private func card(_ manager: SessionManager) throws -> (PigeonIdentityBundle, PigeonPrekeyBundle)
   {
-    let account = try XCTUnwrap(manager.account)
-    return (
-      try PigeonIdentityBundle(decoding: account.identityBundle()),
-      try PigeonPrekeyBundle(decoding: account.signedPrekeyBundle())
-    )
+    let card = try XCTUnwrap(manager.myCard)
+    return (card.bundle, try XCTUnwrap(card.prekeyBundle))
   }
 
   private func newSeed() -> Data { Curve25519.Signing.PrivateKey().rawRepresentation }
@@ -52,22 +49,18 @@ final class ContactsBookTests: XCTestCase {
     manager.contacts.first { $0.id == id }!
   }
 
-  /// Stands up an established session between two managers, ordering the adds by
-  /// the deterministic initiator rule so neither initiation is dropped on arrival.
+  /// Registers both contacts with their core-owned pairwise state.
   private func establish(_ a: SessionManager, _ b: SessionManager) throws {
-    let aIsInitiator = a.isInitiator(toward: b.myID)
-    let initiator = aIsInitiator ? a : b
-    let responder = aIsInitiator ? b : a
-    let (initiatorBundle, initiatorPrekey) = try card(initiator)
-    let (responderBundle, responderPrekey) = try card(responder)
-    responder.addContact(
-      initiatorBundle, name: "Init", relayURLs: [], prekeyBundle: initiatorPrekey,
+    let (aBundle, aPrekey) = try card(a)
+    let (bBundle, bPrekey) = try card(b)
+    b.addContact(
+      aBundle, name: "A", relayURLs: [], prekeyBundle: aPrekey,
       verifiedInPerson: true)
-    initiator.addContact(
-      responderBundle, name: "Resp", relayURLs: [], prekeyBundle: responderPrekey,
+    a.addContact(
+      bBundle, name: "B", relayURLs: [], prekeyBundle: bPrekey,
       verifiedInPerson: true)
-    XCTAssertTrue(a.establishedContactIDs.contains(b.myID))
-    XCTAssertTrue(b.establishedContactIDs.contains(a.myID))
+    XCTAssertTrue(a.canUseCorePairwise(with: contact(a, b.myID)))
+    XCTAssertTrue(b.canUseCorePairwise(with: contact(b, a.myID)))
   }
 
   // MARK: - Tests
@@ -96,8 +89,7 @@ final class ContactsBookTests: XCTestCase {
     XCTAssertTrue(b.contacts.contains { $0.id == a.myID }, "contact stays in the book")
     XCTAssertFalse(b.chatContacts.contains { $0.id == a.myID }, "chat leaves the home list")
     XCTAssertTrue(b.messages(with: contact(b, a.myID)).isEmpty, "history is cleared")
-    XCTAssertNotNil(b.sessions[a.myID], "Olm session is untouched")
-    XCTAssertTrue(b.establishedContactIDs.contains(a.myID), "still established")
+    XCTAssertTrue(b.canUseCorePairwise(with: contact(b, a.myID)))
 
     // Re-open from the book and send: no re-handshake, A receives it.
     b.startConversation(with: contact(b, a.myID))
@@ -148,8 +140,8 @@ final class ContactsBookTests: XCTestCase {
 
     XCTAssertFalse(b.contacts.contains { $0.id == aID }, "contact is gone from the book")
     XCTAssertFalse(b.chatContacts.contains { $0.id == aID })
-    XCTAssertNil(b.sessions[aID], "session is reset")
-    XCTAssertFalse(b.establishedContactIDs.contains(aID))
+    XCTAssertFalse(
+      try XCTUnwrap(b.coreClient).stateSnapshot().pairwiseContacts.contains { $0.identity == aID })
   }
 
   /// Two people can exchange contact links remotely, establish over the same
@@ -171,25 +163,15 @@ final class ContactsBookTests: XCTestCase {
     let bCard = try XCTUnwrap(
       b.myCard?.shareURL.flatMap { ContactCard(scanned: $0.absoluteString) })
 
-    let initiator = a.isInitiator(toward: b.myID) ? a : b
-    if initiator === a {
-      b.addContact(
-        aCard.bundle, name: aCard.name, relayURLs: aCard.relayURLs,
-        prekeyBundle: aCard.prekeyBundle, verifiedInPerson: false)
-      a.addContact(
-        bCard.bundle, name: bCard.name, relayURLs: bCard.relayURLs,
-        prekeyBundle: bCard.prekeyBundle, verifiedInPerson: false)
-    } else {
-      a.addContact(
-        bCard.bundle, name: bCard.name, relayURLs: bCard.relayURLs,
-        prekeyBundle: bCard.prekeyBundle, verifiedInPerson: false)
-      b.addContact(
-        aCard.bundle, name: aCard.name, relayURLs: aCard.relayURLs,
-        prekeyBundle: aCard.prekeyBundle, verifiedInPerson: false)
-    }
+    b.addContact(
+      aCard.bundle, name: aCard.name, relayURLs: aCard.relayURLs,
+      prekeyBundle: aCard.prekeyBundle, verifiedInPerson: false)
+    a.addContact(
+      bCard.bundle, name: bCard.name, relayURLs: bCard.relayURLs,
+      prekeyBundle: bCard.prekeyBundle, verifiedInPerson: false)
 
-    XCTAssertTrue(a.establishedContactIDs.contains(b.myID))
-    XCTAssertTrue(b.establishedContactIDs.contains(a.myID))
+    XCTAssertTrue(a.canUseCorePairwise(with: contact(a, b.myID)))
+    XCTAssertTrue(b.canUseCorePairwise(with: contact(b, a.myID)))
     XCTAssertFalse(contact(a, b.myID).verifiedInPerson)
     XCTAssertFalse(contact(b, a.myID).verifiedInPerson)
 
@@ -199,7 +181,7 @@ final class ContactsBookTests: XCTestCase {
 
     let relaunched = try launch(
       seed: seedA, key: keyA, storeFile: "cbookLinkA.store", bus: bus)
-    XCTAssertNotNil(relaunched.sessions[b.myID])
+    XCTAssertTrue(relaunched.canUseCorePairwise(with: contact(relaunched, b.myID)))
     XCTAssertFalse(contact(relaunched, b.myID).verifiedInPerson)
   }
 }

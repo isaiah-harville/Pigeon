@@ -1,4 +1,5 @@
 import Foundation
+import PigeonFFI
 
 extension SessionManager {
   static var maximumIncomingRequests: Int { 50 }
@@ -12,6 +13,31 @@ extension SessionManager {
 
   var stagedIncomingRequestCount: Int {
     contacts.count { $0.requestState == .incoming && !$0.introductionReceived }
+  }
+
+  /// Converts a freshly scanned, one-sided contact into the existing
+  /// one-introduction request flow. In-person verification is directional: the
+  /// scanner has authenticated this contact, but the recipient has not yet
+  /// authenticated the scanner.
+  @discardableResult
+  func beginMessageRequest(to contactID: Data) -> Bool {
+    guard let index = contacts.firstIndex(where: { $0.id == contactID }),
+      contacts[index].requestState == .none,
+      !contacts[index].introductionSent,
+      !contacts[index].introductionReceived,
+      conversationStore.messages(for: contactID).isEmpty
+    else { return false }
+    do {
+      try setCorePairwiseRelationship(.outgoingRequest, for: contactID)
+    } catch {
+      return false
+    }
+    contacts[index].requestState = .outgoing
+    guard persist() else {
+      contacts[index].requestState = .none
+      return false
+    }
+    return true
   }
 
   @discardableResult
@@ -43,12 +69,11 @@ extension SessionManager {
   private func removeIncomingRequests(ids: [Data]) {
     let idSet = Set(ids)
     for id in ids {
+      removeCorePairwiseContact(id)
       conversationStore.clear(contactID: id)
       activeConversationIDs.remove(id)
       ephemeralContactIDs.remove(id)
       bluetoothChatIDs.remove(id)
-      resetSession(for: id)
-      rehandshakeGate.clear(id)
     }
     contacts.removeAll { idSet.contains($0.id) }
   }
@@ -68,10 +93,8 @@ extension SessionManager {
     event.transientOutbox = isEphemeral(current)
     guard record(event, for: contact.id) else { return }
     armDeliveryDeadline(messageID: event.id, contactID: contact.id)
-    if establishedContactIDs.contains(contact.id) {
+    if canUseCorePairwise(with: contact) {
       transmit(event, to: current)
-    } else {
-      ensureEstablishing(contactID: contact.id)
     }
   }
 }

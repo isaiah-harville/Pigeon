@@ -67,7 +67,7 @@ extension SessionManager {
     return message
   }
 
-  private static func clampSnippet(_ snippet: String) -> String {
+  static func clampSnippet(_ snippet: String) -> String {
     let oneLine = snippet.replacingOccurrences(of: "\n", with: " ")
     return oneLine.count > maxReplySnippet ? String(oneLine.prefix(maxReplySnippet)) : oneLine
   }

@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">Locked-device message delivery</title>
+  <desc id="desc">If Pigeon was already running when the screen locked, it persists normally using the in-memory vault key. If iOS cold-launches Pigeon while locked, it buffers ciphertext in memory, shows a content-free notification, and does not acknowledge the relay until unlock permits durable processing.</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#071426"/><stop offset="1" stop-color="#102b4f"/></linearGradient>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0 0 12 6 0 12z" fill="#b889ff"/></marker>
+    <style>.eyebrow{font-family:system-ui,sans-serif;font-size:15px;font-weight:700;letter-spacing:2px;fill:#79c8ff}.heading{font-family:system-ui,sans-serif;font-size:31px;font-weight:750;fill:#f8fbff}.sub{font-family:system-ui,sans-serif;font-size:17px;fill:#b9c9dc}.title{font-family:system-ui,sans-serif;font-size:22px;font-weight:750;fill:#fff}.label{font-family:system-ui,sans-serif;font-size:16px;font-weight:650;fill:#eef6ff}.small{font-family:system-ui,sans-serif;font-size:15px;fill:#b9c9dc}.tiny{font-family:system-ui,sans-serif;font-size:13px;fill:#9fb2c9}.lane{fill:#0c1b31;stroke:#365d84;stroke-width:2}.cipher{fill:#2c1d4a;stroke:#b889ff;stroke-width:2}.plain{fill:#12372e;stroke:#54d8a2;stroke-width:2}.private{fill:#351b2c;stroke:#ff6b7a;stroke-width:2}.warn{fill:#3b301a;stroke:#f5bf52;stroke-width:2}.route{stroke:#b889ff;stroke-width:4;fill:none;marker-end:url(#arrow)}</style>
+  </defs>
+  <rect width="1200" height="760" rx="28" fill="url(#bg)"/>
+  <text class="eyebrow" x="52" y="52">LOCKED DELIVERY · TWO DISTINCT STATES</text>
+  <text class="heading" x="52" y="91">Never trade message durability for a lock-screen preview.</text>
+  <text class="sub" x="52" y="122">The relay copy is acknowledged only after the receiving state is safely handled.</text>
+
+  <rect class="lane" x="52" y="168" width="526" height="500" rx="28"/>
+  <text class="eyebrow" x="86" y="207">CASE A</text><text class="title" x="86" y="242">App running when screen locks</text>
+  <text class="small" x="86" y="271">Vault DEK is already in memory.</text>
+  <rect class="cipher" x="86" y="309" width="458" height="67" rx="16"/>
+  <text class="label" x="315" y="350" text-anchor="middle">1 · Receive authenticated ciphertext</text>
+  <path class="route" d="M315 376 V410"/>
+  <rect class="private" x="86" y="410" width="458" height="93" rx="16"/>
+  <text class="label" x="315" y="442" text-anchor="middle">2 · Decrypt, ratchet, record</text>
+  <text class="small" x="315" y="476" text-anchor="middle">state remains available in the running process</text>
+  <path class="route" d="M315 503 V537"/>
+  <rect class="plain" x="86" y="537" width="458" height="91" rx="16"/>
+  <text class="label" x="315" y="570" text-anchor="middle">3 · Persist atomically, then ACK</text>
+  <text class="small" x="315" y="603" text-anchor="middle">file protection permits writes after first unlock</text>
+
+  <rect class="lane" x="622" y="168" width="526" height="500" rx="28"/>
+  <text class="eyebrow" x="656" y="207">CASE B</text><text class="title" x="656" y="242">Cold background relaunch while locked</text>
+  <text class="small" x="656" y="271">Presence-gated vault DEK is unavailable.</text>
+  <rect class="cipher" x="656" y="309" width="458" height="67" rx="16"/>
+  <text class="label" x="885" y="350" text-anchor="middle">1 · Receive opaque ciphertext</text>
+  <path class="route" d="M885 376 V410"/>
+  <rect class="warn" x="656" y="410" width="458" height="93" rx="16"/>
+  <text class="label" x="885" y="442" text-anchor="middle">2 · Buffer in memory · DO NOT ACK</text>
+  <text class="small" x="885" y="476" text-anchor="middle">relay retains its durable copy for redelivery</text>
+  <path class="route" d="M885 503 V537"/>
+  <rect class="private" x="656" y="537" width="458" height="91" rx="16"/>
+  <text class="label" x="885" y="570" text-anchor="middle">3 · Show “New message” only</text>
+  <text class="small" x="885" y="603" text-anchor="middle">unlock, decrypt, persist, then ACK</text>
+
+  <rect class="warn" x="281" y="692" width="638" height="45" rx="14"/>
+  <text class="small" x="600" y="720" text-anchor="middle">No sender name, message text, or crypto secret appears in the notification.</text>
+</svg>
