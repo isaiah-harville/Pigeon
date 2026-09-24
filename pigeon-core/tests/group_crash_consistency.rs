@@ -4,7 +4,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use pigeon_core::{
     ClientCommand, Error, GroupCiphertext, GroupId, GroupJoinMaterial, GroupJoinRequest,
     IdentityError, IdentityPurpose, PigeonClient, SealedCheckpoint, SecureIdentity, StateStore,
-    StorageError, TransactionalOpenMlsStorage, wire_proto,
+    StorageError, TransactionalOpenMlsStorage, coordinator_receipt_transcript, wire_proto,
 };
 use prost::Message;
 use sha2::{Digest, Sha256};
@@ -124,6 +124,36 @@ fn issue_join_material(
     .unwrap()
 }
 
+fn coordinator_candidate(
+    submission: &wire_proto::GroupCoordinatorSubmission,
+    sequence: u64,
+    prior_receipt_hash: [u8; 32],
+    coordination_id: [u8; 32],
+    signer: &SigningKey,
+) -> Vec<u8> {
+    let entry_hash: [u8; 32] = Sha256::digest(&submission.candidate).into();
+    let transcript = coordinator_receipt_transcript(
+        coordination_id,
+        sequence,
+        prior_receipt_hash,
+        submission.claimed_base_epoch,
+        entry_hash,
+    );
+    wire_proto::CoordinatorCandidate {
+        receipt: Some(wire_proto::CoordinatorReceipt {
+            version: 1,
+            coordination_id: coordination_id.to_vec(),
+            sequence,
+            prior_receipt_hash: prior_receipt_hash.to_vec(),
+            claimed_base_epoch: submission.claimed_base_epoch,
+            entry_hash: entry_hash.to_vec(),
+            signature: signer.sign(&transcript).to_bytes().to_vec(),
+        }),
+        candidate: submission.candidate.clone(),
+    }
+    .encode_to_vec()
+}
+
 #[test]
 fn failed_send_checkpoint_releases_no_ciphertext_and_retry_is_durable() {
     let owner = TestIdentity::new(1);
@@ -211,6 +241,118 @@ fn failed_send_checkpoint_releases_no_ciphertext_and_retry_is_durable() {
 }
 
 #[test]
+fn failed_recovery_checkpoint_releases_no_coordinator_work_and_retry_is_durable() {
+    let owner = TestIdentity::new(21);
+    let bob = TestIdentity::new(22);
+    let carol = TestIdentity::new(23);
+    let coordinator = TestIdentity::new(60);
+    let replacement_coordinator = TestIdentity::new(61);
+    let replacement_coordination_id = [92; 32];
+    let mut bob_storage = TransactionalOpenMlsStorage::new();
+    let mut carol_storage = TransactionalOpenMlsStorage::new();
+    let store = SwitchableStore::default();
+    let mut client = PigeonClient::new(store.clone(), owner).unwrap();
+    let pending = client
+        .execute(
+            ClientCommand::create_group(
+                "create-recovery",
+                "Recovery Birds",
+                vec![bob.root_public(), carol.root_public()],
+                "https://relay.example",
+                coordinator.root_public(),
+                false,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let bob_material = issue_join_material(&pending.outbound[0], &bob, &mut bob_storage);
+    let carol_material = issue_join_material(&pending.outbound[1], &carol, &mut carol_storage);
+    client
+        .execute(
+            ClientCommand::apply_group_join_material(
+                "recovery-bob-package",
+                "create-recovery:join:0",
+                bob_material.encode(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let created = client
+        .execute(
+            ClientCommand::apply_group_join_material(
+                "recovery-carol-package",
+                "create-recovery:join:1",
+                carol_material.encode(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let created_event =
+        wire_proto::AppEvent::decode(created.events[0].encode().as_slice()).unwrap();
+    let wire_proto::app_event::Body::GroupCreated(created_group) = created_event.body.unwrap()
+    else {
+        panic!("expected GroupCreated");
+    };
+    let group_id = GroupId::from_bytes(created_group.group_id.try_into().unwrap());
+    let submission_item = created
+        .outbound
+        .iter()
+        .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
+        .find(|item| item.kind == wire_proto::OutboundKind::GroupCoordinator as i32)
+        .unwrap();
+    let submission =
+        wire_proto::GroupCoordinatorSubmission::decode(submission_item.payload.as_slice()).unwrap();
+    let coordination_id = submission_item.destination.as_slice().try_into().unwrap();
+    let canonical =
+        coordinator_candidate(&submission, 1, [0; 32], coordination_id, &coordinator.root);
+    client
+        .execute(
+            ClientCommand::apply_group_coordinator_candidate("anchor-recovery", canonical).unwrap(),
+        )
+        .unwrap();
+    let generation_before_recovery = client.checkpoint_generation();
+    let command = ClientCommand::begin_group_recovery(
+        "recover-after-outage",
+        group_id,
+        "https://replacement-relay.example",
+        replacement_coordination_id,
+        replacement_coordinator.root_public(),
+    )
+    .unwrap();
+
+    store.set_fail_replace(true);
+    assert!(matches!(
+        client.execute(command.clone()),
+        Err(Error::Persistence(_))
+    ));
+    assert_eq!(client.checkpoint_generation(), generation_before_recovery);
+    assert_eq!(
+        store.load().unwrap().unwrap().generation,
+        generation_before_recovery
+    );
+
+    store.set_fail_replace(false);
+    let recovered = client.execute(command).unwrap();
+    assert_eq!(
+        recovered.checkpoint_generation,
+        generation_before_recovery + 1
+    );
+    assert!(recovered.events.is_empty());
+    assert_eq!(recovered.outbound.len(), 2);
+    let kinds: Vec<_> = recovered
+        .outbound
+        .iter()
+        .map(|item| {
+            wire_proto::OutboundItem::decode(item.encode().as_slice())
+                .unwrap()
+                .kind
+        })
+        .collect();
+    assert!(kinds.contains(&(wire_proto::OutboundKind::GroupRelayRegistration as i32)));
+    assert!(kinds.contains(&(wire_proto::OutboundKind::GroupCoordinator as i32)));
+}
+
+#[test]
 fn relay_and_mesh_copies_emit_one_received_event_and_one_acknowledgement() {
     let owner = TestIdentity::new(11);
     let bob = TestIdentity::new(12);
@@ -291,6 +433,7 @@ fn relay_and_mesh_copies_emit_one_received_event_and_one_acknowledgement() {
         pairwise_sessions: Vec::new(),
         consumed_pairwise_envelope_hashes: Vec::new(),
         deferred_events: Vec::new(),
+        pending_group_recoveries: Vec::new(),
     };
     let bytes = bob_checkpoint.encode_to_vec();
     let bob_store = SwitchableStore::with_checkpoint(SealedCheckpoint {

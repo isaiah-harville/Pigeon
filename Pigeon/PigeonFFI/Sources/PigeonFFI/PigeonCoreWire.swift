@@ -2,6 +2,7 @@ import Foundation
 import SwiftProtobuf
 
 public enum PigeonCoreWireError: Error, Equatable, Sendable {
+  case invalidCommandBody
   case missingEventBody
   case invalidOutboundKind(Int)
   case invalidPolicyChangeKind(Int)

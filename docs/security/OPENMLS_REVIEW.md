@@ -33,7 +33,7 @@ Pigeon release builds must not enable OpenMLS `content-debug`, `crypto-debug`,
   report no reachable unsuppressed security advisory in the selected OpenMLS,
   HPKE, signature, AEAD, or storage dependency graph.
 - The MLS create, Welcome/join, application-message, reload, secret-deletion,
-  and persistence-failure tests must pass.
+  recovery, capability-rotation, and persistence-failure tests must pass.
 - `pigeon-core` and `pigeon-ffi` must build for `aarch64-apple-ios`,
   `aarch64-apple-ios-sim`, and `aarch64-apple-darwin`.
 - OpenMLS storage mutations and deletions must participate in Pigeon's
@@ -70,8 +70,17 @@ The initial 0.9.0 integration was verified on 2026-08-25 with:
   `aarch64-apple-ios-sim`, and `aarch64-apple-darwin`; and
 - the full `cargo deny` advisory, license, ban, and source policy.
 
-This verifies dependency compatibility only. The stateful MLS integration and
-its persistence/recovery tests remain release gates.
+The stateful integration additionally covers authenticated policy changes,
+post-join history, post-removal secrecy, recovery without the owner online,
+stale and removed recovery signers, relay-capability replacement, and
+persistence failure before any recovery effect is released.
+
+On 2026-09-23, the debug boundary test that creates 3-, 32-, and 128-member
+groups completed its test body in 0.77 seconds on an Apple Silicon development
+host. The test process reported a 95,764,480-byte maximum resident set and a
+71,156,336-byte peak memory footprint. These numbers are a reproducible
+regression baseline for the maximum roster, not an iPhone release benchmark;
+physical-device profiling remains a separate release-validation step.
 
 Upstream references:
 

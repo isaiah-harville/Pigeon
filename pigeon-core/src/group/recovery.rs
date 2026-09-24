@@ -107,6 +107,10 @@ impl RecoveryProposal {
         self.base_epoch
     }
 
+    pub fn group_id(&self) -> [u8; 32] {
+        self.group_id
+    }
+
     pub fn replacement_relay_url(&self) -> &str {
         &self.replacement_relay_url
     }
@@ -138,6 +142,15 @@ impl RecoveryProposal {
         (self == &expected)
             .then_some(())
             .ok_or(RecoveryError::InvalidContext)
+    }
+
+    pub(crate) fn verify(
+        &self,
+        policy: &PigeonGroupPolicy,
+        epoch: u64,
+        receipt_head: [u8; 32],
+    ) -> Result<(), RecoveryError> {
+        self.verify_context(policy, epoch, receipt_head)
     }
 
     fn signing_transcript(&self) -> Vec<u8> {
@@ -214,6 +227,19 @@ impl RecoveryEndorsement {
 
     pub fn signer_identity(&self) -> [u8; 32] {
         self.signer_identity
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        self.to_proto().encode_to_vec()
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, RecoveryError> {
+        if bytes.len() > MAX_MLS_OBJECT_BYTES {
+            return Err(RecoveryError::Malformed);
+        }
+        let decoded =
+            proto::GroupRecoveryEndorsement::decode(bytes).map_err(|_| RecoveryError::Malformed)?;
+        Self::from_proto(decoded)
     }
 
     fn to_proto(&self) -> proto::GroupRecoveryEndorsement {

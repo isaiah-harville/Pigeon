@@ -29,6 +29,7 @@ fn mutation_candidate_rejects_empty_or_excessive_content_before_crypto() {
         version: 1,
         proposals: vec![vec![1]; MAX_PROPOSAL_CANDIDATES + 1],
         commit: vec![2],
+        recovery_certificate: Vec::new(),
     }
     .encode_to_vec();
     assert!(matches!(
@@ -43,6 +44,7 @@ fn mutation_candidate_rejects_unsupported_versions_and_empty_proposals() {
         version: 2,
         proposals: Vec::new(),
         commit: vec![1],
+        recovery_certificate: Vec::new(),
     }
     .encode_to_vec();
     assert!(matches!(
@@ -57,6 +59,7 @@ fn mutation_candidate_rejects_unsupported_versions_and_empty_proposals() {
         version: 1,
         proposals: vec![Vec::new()],
         commit: vec![1],
+        recovery_certificate: Vec::new(),
     }
     .encode_to_vec();
     assert!(matches!(

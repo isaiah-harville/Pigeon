@@ -9,8 +9,12 @@ struct GroupSettingsView: View {
   @State private var showRename = false
   @State private var proposedName = ""
   @State private var showAddMember = false
+  @State private var showRecovery = false
   @State private var confirmation: DestructiveAction?
   @State private var errorMessage: String?
+  @State private var proposedRelayURL = ""
+  @State private var recoveryInProgress = false
+  @State private var recoveryStatusMessage: String?
 
   private enum DestructiveAction: String, Identifiable {
     case leave
@@ -35,6 +39,19 @@ struct GroupSettingsView: View {
       TextField("Group name", text: $proposedName)
       Button("Cancel", role: .cancel) {}
       Button("Save") { apply(.nameChanged, stringValue: proposedName) }
+    }
+    .alert("Recover Group Relay", isPresented: $showRecovery) {
+      TextField("https://relay.example", text: $proposedRelayURL)
+        .textInputAutocapitalization(.never)
+        .keyboardType(.URL)
+      Button("Cancel", role: .cancel) {}
+      Button("Start Recovery") { startRecovery() }
+        .disabled(recoveryInProgress || replacementRelayURL == nil)
+    } message: {
+      Text(
+        "Admins will authenticate this replacement inside the existing MLS group. "
+          + "The relay changes only after the required admin quorum agrees."
+      )
     }
     .confirmationDialog(
       confirmation == .dissolve ? "Dissolve this group?" : "Leave this group?",
@@ -64,6 +81,7 @@ extension GroupSettingsView {
       Form {
         groupHeader(group)
         ownerControls(group)
+        recoveryControls(group)
         membersSection(group)
         securitySection
         destructiveSection(group)
@@ -71,6 +89,31 @@ extension GroupSettingsView {
       }
     } else {
       ContentUnavailableView("Group unavailable", systemImage: "person.3.sequence")
+    }
+  }
+
+  @ViewBuilder
+  private func recoveryControls(_ group: PigeonGroupState) -> some View {
+    if isAdmin(group), !group.dissolved {
+      Section("Relay recovery") {
+        Button {
+          proposedRelayURL = group.relayURL
+          showRecovery = true
+        } label: {
+          Label("Recover Group Relay", systemImage: "arrow.trianglehead.2.clockwise.rotate.90")
+        }
+        .disabled(recoveryInProgress)
+        if recoveryInProgress {
+          HStack {
+            ProgressView()
+            Text("Starting authenticated recovery…")
+          }
+        } else if let recoveryStatusMessage {
+          Text(recoveryStatusMessage)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+        }
+      }
     }
   }
 
@@ -223,6 +266,31 @@ extension GroupSettingsView {
 
   private var confirmationBinding: Binding<Bool> {
     Binding(get: { confirmation != nil }, set: { if !$0 { confirmation = nil } })
+  }
+
+  private var replacementRelayURL: URL? {
+    guard let url = URL(string: proposedRelayURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+      let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "wss",
+      url.host != nil
+    else { return nil }
+    return url
+  }
+
+  private func startRecovery() {
+    guard let group, let replacementRelayURL else { return }
+    recoveryInProgress = true
+    recoveryStatusMessage = nil
+    Task {
+      do {
+        try await session.recoverGroup(group, using: replacementRelayURL)
+        recoveryStatusMessage =
+          "Recovery proposed. Pigeon will switch relays after the required admin quorum agrees."
+      } catch {
+        errorMessage =
+          "Recovery was not staged. Verify the replacement relay and try again."
+      }
+      recoveryInProgress = false
+    }
   }
 
   private func apply(

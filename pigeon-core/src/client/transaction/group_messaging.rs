@@ -6,7 +6,7 @@ use super::checkpoint::{apply_delivery_acknowledgement, decode_message_id, encod
 
 use crate::Error;
 use crate::client::{AppEvent, ClientOutput, OutboundItem};
-use crate::group::{GroupApplication, GroupEngine, PigeonGroupPolicy};
+use crate::group::{GroupApplication, GroupEngine, PigeonGroupPolicy, RecoveryControlKind};
 use crate::identity::{IdentityPurpose, SecureIdentity};
 use crate::storage::{StateStore, TransactionalOpenMlsStorage};
 use crate::wire::{
@@ -62,7 +62,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         let policy = PigeonGroupPolicy::decode(&stored.policy)?;
         let mut mls_storage =
             TransactionalOpenMlsStorage::from_checkpoint(&candidate.openmls_checkpoint)?;
-        let mut engine = GroupEngine::restore(&mls_storage, policy, stored.epoch)?;
+        let mut engine = GroupEngine::restore(&mls_storage, policy.clone(), stored.epoch)?;
         let received = engine.decrypt_application(&mut mls_storage, &ciphertext)?;
         if candidate.processed_group_messages.len() >= MAX_PENDING_OUTBOUND_ENTRIES {
             candidate.processed_group_messages.remove(0);
@@ -163,6 +163,57 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                         )),
                     },
                 });
+            }
+            GroupApplication::RecoveryControl {
+                kind,
+                recipient,
+                payload,
+            } => {
+                let local_identity = self.identity.ensure_public_key(IdentityPurpose::Root)?;
+                candidate.openmls_checkpoint = mls_storage.export_checkpoint()?;
+                if recipient.is_some_and(|recipient| recipient != local_identity) {
+                    return Ok(());
+                }
+                let control = proto::ApplyInbound {
+                    kind: proto::OutboundKind::Unspecified as i32,
+                    payload: payload.clone(),
+                    request_id: inbound.request_id.clone(),
+                };
+                match kind {
+                    RecoveryControlKind::Proposal => {
+                        if !policy.can_endorse_recovery(local_identity) {
+                            return Ok(());
+                        }
+                        self.stage_apply_group_recovery_proposal(
+                            command_id,
+                            &received.sender_identity(),
+                            &control,
+                            candidate,
+                            output,
+                        )?;
+                    }
+                    RecoveryControlKind::Endorsement => {
+                        self.stage_apply_group_recovery_endorsement(
+                            command_id,
+                            &received.sender_identity(),
+                            &control,
+                            candidate,
+                            output,
+                        )?;
+                    }
+                    RecoveryControlKind::Candidate => {
+                        self.stage_apply_group_coordinator(
+                            command_id,
+                            &proto::ApplyInbound {
+                                kind: proto::OutboundKind::GroupCoordinator as i32,
+                                ..control
+                            },
+                            candidate,
+                            output,
+                        )?;
+                    }
+                }
+                return Ok(());
             }
         }
         candidate.openmls_checkpoint = mls_storage.export_checkpoint()?;

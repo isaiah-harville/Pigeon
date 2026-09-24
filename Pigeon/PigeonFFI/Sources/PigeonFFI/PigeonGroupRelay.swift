@@ -11,6 +11,33 @@ public struct PigeonConfirmGroupRelayAuthorization: Equatable, Sendable {
   }
 }
 
+public struct PigeonRecoverGroup: Equatable, Sendable {
+  public let recoveryCertificate: Data
+
+  public init(recoveryCertificate: Data) {
+    self.recoveryCertificate = recoveryCertificate
+  }
+}
+
+public struct PigeonBeginGroupRecovery: Equatable, Sendable {
+  public let groupID: Data
+  public let replacementRelayURL: String
+  public let replacementCoordinationID: Data
+  public let replacementCoordinatorPublicKey: Data
+
+  public init(
+    groupID: Data,
+    replacementRelayURL: String,
+    replacementCoordinationID: Data,
+    replacementCoordinatorPublicKey: Data
+  ) {
+    self.groupID = groupID
+    self.replacementRelayURL = replacementRelayURL
+    self.replacementCoordinationID = replacementCoordinationID
+    self.replacementCoordinatorPublicKey = replacementCoordinatorPublicKey
+  }
+}
+
 public enum PigeonCoreRelayAction: Equatable, Sendable {
   case append(PigeonGroupRelayAppend)
   case registration(PigeonGroupRelayRegistration)

@@ -311,6 +311,26 @@ group mailbox. This avoids pairwise fan-out for ordinary group traffic. Pairwise
 encryption remains intentionally limited to bootstrapping invitations before a
 new member can authenticate to the group mailbox.
 
+### Coordinator and relay recovery
+
+If the selected coordinator can no longer make progress, any current admin can
+propose a replacement relay deployment. Recovery does not create a new group or
+make the initiating admin an authority. The proposal binds the last accepted
+epoch, policy and roster hashes, coordinator receipt head, replacement URL and
+coordinator key, and the exact next capability set.
+
+![Creator-independent coordinator recovery with an authenticated admin quorum](diagrams/pigeon_09_group_recovery.svg)
+
+A strict majority of current non-owner admins must endorse that exact proposal.
+When there are no delegated admins, the permanent owner is the sole recovery
+signer. The replacement deployment registers rotated capabilities and orders one
+recovery commit; each client verifies the recovery certificate, signed receipt,
+MLS commit, and unchanged policy fields before switching. Recovery controls are
+MLS-encrypted once and carried by the existing group mailbox; an opted-in local
+mesh carries the same ciphertext during a relay outage. If neither path can
+reach quorum members and the remaining roster, recovery waits rather than
+resetting identity state or exposing the control data.
+
 ## Step 5 — The couriers (transports)
 
 Everything above produces **ciphertext** — the locked box. It then travels over

@@ -39,6 +39,18 @@ pub enum GroupApplication {
         message_id: GroupMessageId,
         sender_timestamp_ms: i64,
     },
+    RecoveryControl {
+        kind: RecoveryControlKind,
+        recipient: Option<[u8; IDENTITY_KEY_BYTES]>,
+        payload: Vec<u8>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RecoveryControlKind {
+    Proposal,
+    Endorsement,
+    Candidate,
 }
 
 impl GroupApplication {
@@ -74,6 +86,18 @@ impl GroupApplication {
         }
     }
 
+    pub fn recovery_control(
+        kind: RecoveryControlKind,
+        recipient: Option<[u8; IDENTITY_KEY_BYTES]>,
+        payload: Vec<u8>,
+    ) -> Self {
+        Self::RecoveryControl {
+            kind,
+            recipient,
+            payload,
+        }
+    }
+
     pub fn text_body(&self) -> Option<&[u8]> {
         match self {
             Self::Text { body, .. } => Some(body),
@@ -95,6 +119,7 @@ impl GroupApplication {
                 sender_timestamp_ms,
                 ..
             } => *sender_timestamp_ms,
+            Self::RecoveryControl { .. } => 0,
         }
     }
 
@@ -131,6 +156,20 @@ impl GroupApplication {
                 original_sender_identity: original_sender.to_vec(),
                 message_id: message_id.as_bytes().to_vec(),
             })),
+            Self::RecoveryControl {
+                kind,
+                recipient,
+                payload,
+            } => {
+                if payload.is_empty() || payload.len() > MAX_MLS_OBJECT_BYTES {
+                    return Err(Error::ResourceLimit("group recovery control bytes"));
+                }
+                Ok(Body::RecoveryControl(proto::GroupRecoveryControl {
+                    kind: kind.to_proto() as i32,
+                    recipient_identity: recipient.map(Vec::from).unwrap_or_default(),
+                    payload,
+                }))
+            }
         }
     }
 
@@ -167,6 +206,42 @@ impl GroupApplication {
                 message_id: message_id(&acknowledgement.message_id)?,
                 sender_timestamp_ms,
             }),
+            Body::RecoveryControl(control) => {
+                if control.payload.is_empty() || control.payload.len() > MAX_MLS_OBJECT_BYTES {
+                    return Err(Error::ResourceLimit("group recovery control bytes"));
+                }
+                let recipient = if control.recipient_identity.is_empty() {
+                    None
+                } else {
+                    Some(fixed_bytes(&control.recipient_identity)?)
+                };
+                Ok(Self::RecoveryControl {
+                    kind: RecoveryControlKind::from_proto(control.kind)?,
+                    recipient,
+                    payload: control.payload,
+                })
+            }
+        }
+    }
+}
+
+impl RecoveryControlKind {
+    fn to_proto(self) -> proto::GroupRecoveryControlKind {
+        match self {
+            Self::Proposal => proto::GroupRecoveryControlKind::Proposal,
+            Self::Endorsement => proto::GroupRecoveryControlKind::Endorsement,
+            Self::Candidate => proto::GroupRecoveryControlKind::Candidate,
+        }
+    }
+
+    fn from_proto(value: i32) -> Result<Self, Error> {
+        match proto::GroupRecoveryControlKind::try_from(value)
+            .map_err(|_| Error::MalformedBundle)?
+        {
+            proto::GroupRecoveryControlKind::Proposal => Ok(Self::Proposal),
+            proto::GroupRecoveryControlKind::Endorsement => Ok(Self::Endorsement),
+            proto::GroupRecoveryControlKind::Candidate => Ok(Self::Candidate),
+            proto::GroupRecoveryControlKind::Unspecified => Err(Error::MalformedBundle),
         }
     }
 }

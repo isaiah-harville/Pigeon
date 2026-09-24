@@ -139,6 +139,29 @@ pub(crate) fn validate_client_command(command: &proto::ClientCommand) -> Result<
                 return Err(Error::InvalidKey);
             }
         }
+        proto::client_command::Body::RecoverGroup(recovery) => {
+            check_bytes(
+                recovery.recovery_certificate.len(),
+                MAX_MLS_OBJECT_BYTES,
+                "group recovery certificate bytes",
+            )?;
+            if recovery.recovery_certificate.is_empty() {
+                return Err(Error::MalformedBundle);
+            }
+        }
+        proto::client_command::Body::BeginGroupRecovery(recovery) => {
+            check_exact_group_id(&recovery.group_id)?;
+            check_bytes(
+                recovery.replacement_relay_url.len(),
+                MAX_RELAY_URL_BYTES,
+                "replacement relay url",
+            )?;
+            if recovery.replacement_coordination_id.len() != IDENTITY_KEY_BYTES
+                || recovery.replacement_coordinator_public_key.len() != IDENTITY_KEY_BYTES
+            {
+                return Err(Error::InvalidKey);
+            }
+        }
         proto::client_command::Body::EnsurePairwiseAccount(_) => {}
         proto::client_command::Body::MigrateLegacyPairwiseState(migration) => {
             if migration.format_version != LEGACY_PAIRWISE_MIGRATION_VERSION {

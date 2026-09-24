@@ -8,6 +8,8 @@ public struct PigeonCoreCommand: Equatable, Sendable {
     case changeGroupPolicy(PigeonChangeGroupPolicy)
     case acknowledgeEffects(PigeonAcknowledgeEffects)
     case confirmGroupRelayAuthorization(PigeonConfirmGroupRelayAuthorization)
+    case recoverGroup(PigeonRecoverGroup)
+    case beginGroupRecovery(PigeonBeginGroupRecovery)
     case ensurePairwiseAccount
     case registerPairwiseContact(PigeonRegisterPairwiseContact)
     case sendPairwiseControl(PigeonSendPairwiseControl)

@@ -296,6 +296,37 @@ extension SessionCoreIntegrationTests {
     }
   }
 
+  func testRecoverGroupRejectsNonAdminBeforeResolvingReplacementRelay() async throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    let relay = try XCTUnwrap(URL(string: "wss://replacement.example/group/ws"))
+    let group = PigeonGroupState(
+      groupID: Data(repeating: 1, count: 32),
+      ownerIdentity: Data(repeating: 2, count: 32),
+      adminIdentities: [Data(repeating: 2, count: 32)],
+      memberIdentities: [
+        Data(repeating: 2, count: 32), fixture.manager.myID, Data(repeating: 4, count: 32),
+      ],
+      name: "Birds", relayURL: "https://relay.example",
+      coordinationID: Data(repeating: 5, count: 32), meshEnabled: false,
+      epoch: 3, policyRevision: 1, dissolved: false,
+      capabilityPublicKey: Data(repeating: 6, count: 32),
+      capabilityID: Data(repeating: 8, count: 32),
+      coordinatorPublicKey: Data(repeating: 7, count: 32))
+    fixture.manager.resolveGroupCoordinatorKey = { _ in
+      XCTFail("unauthorized recovery must not contact the replacement relay")
+      return Data()
+    }
+
+    do {
+      _ = try await fixture.manager.recoverGroup(
+        group, using: relay)
+      XCTFail("Expected unauthorized recovery error")
+    } catch {
+      XCTAssertEqual(error as? SessionManager.GroupRecoveryError, .unauthorized)
+    }
+  }
+
   func testGroupSendRejectsWhitespaceBeforeCallingCore() throws {
     let fixture = try makeFixture()
     defer { wipe(fixture.store) }

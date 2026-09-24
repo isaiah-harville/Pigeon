@@ -1,6 +1,6 @@
 [package]
 name = "pigeon-relay"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 description = "Pigeon's zero-knowledge, federated ciphertext relay (blind mailbox)."
 license = "AGPL-3.0-only"
@@ -25,5 +25,5 @@ reqwest = { version = "0.12", default-features = false, features = ["http2", "ru
 jsonwebtoken = "10"
 
 [dev-dependencies]
-pigeon-core = { path = "../pigeon-core" }
+pigeon-core = { version = "=0.2.0", path = "../pigeon-core" }
 tower = { version = "0.5", features = ["util"] }

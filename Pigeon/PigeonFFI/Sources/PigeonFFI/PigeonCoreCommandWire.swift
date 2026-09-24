@@ -5,6 +5,16 @@ extension PigeonCoreCommand {
     var command = Pigeon_Wire_V1_ClientCommand()
     command.version = 1
     command.commandID = id
+    if try encodeGroupBody(into: &command) {
+      return command
+    }
+    guard try encodePairwiseBody(into: &command) else {
+      throw PigeonCoreWireError.invalidCommandBody
+    }
+    return command
+  }
+
+  private func encodeGroupBody(into command: inout Pigeon_Wire_V1_ClientCommand) throws -> Bool {
     switch body {
     case .createGroup(let value):
       command.createGroup = value.proto()
@@ -21,6 +31,25 @@ extension PigeonCoreCommand {
       confirmation.groupID = value.groupID
       confirmation.capabilityID = value.capabilityID
       command.confirmGroupRelayAuthorization = confirmation
+    case .recoverGroup(let value):
+      var recovery = Pigeon_Wire_V1_RecoverGroup()
+      recovery.recoveryCertificate = value.recoveryCertificate
+      command.recoverGroup = recovery
+    case .beginGroupRecovery(let value):
+      var recovery = Pigeon_Wire_V1_BeginGroupRecovery()
+      recovery.groupID = value.groupID
+      recovery.replacementRelayURL = value.replacementRelayURL
+      recovery.replacementCoordinationID = value.replacementCoordinationID
+      recovery.replacementCoordinatorPublicKey = value.replacementCoordinatorPublicKey
+      command.beginGroupRecovery = recovery
+    default:
+      return false
+    }
+    return true
+  }
+
+  private func encodePairwiseBody(into command: inout Pigeon_Wire_V1_ClientCommand) throws -> Bool {
+    switch body {
     case .ensurePairwiseAccount:
       command.ensurePairwiseAccount = Pigeon_Wire_V1_EnsurePairwiseAccount()
     case .registerPairwiseContact(let value):
@@ -37,8 +66,10 @@ extension PigeonCoreCommand {
       command.removePairwiseContact = body
     case .migrateLegacyPairwiseState(let value):
       command.migrateLegacyPairwiseState = value.proto()
+    default:
+      return false
     }
-    return command
+    return true
   }
 }
 

@@ -22,6 +22,8 @@ message ClientCommand {
     RemovePairwiseContact remove_pairwise_contact = 20;
     MigrateLegacyPairwiseState migrate_legacy_pairwise_state = 21;
     ConfirmGroupRelayAuthorization confirm_group_relay_authorization = 22;
+    RecoverGroup recover_group = 23;
+    BeginGroupRecovery begin_group_recovery = 24;
   }
 }
 
@@ -129,6 +131,17 @@ message ConfirmGroupRelayAuthorization {
   bytes capability_id = 2;
 }
 
+message RecoverGroup {
+  bytes recovery_certificate = 1;
+}
+
+message BeginGroupRecovery {
+  bytes group_id = 1;
+  string replacement_relay_url = 2;
+  bytes replacement_coordination_id = 3;
+  bytes replacement_coordinator_public_key = 4;
+}
+
 message AppEvent {
   uint32 version = 1;
   string event_id = 2;
@@ -144,6 +157,7 @@ message AppEvent {
 }
 
 enum OutboundKind {
+  reserved 11 to 13;
   OUTBOUND_KIND_UNSPECIFIED = 0;
   OUTBOUND_KIND_PAIRWISE = 1;
   OUTBOUND_KIND_GROUP_MESSAGE = 2;
@@ -229,6 +243,12 @@ message ClientCheckpoint {
   repeated StoredPairwiseSession pairwise_sessions = 18;
   repeated bytes consumed_pairwise_envelope_hashes = 19;
   repeated DeferredAppEvent deferred_events = 20;
+  repeated PendingGroupRecovery pending_group_recoveries = 21;
+}
+
+message PendingGroupRecovery {
+  bytes proposal = 1;
+  repeated bytes endorsements = 2;
 }
 
 // A host-visible event held until either a security-critical outbound effect

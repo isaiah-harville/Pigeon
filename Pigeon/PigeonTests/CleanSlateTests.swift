@@ -160,12 +160,20 @@ final class CleanSlateTests: XCTestCase {
     let oldIdentity = manager.myID
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("pigeon-clean-slate-failure-\(UUID().uuidString).store")
+    var failRemoval = false
     let io = EncryptedStoreIO(
       write: { try $0.write(to: $1, options: $2) },
-      remove: { _ in throw CocoaError(.fileWriteNoPermission) })
+      remove: { target in
+        guard failRemoval else {
+          try FileManager.default.removeItem(at: target)
+          return
+        }
+        throw CocoaError(.fileWriteNoPermission)
+      })
     let store = EncryptedStore(key: SymmetricKey(size: .bits256), url: url, io: io)
     try manager.attachStore(store)
     manager.setMyName("Must trigger deletion")
+    failRemoval = true
 
     do {
       try await manager.prepareCleanSlate(

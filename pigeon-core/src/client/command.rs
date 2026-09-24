@@ -331,6 +331,46 @@ impl ClientCommand {
         Ok(Self { inner })
     }
 
+    pub fn recover_group(
+        command_id: impl Into<String>,
+        recovery_certificate: Vec<u8>,
+    ) -> Result<Self, Error> {
+        let inner = proto::ClientCommand {
+            version: PROTOCOL_VERSION,
+            command_id: command_id.into(),
+            body: Some(proto::client_command::Body::RecoverGroup(
+                proto::RecoverGroup {
+                    recovery_certificate,
+                },
+            )),
+        };
+        wire::validate_client_command(&inner)?;
+        Ok(Self { inner })
+    }
+
+    pub fn begin_group_recovery(
+        command_id: impl Into<String>,
+        group_id: GroupId,
+        replacement_relay_url: impl Into<String>,
+        replacement_coordination_id: [u8; 32],
+        replacement_coordinator_public_key: [u8; 32],
+    ) -> Result<Self, Error> {
+        let inner = proto::ClientCommand {
+            version: PROTOCOL_VERSION,
+            command_id: command_id.into(),
+            body: Some(proto::client_command::Body::BeginGroupRecovery(
+                proto::BeginGroupRecovery {
+                    group_id: group_id.as_bytes().to_vec(),
+                    replacement_relay_url: replacement_relay_url.into(),
+                    replacement_coordination_id: replacement_coordination_id.to_vec(),
+                    replacement_coordinator_public_key: replacement_coordinator_public_key.to_vec(),
+                },
+            )),
+        };
+        wire::validate_client_command(&inner)?;
+        Ok(Self { inner })
+    }
+
     pub fn apply_group_join_request(
         command_id: impl Into<String>,
         request_id: impl Into<String>,

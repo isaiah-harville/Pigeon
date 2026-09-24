@@ -158,6 +158,31 @@ final class GroupRelayProtocolTests: XCTestCase {
       ]))
   }
 
+  func testReplacementConnectionConfirmsAuthorizationOnceItBecomesCanonical() {
+    var state = GroupRelayAuthorizationState(requiresConfirmation: false)
+    var confirmations = 0
+
+    XCTAssertTrue(
+      state.confirmIfRequired {
+        confirmations += 1
+        return true
+      })
+    XCTAssertEqual(confirmations, 0)
+
+    state.requireConfirmation()
+    XCTAssertTrue(
+      state.confirmIfRequired {
+        confirmations += 1
+        return true
+      })
+    XCTAssertTrue(
+      state.confirmIfRequired {
+        confirmations += 1
+        return true
+      })
+    XCTAssertEqual(confirmations, 1)
+  }
+
   private func object(_ data: Data) throws -> NSDictionary {
     try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? NSDictionary)
   }

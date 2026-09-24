@@ -4,8 +4,9 @@ use super::PigeonClient;
 use crate::Error;
 use crate::client::{AppEvent, ClientOutput, OutboundItem};
 use crate::group::{
-    CoordinatorChain, CoordinatorChainError, CoordinatorReceipt, GroupAction, GroupEngine,
-    GroupMutationCandidate, GroupRelayControl, PigeonGroupPolicy, PolicyEvent, PolicyEventKind,
+    CoordinatorChain, CoordinatorChainError, CoordinatorReceipt, GroupAction, GroupApplication,
+    GroupEngine, GroupMutationCandidate, GroupRelayControl, PigeonGroupPolicy, PolicyEvent,
+    PolicyEventKind, RecoveryCertificate, RecoveryControlKind, RecoveryProposal,
     relay_capability_id,
 };
 use crate::identity::{GroupJoinMaterial, GroupJoinRequest, IdentityPurpose, SecureIdentity};
@@ -25,41 +26,72 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         let (receipt, opaque_candidate) = CoordinatorReceipt::decode_candidate(&inbound.payload)
             .map_err(|_| Error::InvalidSignature)?;
         let mutation = GroupMutationCandidate::decode(&opaque_candidate)?;
+        let recovery = mutation
+            .recovery_certificate()
+            .map(RecoveryCertificate::decode)
+            .transpose()
+            .map_err(|_| Error::InvalidSignature)?;
         let group_index = candidate
             .groups
             .iter()
             .position(|stored| {
-                PigeonGroupPolicy::decode(&stored.policy)
-                    .is_ok_and(|policy| policy.coordination_id() == receipt.coordination_id)
+                recovery.as_ref().map_or_else(
+                    || {
+                        PigeonGroupPolicy::decode(&stored.policy)
+                            .is_ok_and(|policy| policy.coordination_id() == receipt.coordination_id)
+                    },
+                    |certificate| {
+                        stored.group_id.as_slice() == certificate.proposal().group_id().as_slice()
+                    },
+                )
             })
             .ok_or(Error::InvalidKey)?;
         let stored = candidate.groups[group_index].clone();
         let prior = PigeonGroupPolicy::decode(&stored.policy)?;
-        let mut chain = CoordinatorChain::decode(
+        let prior_chain = CoordinatorChain::decode(
             &stored.coordinator_chain,
             prior.coordination_id(),
             prior.coordinator_public_key(),
         )
         .map_err(|_| Error::InvalidSignature)?;
+        if recovery.is_some() && receipt.coordination_id == prior.coordination_id() {
+            let mut replay_chain = prior_chain.clone();
+            match replay_chain.accept(&receipt, &opaque_candidate) {
+                Ok(false) => return Ok(()),
+                Err(CoordinatorChainError::Fork) => {
+                    candidate.groups[group_index].coordinator_chain = replay_chain.encode();
+                    output
+                        .events
+                        .push(coordinator_fork_event(command_id, &stored, &receipt));
+                    return Ok(());
+                }
+                Ok(true) | Err(_) => return Err(Error::InvalidSignature),
+            }
+        }
+        let recovery_receipt_head = recovery.as_ref().map(|_| prior_chain.receipt_head());
+        let mut chain = if let Some(certificate) = &recovery {
+            certificate
+                .verify(&prior, stored.epoch, prior_chain.receipt_head())
+                .map_err(|_| Error::InvalidSignature)?;
+            let replacement = certificate.proposal().replacement();
+            if receipt.coordination_id != replacement.coordination_id {
+                return Err(Error::InvalidSignature);
+            }
+            CoordinatorChain::new(replacement.coordination_id, replacement.public_key)
+        } else {
+            prior_chain
+        };
+        if recovery.is_some() && receipt.claimed_base_epoch != stored.epoch {
+            return Err(Error::InvalidSignature);
+        }
         match chain.accept(&receipt, &opaque_candidate) {
             Ok(false) => return Ok(()),
             Ok(true) => {}
             Err(CoordinatorChainError::Fork) => {
                 candidate.groups[group_index].coordinator_chain = chain.encode();
-                output.events.push(AppEvent {
-                    inner: proto::AppEvent {
-                        version: PROTOCOL_VERSION,
-                        event_id: format!("{command_id}:coordinator-fork"),
-                        body: Some(proto::app_event::Body::GroupSecurityWarning(
-                            proto::GroupSecurityWarning {
-                                group_id: stored.group_id,
-                                code: GROUP_SECURITY_COORDINATOR_FORK_CODE,
-                                evidence_id: receipt.receipt_hash().to_vec(),
-                                epoch: stored.epoch,
-                            },
-                        )),
-                    },
-                });
+                output
+                    .events
+                    .push(coordinator_fork_event(command_id, &stored, &receipt));
                 return Ok(());
             }
             Err(_) => return Err(Error::InvalidSignature),
@@ -90,20 +122,55 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         let mut engine = if let Some(pending) = &pending {
             let next_policy = PigeonGroupPolicy::decode(&pending.next_policy)?;
             let event = decode_event(pending, next_policy.revision())?;
-            GroupEngine::restore_pending(
-                &mls_storage,
-                prior.clone(),
-                stored.epoch,
-                pending.commit.clone(),
-                next_policy,
-                event,
-            )?
+            if let Some(certificate) = &recovery {
+                GroupEngine::restore_recovery_pending(
+                    &mls_storage,
+                    prior.clone(),
+                    stored.epoch,
+                    pending.commit.clone(),
+                    next_policy,
+                    event,
+                    certificate,
+                )?
+            } else {
+                GroupEngine::restore_pending(
+                    &mls_storage,
+                    prior.clone(),
+                    stored.epoch,
+                    pending.commit.clone(),
+                    next_policy,
+                    event,
+                )?
+            }
         } else {
             GroupEngine::restore(&mls_storage, prior.clone(), stored.epoch)?
         };
-        let event = engine.merge_canonical_candidate(&mut mls_storage, &mutation)?;
+        let recovery_broadcast = if recovery.is_some() && canonical_is_local {
+            Some(engine.encrypt_application(
+                &self.identity,
+                &mut mls_storage,
+                GroupApplication::recovery_control(
+                    RecoveryControlKind::Candidate,
+                    None,
+                    inbound.payload.clone(),
+                ),
+            )?)
+        } else {
+            None
+        };
+        let event =
+            if let (Some(certificate), Some(receipt_head)) = (&recovery, recovery_receipt_head) {
+                engine.merge_recovery_candidate(
+                    &mut mls_storage,
+                    &mutation,
+                    certificate,
+                    receipt_head,
+                )?
+            } else {
+                engine.merge_canonical_candidate(&mut mls_storage, &mutation)?
+            };
         let local_identity = self.identity.ensure_public_key(IdentityPurpose::Root)?;
-        let relay_control = if prior.is_admin(local_identity) {
+        let relay_control = if recovery.is_none() && prior.is_admin(local_identity) {
             GroupRelayControl::for_transition(
                 &prior,
                 engine.policy(),
@@ -120,6 +187,27 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         candidate.groups[group_index] = updated;
         if let Some(index) = pending_index {
             candidate.pending_group_mutations.remove(index);
+        }
+        let mut retained_recoveries = Vec::with_capacity(candidate.pending_group_recoveries.len());
+        for pending_recovery in candidate.pending_group_recoveries.drain(..) {
+            let proposal = RecoveryProposal::decode(&pending_recovery.proposal)
+                .map_err(|_| Error::InvalidSignature)?;
+            if proposal.group_id() != *prior.group_id().as_bytes() {
+                retained_recoveries.push(pending_recovery);
+            }
+        }
+        candidate.pending_group_recoveries = retained_recoveries;
+        if let Some(ciphertext) = recovery_broadcast {
+            output.outbound.push(OutboundItem {
+                inner: proto::OutboundItem {
+                    item_id: format!("{command_id}:recovery-candidate"),
+                    kind: proto::OutboundKind::GroupMessage as i32,
+                    relay_url: stored.relay_url.clone(),
+                    destination: prior.coordination_id().to_vec(),
+                    payload: ciphertext.encode(),
+                    local_only: false,
+                },
+            });
         }
         let app_event = proto::AppEvent {
             version: PROTOCOL_VERSION,
@@ -561,6 +649,27 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             },
         });
         Ok(())
+    }
+}
+
+fn coordinator_fork_event(
+    command_id: &str,
+    stored: &proto::StoredGroup,
+    receipt: &CoordinatorReceipt,
+) -> AppEvent {
+    AppEvent {
+        inner: proto::AppEvent {
+            version: PROTOCOL_VERSION,
+            event_id: format!("{command_id}:coordinator-fork"),
+            body: Some(proto::app_event::Body::GroupSecurityWarning(
+                proto::GroupSecurityWarning {
+                    group_id: stored.group_id.clone(),
+                    code: GROUP_SECURITY_COORDINATOR_FORK_CODE,
+                    evidence_id: receipt.receipt_hash().to_vec(),
+                    epoch: stored.epoch,
+                },
+            )),
+        },
     }
 }
 

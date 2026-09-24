@@ -1,8 +1,8 @@
 # Pigeon Relay
 
-A **zero-knowledge, federated ciphertext mailbox** — the optional internet path
-for Pigeon, for reaching peers who are out of Bluetooth/local range and on a
-different network (e.g. cellular).
+A **zero-knowledge, federated ciphertext relay** — the optional internet path
+for Pigeon. One deployment hosts pairwise mailboxes, authenticated opaque group
+mailboxes, and the group's signed MLS commit coordinator.
 
 It is deliberately dumb. It stores and forwards opaque ciphertext blobs
 addressed by a recipient's public key. It **cannot read messages**, holds no
@@ -12,18 +12,23 @@ are all enforced end-to-end by Pigeon clients, *below* this layer. A compromised
 relay yields metadata (who connects, when) and the ability to drop/delay
 ciphertext — never plaintext or a forged session.
 
-See [`SECURITY_MODEL.md`](../SECURITY_MODEL.md) §6.1 for the full
+See [`SECURITY_MODEL.md`](../docs/SECURITY_MODEL.md) §6.1 for the full
 threat model and why remote delivery cannot be serverless.
 
 ## Run it
 
 ```sh
-docker run -p 8080:8080 ghcr.io/<owner>/pigeon-relay:latest
+docker run -p 8080:8080 \
+  -e PIGEON_COORDINATOR_SIGNING_SEED_HEX="<64-hex-character-secret>" \
+  ghcr.io/<owner>/pigeon-relay:latest
 ```
 
-That's the whole deployment. The image is multi-arch (amd64/arm64), distroless,
-non-root, and stateless — point your homelab Kubernetes / Compose / VPS at it,
-terminate TLS at your ingress (clients use `wss://`), and you have a relay.
+The image is multi-arch (amd64/arm64), distroless, non-root, and keeps message
+state only in memory. Point your homelab Kubernetes / Compose / VPS at it and
+terminate TLS at your ingress (clients use `wss://`). The coordinator seed is
+required in release builds, must be generated from a cryptographically secure
+source, and must remain stable across restarts. Store it in a secret manager;
+never put it in an image, manifest, shell history, or logs.
 
 ### Configuration (environment)
 
@@ -34,6 +39,19 @@ terminate TLS at your ingress (clients use `wss://`), and you have a relay.
 | `PIGEON_RELAY_MAX_QUEUE`        | `1000`           | Max envelopes retained per mailbox.            |
 | `PIGEON_RELAY_MAX_MAILBOXES`    | `10000`          | Max mailboxes held at once.                    |
 | `PIGEON_RELAY_MAX_TOTAL_BYTES`  | `536870912`      | Hard ceiling on total stored ciphertext.       |
+| `PIGEON_GROUP_TTL_SECS`         | `2592000` (30d)  | Group entry and registration lifetime.         |
+| `PIGEON_GROUP_MAX_GROUPS`       | `10000`          | Maximum registered groups.                     |
+| `PIGEON_GROUP_MAX_CAPABILITIES` | `128`            | Maximum capabilities in one group.             |
+| `PIGEON_GROUP_MAX_ENTRY_BYTES`  | `1048576`        | Maximum opaque group entry.                    |
+| `PIGEON_GROUP_MAX_ENTRIES`      | `10000`          | Maximum entries retained per group.            |
+| `PIGEON_GROUP_MAX_TOTAL_BYTES`  | `536870912`      | Hard ceiling for all group ciphertext.         |
+| `PIGEON_GROUP_MAX_FETCH_BYTES`  | `4194304`        | Maximum group fetch response.                  |
+| `PIGEON_COORDINATOR_MAX_PER_EPOCH` | `256`         | Candidate attempts retained per epoch.         |
+| `PIGEON_COORDINATOR_MAX_CANDIDATE_BYTES` | `1048576` | Maximum opaque MLS candidate.              |
+| `PIGEON_COORDINATOR_MAX_TOTAL_BYTES` | `268435456` | Hard ceiling for coordinator candidates.     |
+| `PIGEON_COORDINATOR_MAX_FETCH_BYTES` | `4194304`  | Maximum coordinator fetch response.            |
+| `PIGEON_COORDINATOR_TTL_SECS`   | `2592000` (30d)  | Coordinator candidate lifetime.                |
+| `PIGEON_COORDINATOR_SIGNING_SEED_HEX` | — (required in release) | Stable 32-byte Ed25519 seed, hex encoded. |
 
 Deposits are unauthenticated, so the last two are the abuse bound. Past
 `MAX_MAILBOXES` a deposit to a *new* address is refused (existing mailboxes keep
@@ -42,8 +60,9 @@ whichever mailbox is holding the most, so a flooding address pays for its own
 pressure instead of evicting everyone else's mail.
 
 Storage is **in-memory and ephemeral** by design — a relay is a transient
-rendezvous, not durable storage. Run more than one for redundancy (see
-Federation).
+rendezvous, not durable storage. The coordinator identity is the exception: its
+signing seed is supplied by the operator and must survive restarts. Clients
+authenticate that public key before selecting the deployment for a group.
 
 ### APNs push gateway (official deployment only)
 
@@ -77,8 +96,10 @@ mailbox from the same relays. Anyone can run one; users choose which to trust. N
 
 ## Protocol
 
-WebSocket at `GET /ws`, JSON frames. Addresses are hex Ed25519 public keys;
-blobs are base64 ciphertext the relay never decodes.
+Pairwise WebSocket traffic uses `GET /ws`; group messaging and coordination use
+`GET /group/ws`. Both protocols use bounded JSON frames. Addresses, group
+coordination IDs, capability IDs, cursors, sizes, timing, and client IPs are
+relay-visible metadata. Message and MLS candidate bodies remain opaque.
 
 Health: `GET /healthz` → `ok`.
 
@@ -128,6 +149,15 @@ otherwise the relay replies `{ "type": "error", "message": "push not supported" 
 The challenge–response means the relay only ever learns *public* keys (which are
 the addresses anyway), and only the holder of a mailbox's private key can drain
 it. Delivery is at-least-once; Pigeon clients deduplicate at the mesh layer.
+
+Group connections separately negotiate protocol version 5 and authenticate a
+group-scoped capability challenge. A canonical registration atomically replaces
+the complete capability set, which revokes removed members without exposing the
+roster's root identities. The coordinator orders opaque candidates and signs an
+append-only receipt chain; clients still validate every MLS commit and policy
+transition end to end. The service cannot decrypt, authorize, or forge a group
+transition, but it can observe group-level metadata and can delay or deny
+progress.
 
 ## Develop
 

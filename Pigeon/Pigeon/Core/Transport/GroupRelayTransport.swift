@@ -7,6 +7,10 @@ import PigeonFFI
 /// core consumption.
 @MainActor
 final class GroupRelayTransport {
+  private typealias Connection = GroupRelayConnection
+  private typealias Effect = GroupRelayEffect
+  private typealias Operation = GroupRelayOperation
+
   typealias ChallengeSigner = (_ groupID: Data, _ nonce: Data) throws -> Data
   typealias MessageConsumer = (_ ciphertext: Data, _ requestID: String) -> Bool
   typealias CoordinatorConsumer = (
@@ -21,31 +25,6 @@ final class GroupRelayTransport {
   private let signer: ChallengeSigner
   private let session: URLSession
   private var connections: [Data: Connection] = [:]
-
-  private final class Connection {
-    var group: PigeonGroupState
-    var socket: URLSessionWebSocketTask?
-    var supervisor: Task<Void, Never>?
-    var queue: [Operation] = []
-    var awaiting: Operation?
-    var ready = false
-    var fetchedAfterConnect = false
-    var needsMessageFetch = false
-
-    init(group: PigeonGroupState) { self.group = group }
-  }
-
-  private struct Effect: Equatable {
-    let id: String
-    let action: PigeonCoreRelayAction
-  }
-
-  private enum Operation: Equatable {
-    case effect(Effect)
-    case fetchMessages
-    case advance(UInt64)
-    case fetchCoordinator(UInt64)
-  }
 
   convenience init(signer: @escaping ChallengeSigner) {
     self.init(session: .shared, signer: signer)
@@ -70,15 +49,20 @@ final class GroupRelayTransport {
         && group.capabilityID.count == 32
         && Self.endpoint(for: URL(string: group.relayURL)) != nil
     }
-    let activeIDs = Set(active.map(\.coordinationID))
+    let pendingIDs = Set(
+      snapshot.pendingOutbound.compactMap { item in
+        (try? item.relayAction()).map { _ in item.destination }
+      })
+    let activeIDs = Set(active.map(\.coordinationID)).union(pendingIDs)
     for (id, connection) in connections where !activeIDs.contains(id) {
       stop(connection)
       connections[id] = nil
     }
     for group in active {
       let connection: Connection
-      if let existing = connections[group.coordinationID], sameEndpoint(existing.group, group) {
+      if let existing = connections[group.coordinationID], existing.usesSameEndpoint(as: group) {
         existing.group = group
+        existing.authorization.requireConfirmation()
         connection = existing
       } else {
         if let existing = connections[group.coordinationID] { stop(existing) }
@@ -87,13 +71,15 @@ final class GroupRelayTransport {
         start(connection)
       }
     }
-    reconcileEffects(snapshot.pendingOutbound)
+    reconcileEffects(snapshot.pendingOutbound, groups: snapshot.groups)
   }
 
 }
 
 extension GroupRelayTransport {
-  private func reconcileEffects(_ pending: [PigeonCoreOutboundItem]) {
+  private func reconcileEffects(
+    _ pending: [PigeonCoreOutboundItem], groups: [PigeonGroupState]
+  ) {
     let ids = Set(pending.map(\.id))
     for connection in connections.values {
       connection.queue.removeAll { operation in
@@ -102,8 +88,32 @@ extension GroupRelayTransport {
       }
     }
     for item in pending {
-      guard let connection = connections[item.destination],
-        let action = try? item.relayAction(), !contains(item.id, in: connection)
+      guard let action = try? item.relayAction() else { continue }
+      if connections[item.destination] == nil,
+        case .registration(let registration) = action,
+        let source = groups.first(where: { group in
+          registration.capabilities.contains { capability in
+            capability.publicKey == group.capabilityPublicKey
+          }
+        }),
+        let local = registration.capabilities.first(where: { capability in
+          capability.publicKey == source.capabilityPublicKey
+        })
+      {
+        let replacement = PigeonGroupState(
+          groupID: source.groupID, ownerIdentity: source.ownerIdentity,
+          adminIdentities: source.adminIdentities, memberIdentities: source.memberIdentities,
+          name: source.name, relayURL: item.relayURL,
+          coordinationID: registration.coordinationID, meshEnabled: source.meshEnabled,
+          epoch: source.epoch + 1,
+          policyRevision: registration.authorizationGeneration, dissolved: source.dissolved,
+          capabilityPublicKey: source.capabilityPublicKey, capabilityID: local.capabilityID,
+          coordinatorPublicKey: source.coordinatorPublicKey)
+        let connection = Connection(group: replacement, confirmsAuthorization: false)
+        connections[item.destination] = connection
+        start(connection)
+      }
+      guard let connection = connections[item.destination], !contains(item.id, in: connection)
       else { continue }
       connection.queue.append(.effect(Effect(id: item.id, action: action)))
       sendNext(connection)
@@ -145,16 +155,18 @@ extension GroupRelayTransport {
     let socket = session.webSocketTask(with: url)
     connection.socket = socket
     socket.resume()
-    try await send(GroupRelayProtocol.hello(), over: socket)
-    guard case .compatible(let version, _) = try await receive(over: socket),
+    try await GroupRelaySocket.send(GroupRelayProtocol.hello(), over: socket)
+    guard case .compatible(let version, _) = try await GroupRelaySocket.receive(over: socket),
       version == GroupRelayProtocol.version
     else { throw RelayError.incompatible }
 
     let registration = takeRegistration(from: connection)
     if let registration {
       connection.awaiting = .effect(registration)
-      try await send(GroupRelayProtocol.action(registration.action), over: socket)
-      guard case .registered = try await receive(over: socket) else { throw RelayError.handshake }
+      try await GroupRelaySocket.send(GroupRelayProtocol.action(registration.action), over: socket)
+      guard case .registered = try await GroupRelaySocket.receive(over: socket) else {
+        throw RelayError.handshake
+      }
     }
     try await authenticate(connection, over: socket)
     connection.ready = true
@@ -168,7 +180,7 @@ extension GroupRelayTransport {
     sendNext(connection)
 
     while !Task.isCancelled {
-      try handle(try await receive(over: socket), for: connection)
+      try handle(try await GroupRelaySocket.receive(over: socket), for: connection)
     }
   }
 
@@ -176,18 +188,24 @@ extension GroupRelayTransport {
     _ connection: Connection,
     over socket: URLSessionWebSocketTask
   ) async throws {
-    try await send(
+    try await GroupRelaySocket.send(
       GroupRelayProtocol.authenticate(
         coordinationID: connection.group.coordinationID,
         capabilityID: connection.group.capabilityID),
       over: socket)
-    guard case .challenge(let nonce) = try await receive(over: socket) else {
+    guard case .challenge(let nonce) = try await GroupRelaySocket.receive(over: socket) else {
       throw RelayError.handshake
     }
     let signature = try signer(connection.group.groupID, nonce)
-    try await send(GroupRelayProtocol.auth(signature: signature), over: socket)
-    guard case .ok = try await receive(over: socket) else { throw RelayError.handshake }
-    guard onAuthenticated?(connection.group.groupID, connection.group.capabilityID) == true else {
+    try await GroupRelaySocket.send(GroupRelayProtocol.auth(signature: signature), over: socket)
+    guard case .ok = try await GroupRelaySocket.receive(over: socket) else {
+      throw RelayError.handshake
+    }
+    guard
+      connection.authorization.confirmIfRequired({
+        onAuthenticated?(connection.group.groupID, connection.group.capabilityID) == true
+      })
+    else {
       throw RelayError.protocolError
     }
   }
@@ -272,6 +290,13 @@ extension GroupRelayTransport {
       onCoordinatorCandidate?(
         receipt.publicValue, submission.candidate, "\(effect.id):receipt") == true
     guard accepted else { throw RelayError.protocolError }
+    guard
+      connection.authorization.confirmIfRequired({
+        onAuthenticated?(connection.group.groupID, connection.group.capabilityID) == true
+      })
+    else {
+      throw RelayError.protocolError
+    }
     connection.awaiting = nil
     guard onEffectDelivered?(effect.id) == true else {
       connection.awaiting = .effect(effect)
@@ -316,7 +341,7 @@ extension GroupRelayTransport {
       do {
         guard let self else { return }
         let data = try self.data(for: operation)
-        try await self.send(data, over: socket)
+        try await GroupRelaySocket.send(data, over: socket)
       } catch {
         connection?.socket?.cancel(with: .internalServerError, reason: nil)
       }
@@ -353,29 +378,4 @@ extension GroupRelayTransport {
     }
   }
 
-  private func sameEndpoint(_ lhs: PigeonGroupState, _ rhs: PigeonGroupState) -> Bool {
-    lhs.groupID == rhs.groupID && lhs.relayURL == rhs.relayURL
-      && lhs.capabilityPublicKey == rhs.capabilityPublicKey
-      && lhs.capabilityID == rhs.capabilityID
-  }
-
-  private func send(_ data: Data, over socket: URLSessionWebSocketTask) async throws {
-    guard let text = String(data: data, encoding: .utf8) else { throw RelayError.protocolError }
-    try await socket.send(.string(text))
-  }
-
-  private func receive(over socket: URLSessionWebSocketTask) async throws
-    -> GroupRelayProtocol.ServerFrame
-  {
-    let data: Data
-    switch try await socket.receive() {
-    case .string(let text): data = Data(text.utf8)
-    case .data(let bytes): data = bytes
-    @unknown default: throw RelayError.protocolError
-    }
-    guard data.count <= 2 * 1024 * 1024,
-      let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-    else { throw RelayError.protocolError }
-    return GroupRelayProtocol.classify(object)
-  }
 }

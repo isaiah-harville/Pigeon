@@ -307,6 +307,27 @@ Local mesh delivery is an explicit per-group owner opt-in and is off by default.
 Relay and mesh copies use the same authenticated MLS ciphertext and replay
 ledger, so transport duplication cannot produce duplicate application events.
 
+Every roster entry authenticates that member's Pigeon root identity, MLS
+signature key, relay-capability key, and recovery key in the MLS group-context
+policy. Membership commits replace the relay's complete capability set rather
+than editing individual grants. The app does not surface the membership event
+until the selected relay confirms that canonical replacement, so a removed
+member's old read/append capability is revoked before the removal is presented
+as complete.
+
+If the selected coordinator is unavailable, any current admin may propose a
+replacement relay/coordinator binding. The proposal commits to the exact group,
+MLS epoch, policy revision and hash, roster hash, last coordinator receipt, and
+the replacement capability-set hash. When delegated admins exist, a strict
+majority of those non-owner admins must sign with their policy-bound recovery
+keys; the permanent owner is the sole endorser only when no delegated admin
+exists. Proposals and endorsements travel as application data inside the
+existing MLS group, over its current group mailbox or its opt-in mesh path, so
+recovery does not require the owner or failed coordinator to be online. The
+result is an ordinary MLS epoch transition, and stale, replayed, minority, or
+removed-member certificates fail closed. A complete delivery partition still
+prevents progress: recovery restores coordination authority, not connectivity.
+
 ---
 
 ## 6. Transport & Mesh

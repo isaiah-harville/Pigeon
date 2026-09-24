@@ -9,11 +9,26 @@ use crate::wire::{MAX_MLS_OBJECT_BYTES, MAX_PROPOSAL_CANDIDATES, PROTOCOL_VERSIO
 pub struct GroupMutationCandidate {
     proposals: Vec<Vec<u8>>,
     commit: Vec<u8>,
+    recovery_certificate: Vec<u8>,
 }
 
 impl GroupMutationCandidate {
     pub fn new(proposals: Vec<Vec<u8>>, commit: Vec<u8>) -> Result<Self, Error> {
-        let candidate = Self { proposals, commit };
+        let candidate = Self {
+            proposals,
+            commit,
+            recovery_certificate: Vec::new(),
+        };
+        candidate.validate()?;
+        Ok(candidate)
+    }
+
+    pub fn with_recovery(commit: Vec<u8>, recovery_certificate: Vec<u8>) -> Result<Self, Error> {
+        let candidate = Self {
+            proposals: Vec::new(),
+            commit,
+            recovery_certificate,
+        };
         candidate.validate()?;
         Ok(candidate)
     }
@@ -33,6 +48,7 @@ impl GroupMutationCandidate {
         let candidate = Self {
             proposals: decoded.proposals,
             commit: decoded.commit,
+            recovery_certificate: decoded.recovery_certificate,
         };
         candidate.validate()?;
         Ok(candidate)
@@ -43,6 +59,7 @@ impl GroupMutationCandidate {
             version: PROTOCOL_VERSION,
             proposals: self.proposals.clone(),
             commit: self.commit.clone(),
+            recovery_certificate: self.recovery_certificate.clone(),
         }
         .encode_to_vec()
     }
@@ -55,6 +72,10 @@ impl GroupMutationCandidate {
         &self.commit
     }
 
+    pub fn recovery_certificate(&self) -> Option<&[u8]> {
+        (!self.recovery_certificate.is_empty()).then_some(self.recovery_certificate.as_slice())
+    }
+
     fn validate(&self) -> Result<(), Error> {
         if self.commit.is_empty() {
             return Err(Error::MalformedBundle);
@@ -64,6 +85,12 @@ impl GroupMutationCandidate {
         }
         if self.commit.len() > MAX_MLS_OBJECT_BYTES {
             return Err(Error::ResourceLimit("MLS commit bytes"));
+        }
+        if self.recovery_certificate.len() > MAX_MLS_OBJECT_BYTES {
+            return Err(Error::ResourceLimit("group recovery certificate bytes"));
+        }
+        if !self.recovery_certificate.is_empty() && !self.proposals.is_empty() {
+            return Err(Error::MalformedBundle);
         }
         for proposal in &self.proposals {
             if proposal.is_empty() {
@@ -77,6 +104,7 @@ impl GroupMutationCandidate {
             version: PROTOCOL_VERSION,
             proposals: self.proposals.clone(),
             commit: self.commit.clone(),
+            recovery_certificate: self.recovery_certificate.clone(),
         }
         .encoded_len();
         if encoded_len > MAX_MLS_OBJECT_BYTES {

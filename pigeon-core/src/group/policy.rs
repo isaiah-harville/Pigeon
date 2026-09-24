@@ -6,7 +6,9 @@ use sha2::{Digest, Sha256};
 use unicode_general_category::{GeneralCategory, get_general_category};
 use unicode_normalization::UnicodeNormalization;
 
-use super::{CoordinatorBinding, GroupAction, GroupId, PolicyEvent, PolicyEventKind};
+use super::{
+    CoordinatorBinding, GroupAction, GroupId, PolicyEvent, PolicyEventKind, RecoveryCertificate,
+};
 use crate::identity::GroupMemberKeys;
 use crate::wire::{
     MAX_GROUP_MEMBERS, MAX_GROUP_NAME_BYTES, MAX_GROUP_NAME_SCALARS, MAX_MLS_OBJECT_BYTES, proto,
@@ -283,6 +285,62 @@ impl PigeonGroupPolicy {
         validate_transition(self, candidate, action)
     }
 
+    pub(crate) fn recover(
+        &self,
+        candidate: &Self,
+        actor: [u8; 32],
+        certificate: &RecoveryCertificate,
+    ) -> Result<PolicyEvent, PolicyError> {
+        self.validate_invariants()?;
+        candidate.validate_invariants()?;
+        self.require_admin(&actor)?;
+        let proposal = certificate.proposal();
+        if proposal.group_id() != *self.group_id.as_bytes()
+            || candidate.group_id != self.group_id
+            || candidate.owner != self.owner
+            || candidate.admins != self.admins
+            || candidate.members != self.members
+            || candidate.member_keys != self.member_keys
+            || candidate.name != self.name
+            || candidate.mesh_enabled != self.mesh_enabled
+            || candidate.dissolved != self.dissolved
+            || candidate.revision
+                != self
+                    .revision
+                    .checked_add(1)
+                    .ok_or(PolicyError::InvalidRevision)?
+            || candidate.relay_url != proposal.replacement_relay_url()
+            || candidate.coordination_id != proposal.replacement().coordination_id
+            || candidate.coordinator_public_key != proposal.replacement().public_key
+        {
+            return Err(PolicyError::UnexpectedTransition);
+        }
+        Ok(PolicyEvent {
+            kind: PolicyEventKind::RelayChanged,
+            actor,
+            subject: None,
+            revision: candidate.revision,
+        })
+    }
+
+    pub(crate) fn recovered_policy(
+        &self,
+        actor: [u8; 32],
+        certificate: &RecoveryCertificate,
+    ) -> Result<(Self, PolicyEvent), PolicyError> {
+        self.require_admin(&actor)?;
+        let mut candidate = self.clone();
+        candidate.relay_url = certificate.proposal().replacement_relay_url().to_owned();
+        candidate.coordination_id = certificate.proposal().replacement().coordination_id;
+        candidate.coordinator_public_key = certificate.proposal().replacement().public_key;
+        candidate.revision = self
+            .revision
+            .checked_add(1)
+            .ok_or(PolicyError::InvalidRevision)?;
+        let event = self.recover(&candidate, actor, certificate)?;
+        Ok((candidate, event))
+    }
+
     pub(crate) fn can_leave(&self, actor: [u8; 32]) -> Result<(), PolicyError> {
         let committer = self
             .admins
@@ -304,6 +362,15 @@ impl PigeonGroupPolicy {
 
     pub fn is_admin(&self, identity: [u8; 32]) -> bool {
         self.admins.binary_search(&identity).is_ok()
+    }
+
+    pub(crate) fn can_endorse_recovery(&self, identity: [u8; 32]) -> bool {
+        let has_non_owner_admin = self.admins.iter().any(|admin| *admin != self.owner);
+        if has_non_owner_admin {
+            identity != self.owner && self.is_admin(identity)
+        } else {
+            identity == self.owner
+        }
     }
 
     pub fn member_capability_key(&self, identity: [u8; 32]) -> Option<[u8; 32]> {

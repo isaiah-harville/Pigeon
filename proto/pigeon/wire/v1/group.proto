@@ -219,6 +219,7 @@ message GroupMutationCandidate {
   uint32 version = 1;
   repeated bytes proposals = 2;
   bytes commit = 3;
+  bytes recovery_certificate = 4;
 }
 
 message GroupLeaveProposal {
@@ -256,6 +257,7 @@ message GroupApplicationContent {
     GroupText text = 10;
     GroupReaction reaction = 11;
     GroupAcknowledgement acknowledgement = 12;
+    GroupRecoveryControl recovery_control = 13;
   }
 }
 
@@ -272,4 +274,20 @@ message GroupReaction {
 message GroupAcknowledgement {
   bytes original_sender_identity = 1;
   bytes message_id = 2;
+}
+
+enum GroupRecoveryControlKind {
+  GROUP_RECOVERY_CONTROL_KIND_UNSPECIFIED = 0;
+  GROUP_RECOVERY_CONTROL_KIND_PROPOSAL = 1;
+  GROUP_RECOVERY_CONTROL_KIND_ENDORSEMENT = 2;
+  GROUP_RECOVERY_CONTROL_KIND_CANDIDATE = 3;
+}
+
+// MLS-encrypted recovery coordination carried by the existing group mailbox.
+// An empty recipient is a group broadcast; a 32-byte recipient is processed
+// only by that member after MLS authenticates the sender and content.
+message GroupRecoveryControl {
+  GroupRecoveryControlKind kind = 1;
+  bytes recipient_identity = 2;
+  bytes payload = 3;
 }

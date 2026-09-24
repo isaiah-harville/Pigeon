@@ -5,7 +5,7 @@ use tls_codec::{Deserialize, Serialize};
 use super::{
     AuthenticatedGroupMessage, CoordinatorBinding, GroupAction, GroupApplication, GroupCiphertext,
     GroupId, GroupMessageId, GroupMutationCandidate, PendingMutation, PigeonGroupPolicy,
-    PolicyEvent,
+    PolicyEvent, RecoveryCertificate,
 };
 use crate::Error;
 use crate::identity::{
@@ -59,6 +59,29 @@ impl GroupEngine {
         event: PolicyEvent,
     ) -> Result<Self, Error> {
         policy.relay_capability_delta(&next_policy, &event)?;
+        let mut engine = Self::restore(storage, policy, expected_epoch)?;
+        engine.pending = Some(PendingMutation {
+            commit,
+            policy: next_policy,
+            event,
+            welcome: None,
+        });
+        Ok(engine)
+    }
+
+    pub(crate) fn restore_recovery_pending(
+        storage: &TransactionalOpenMlsStorage,
+        policy: PigeonGroupPolicy,
+        expected_epoch: u64,
+        commit: Vec<u8>,
+        next_policy: PigeonGroupPolicy,
+        event: PolicyEvent,
+        certificate: &RecoveryCertificate,
+    ) -> Result<Self, Error> {
+        let expected = policy.recover(&next_policy, event.actor, certificate)?;
+        if expected != event {
+            return Err(Error::InvalidSignature);
+        }
         let mut engine = Self::restore(storage, policy, expected_epoch)?;
         engine.pending = Some(PendingMutation {
             commit,
@@ -362,6 +385,47 @@ impl GroupEngine {
         Ok(pending)
     }
 
+    pub fn stage_recovery<I: SecureIdentity>(
+        &mut self,
+        identity: &I,
+        storage: &mut TransactionalOpenMlsStorage,
+        certificate: &RecoveryCertificate,
+        receipt_head: [u8; 32],
+    ) -> Result<PendingMutation, Error> {
+        if self.pending.is_some() {
+            return Err(Error::Mls("candidate already pending"));
+        }
+        certificate
+            .verify(&self.policy, self.epoch, receipt_head)
+            .map_err(|_| Error::InvalidSignature)?;
+        let actor = identity.ensure_public_key(crate::IdentityPurpose::Root)?;
+        let (candidate, event) = self.policy.recovered_policy(actor, certificate)?;
+        let signer = PlatformMlsSigner(identity);
+        let provider = storage.provider();
+        let mut group = load_group(provider, self.group_id)?;
+        let bundle = group
+            .commit_builder()
+            .propose_group_context_extensions(policy_extensions(&candidate)?)
+            .map_err(|_| Error::Mls("propose recovery policy extension"))?
+            .load_psks(provider.storage())
+            .map_err(|_| Error::Mls("load pre-shared keys"))?
+            .build(provider.rand(), provider.crypto(), &signer, |_| true)
+            .map_err(|_| Error::Mls("build recovery commit"))?
+            .stage_commit(provider)
+            .map_err(|_| Error::Mls("stage recovery commit"))?;
+        let pending = PendingMutation {
+            commit: bundle
+                .commit()
+                .tls_serialize_detached()
+                .map_err(|_| Error::Serialization)?,
+            policy: candidate,
+            event,
+            welcome: None,
+        };
+        self.pending = Some(pending.clone());
+        Ok(pending)
+    }
+
     pub fn propose_leave<I: SecureIdentity>(
         &mut self,
         identity: &I,
@@ -466,6 +530,36 @@ impl GroupEngine {
         storage: &mut TransactionalOpenMlsStorage,
         candidate: &GroupMutationCandidate,
     ) -> Result<PolicyEvent, Error> {
+        self.merge_candidate(storage, candidate, None)
+    }
+
+    pub fn merge_recovery_candidate(
+        &mut self,
+        storage: &mut TransactionalOpenMlsStorage,
+        candidate: &GroupMutationCandidate,
+        certificate: &RecoveryCertificate,
+        receipt_head: [u8; 32],
+    ) -> Result<PolicyEvent, Error> {
+        self.merge_candidate(storage, candidate, Some((certificate, receipt_head)))
+    }
+
+    fn merge_candidate(
+        &mut self,
+        storage: &mut TransactionalOpenMlsStorage,
+        candidate: &GroupMutationCandidate,
+        recovery: Option<(&RecoveryCertificate, [u8; 32])>,
+    ) -> Result<PolicyEvent, Error> {
+        match (candidate.recovery_certificate(), recovery) {
+            (Some(encoded), Some((certificate, receipt_head)))
+                if encoded == certificate.encode().as_slice() =>
+            {
+                certificate
+                    .verify(&self.policy, self.epoch, receipt_head)
+                    .map_err(|_| Error::InvalidSignature)?;
+            }
+            (None, None) => {}
+            _ => return Err(Error::InvalidSignature),
+        }
         let provider = storage.provider();
         let mut group = load_group(provider, self.group_id)?;
         let mut discarded_local_commit = false;
@@ -507,7 +601,9 @@ impl GroupEngine {
             return Err(Error::Mls("canonical message was not a commit"));
         };
         let candidate = policy_from_extensions(staged.group_context().extensions())?;
-        let event = if let Some(departing) = authenticated_self_remove(&group, &staged, actor)? {
+        let event = if let Some((certificate, _)) = recovery {
+            self.policy.recover(&candidate, actor, certificate)?
+        } else if let Some(departing) = authenticated_self_remove(&group, &staged, actor)? {
             self.policy.authenticate_action(
                 &candidate,
                 &GroupAction::Leave {

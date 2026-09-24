@@ -136,10 +136,12 @@ authenticated mutable policy live in `pigeon-core`; the selected relay hosts the
 opaque group mailbox and signed commit coordinator. Groups support 3–128 members,
 a permanent owner, delegated admins, post-join history, owner-controlled name,
 owner-controlled explicit mesh opt-in, member leave, and permanent dissolve.
-Before release, this surface remains audit and interoperability work: adversarial
-state-machine tests, multi-device soak tests, coordinator failover/recovery,
-metadata minimization, and independent cryptographic review. Do not describe it
-as audited or production-secure until that work is complete.
+The implementation includes adversarial state-machine tests, authenticated
+coordinator failover without owner availability, atomic capability rotation,
+and transactional crash recovery. Physical multi-device and locked-delivery
+validation remain release gates. Metadata minimization and independent
+cryptographic review remain audit-readiness work; do not describe Pigeon as
+audited or production-secure without that evidence.
 
 **Long-distance / non-Bluetooth transport** (same E2E ciphertext across local or
 federated paths):

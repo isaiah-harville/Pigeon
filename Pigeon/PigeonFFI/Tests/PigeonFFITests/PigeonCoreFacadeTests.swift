@@ -67,6 +67,30 @@ final class PigeonCoreFacadeTests: XCTestCase {
     XCTAssertEqual(snapshot.pendingOutbound.map(\.id), [output.outbound[1].id])
   }
 
+  func testBeginGroupRecoveryCommandPreservesReplacementCoordinatorContext() throws {
+    let command = PigeonCoreCommand(
+      id: "begin-recovery",
+      body: .beginGroupRecovery(
+        PigeonBeginGroupRecovery(
+          groupID: Data(repeating: 1, count: 32),
+          replacementRelayURL: "https://replacement-relay.example",
+          replacementCoordinationID: Data(repeating: 2, count: 32),
+          replacementCoordinatorPublicKey: Data(repeating: 3, count: 32))))
+
+    let proto = try command.proto()
+
+    XCTAssertEqual(proto.beginGroupRecovery.groupID, Data(repeating: 1, count: 32))
+    XCTAssertEqual(
+      proto.beginGroupRecovery.replacementRelayURL,
+      "https://replacement-relay.example")
+    XCTAssertEqual(
+      proto.beginGroupRecovery.replacementCoordinationID,
+      Data(repeating: 2, count: 32))
+    XCTAssertEqual(
+      proto.beginGroupRecovery.replacementCoordinatorPublicKey,
+      Data(repeating: 3, count: 32))
+  }
+
   func testFacadeMapsEveryEventAndPreservesUnknownEnums() throws {
     var output = Pigeon_Wire_V1_ClientOutput()
     output.checkpointGeneration = 12

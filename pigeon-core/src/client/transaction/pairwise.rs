@@ -291,7 +291,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         self.stage_pairwise_item(&item.item_id, recipient, item.kind, item.payload, candidate)
     }
 
-    fn stage_pairwise_item(
+    pub(super) fn stage_pairwise_item(
         &self,
         item_id: &str,
         recipient: [u8; 32],

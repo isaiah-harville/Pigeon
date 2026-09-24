@@ -2,6 +2,7 @@ mod checkpoint;
 mod group_creation;
 mod group_messaging;
 mod group_policy;
+mod group_recovery;
 mod pairwise;
 
 use checkpoint::{decode_checkpoint, encode_checkpoint};
@@ -46,6 +47,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 pairwise_sessions: Vec::new(),
                 consumed_pairwise_envelope_hashes: Vec::new(),
                 deferred_events: Vec::new(),
+                pending_group_recoveries: Vec::new(),
             },
         };
         Ok(Self {
@@ -174,6 +176,22 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                         .into_iter()
                         .map(|inner| crate::client::AppEvent { inner }),
                 );
+            }
+            proto::client_command::Body::RecoverGroup(recovery) => {
+                self.stage_recover_group(
+                    &command.inner.command_id,
+                    recovery,
+                    &mut candidate,
+                    &mut output,
+                )?;
+            }
+            proto::client_command::Body::BeginGroupRecovery(recovery) => {
+                self.stage_begin_group_recovery(
+                    &command.inner.command_id,
+                    recovery,
+                    &mut candidate,
+                    &mut output,
+                )?;
             }
             proto::client_command::Body::EnsurePairwiseAccount(_) => {
                 if candidate.pairwise_account_state.is_empty()

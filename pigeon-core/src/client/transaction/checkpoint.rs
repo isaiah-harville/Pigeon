@@ -4,7 +4,9 @@ use sha2::{Digest, Sha256};
 use crate::Error;
 use crate::group::{CoordinatorChain, GroupEngine, GroupId};
 use crate::storage::{SealedCheckpoint, StorageError};
-use crate::wire::{MAX_PENDING_OUTBOUND_ENTRIES, PROTOCOL_VERSION, proto};
+use crate::wire::{
+    MAX_GROUP_MEMBERS, MAX_MLS_OBJECT_BYTES, MAX_PENDING_OUTBOUND_ENTRIES, PROTOCOL_VERSION, proto,
+};
 
 pub(super) fn encode_message_id(bytes: &[u8; 16]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
@@ -133,6 +135,15 @@ pub(super) fn decode_checkpoint(
             .iter()
             .any(|hash| hash.len() != 32)
         || state.deferred_events.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state.pending_group_recoveries.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state.pending_group_recoveries.iter().any(|pending| {
+            pending.proposal.is_empty()
+                || pending.proposal.len() > MAX_MLS_OBJECT_BYTES
+                || pending.endorsements.len() > MAX_GROUP_MEMBERS
+                || pending.endorsements.iter().any(|endorsement| {
+                    endorsement.is_empty() || endorsement.len() > MAX_MLS_OBJECT_BYTES
+                })
+        })
         || state.deferred_events.iter().any(|deferred| {
             let waits_for_outbound = !deferred.outbound_item_id.is_empty()
                 && deferred.active_capability_id.len() == 32
