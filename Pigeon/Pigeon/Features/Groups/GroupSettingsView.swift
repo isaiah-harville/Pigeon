@@ -10,10 +10,12 @@ struct GroupSettingsView: View {
   @State private var proposedName = ""
   @State private var showAddMember = false
   @State private var showRecovery = false
+  @State private var showRelayChange = false
   @State private var confirmation: DestructiveAction?
   @State private var errorMessage: String?
   @State private var proposedRelayURL = ""
   @State private var recoveryInProgress = false
+  @State private var relayChangeInProgress = false
   @State private var recoveryStatusMessage: String?
 
   private enum DestructiveAction: String, Identifiable {
@@ -22,9 +24,7 @@ struct GroupSettingsView: View {
     var id: String { rawValue }
   }
 
-  private var group: PigeonGroupState? {
-    session.groups.first { $0.groupID == groupID }
-  }
+  private var group: PigeonGroupState? { session.groups.first { $0.groupID == groupID } }
 
   var body: some View {
     NavigationStack {
@@ -51,6 +51,19 @@ struct GroupSettingsView: View {
       Text(
         "Admins will authenticate this replacement inside the existing MLS group. "
           + "The relay changes only after the required admin quorum agrees."
+      )
+    }
+    .alert("Change Group Relay", isPresented: $showRelayChange) {
+      TextField("https://relay.example", text: $proposedRelayURL)
+        .textInputAutocapitalization(.never)
+        .keyboardType(.URL)
+      Button("Cancel", role: .cancel) {}
+      Button("Change") { changeRelay() }
+        .disabled(relayChangeInProgress || replacementRelayURL == nil)
+    } message: {
+      Text(
+        "The new endpoint must use the group's current coordinator key. "
+          + "Use relay recovery when moving to a different operator."
       )
     }
     .confirmationDialog(
@@ -134,25 +147,51 @@ extension GroupSettingsView {
   private func ownerControls(_ group: PigeonGroupState) -> some View {
     if isOwner(group) {
       Section("Owner controls") {
-        Button {
-          proposedName = group.name
-          showRename = true
-        } label: {
-          Label("Change Group Name", systemImage: "pencil")
+        renameButton(group)
+        meshButton(group)
+        relayButton(group)
+        LabeledContent("Current relay", value: URL(string: group.relayURL)?.host ?? group.relayURL)
+        if relayChangeInProgress {
+          HStack {
+            ProgressView()
+            Text("Verifying coordinator and staging relay change…")
+          }
+          .font(.footnote)
+          .foregroundStyle(.secondary)
         }
-        Button {
-          apply(.meshChanged, boolValue: !group.meshEnabled)
-        } label: {
-          Label(
-            group.meshEnabled ? "Turn Off Local Mesh" : "Turn On Local Mesh",
-            systemImage: group.meshEnabled
-              ? "antenna.radiowaves.left.and.right.slash"
-              : "antenna.radiowaves.left.and.right")
-        }
-        LabeledContent(
-          "Group relay", value: URL(string: group.relayURL)?.host ?? group.relayURL)
       }
     }
+  }
+
+  private func renameButton(_ group: PigeonGroupState) -> some View {
+    Button {
+      proposedName = group.name
+      showRename = true
+    } label: {
+      Label("Change Group Name", systemImage: "pencil")
+    }
+  }
+
+  private func meshButton(_ group: PigeonGroupState) -> some View {
+    Button {
+      apply(.meshChanged, boolValue: !group.meshEnabled)
+    } label: {
+      Label(
+        group.meshEnabled ? "Turn Off Local Mesh" : "Turn On Local Mesh",
+        systemImage: group.meshEnabled
+          ? "antenna.radiowaves.left.and.right.slash"
+          : "antenna.radiowaves.left.and.right")
+    }
+  }
+
+  private func relayButton(_ group: PigeonGroupState) -> some View {
+    Button {
+      proposedRelayURL = group.relayURL
+      showRelayChange = true
+    } label: {
+      Label("Change Group Relay", systemImage: "network")
+    }
+    .disabled(relayChangeInProgress)
   }
 
   private func membersSection(_ group: PigeonGroupState) -> some View {
@@ -195,7 +234,16 @@ extension GroupSettingsView {
       }
     } else if group.memberIdentities.contains(session.myID), group.memberIdentities.count > 3 {
       Section {
-        Button("Leave Group", role: .destructive) { confirmation = .leave }
+        if group.localLeavePending {
+          HStack {
+            ProgressView()
+            Text("Waiting for an admin to approve your leave request…")
+          }
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+        } else {
+          Button("Leave Group", role: .destructive) { confirmation = .leave }
+        }
       }
     }
   }
@@ -251,9 +299,7 @@ extension GroupSettingsView {
       ?? "Member \(identity.prefix(3).map { String(format: "%02x", $0) }.joined())"
   }
 
-  private func isOwner(_ group: PigeonGroupState) -> Bool {
-    group.ownerIdentity == session.myID
-  }
+  private func isOwner(_ group: PigeonGroupState) -> Bool { group.ownerIdentity == session.myID }
 
   private func isAdmin(_ group: PigeonGroupState) -> Bool {
     group.adminIdentities.contains(session.myID)
@@ -293,6 +339,23 @@ extension GroupSettingsView {
     }
   }
 
+  private func changeRelay() {
+    guard let group, let replacementRelayURL else { return }
+    relayChangeInProgress = true
+    errorMessage = nil
+    Task {
+      do {
+        try await session.changeGroupRelay(group, to: replacementRelayURL)
+      } catch SessionManager.GroupRecoveryError.coordinatorMismatch {
+        errorMessage =
+          "That relay uses a different coordinator key. Use Recover Group Relay instead."
+      } catch {
+        errorMessage = "The relay change could not be staged. Verify the relay and try again."
+      }
+      relayChangeInProgress = false
+    }
+  }
+
   private func apply(
     _ kind: PigeonGroupPolicyChangeKind,
     subject: Data = Data(),
@@ -309,70 +372,6 @@ extension GroupSettingsView {
       errorMessage =
         "The change was not staged. Another group change may still be pending, "
         + "or your role may not allow it."
-    }
-  }
-}
-
-private struct AddGroupMemberView: View {
-  @Environment(SessionManager.self) private var session
-  @Environment(\.dismiss) private var dismiss
-  let groupID: Data
-
-  @State private var errorMessage: String?
-
-  private var group: PigeonGroupState? { session.groups.first { $0.groupID == groupID } }
-  private var candidates: [Contact] {
-    guard let group else { return [] }
-    return session.contacts.filter { contact in
-      contact.requestState == .none && !group.memberIdentities.contains(contact.id)
-        && contact.pairwiseControlPrekeyBundle != nil
-        && (contact.preferredRelayURL != nil || !contact.relayURLs.isEmpty)
-    }
-  }
-
-  var body: some View {
-    NavigationStack {
-      List {
-        ForEach(candidates) { contact in
-          Button {
-            add(contact)
-          } label: {
-            HStack(spacing: 12) {
-              ContactAvatar(name: contact.displayName, seed: contact.id, size: 42)
-              Text(contact.displayName).foregroundStyle(.primary)
-              Spacer()
-              Image(systemName: "plus.circle.fill")
-            }
-          }
-        }
-        if candidates.isEmpty {
-          ContentUnavailableView(
-            "No contacts to add", systemImage: "person.badge.plus",
-            description: Text(
-              "Eligible contacts need an accepted, current Pigeon contact card."))
-        }
-        if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
-      }
-    }
-    .navigationTitle("Add Member")
-    .navigationBarTitleDisplayMode(.inline)
-    .toolbar {
-      ToolbarItem(placement: .cancellationAction) {
-        Button("Cancel") { dismiss() }
-      }
-    }
-  }
-
-  private func add(_ contact: Contact) {
-    guard let group else { return }
-    do {
-      try session.changeGroupPolicy(
-        .memberAdded, in: group, subjectIdentity: contact.id,
-        stringValue: "", boolValue: false)
-      dismiss()
-    } catch {
-      errorMessage =
-        "The invitation could not be staged. Wait for any pending group change and try again."
     }
   }
 }

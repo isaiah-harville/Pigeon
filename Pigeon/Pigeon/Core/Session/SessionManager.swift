@@ -91,6 +91,8 @@ final class SessionManager {
   /// this process. The relay effect remains pending until the relay confirms it.
   var meshedCoreOutboundIDs: Set<String> = []
   var meshedPairwiseOutboundIDs: Set<String> = []
+  /// Pending receipt timers, one per group; see `+GroupAcknowledgements`.
+  @ObservationIgnored var groupAcknowledgementFlushes: [Data: Task<Void, Never>] = [:]
 
   /// Configured relay endpoints, mirrored here so the value is observable —
   /// changing it refreshes anything that depends on it (e.g. the QR card, which
@@ -194,6 +196,8 @@ final class SessionManager {
       pairwiseRelay.reconfigure(snapshot: refreshedCoreSnapshot)
     }
     refreshRelay()  // pick up loaded contacts' relays
+    // Receipts queued before the last lock or relaunch go out now.
+    flushGroupAcknowledgements()
     // If anything was buffered while locked, re-subscribe our own relays: those
     // envelopes were surfaced but not acked (we couldn't consume them locked),
     // so the relay still holds them — pull them again now that we can ack.

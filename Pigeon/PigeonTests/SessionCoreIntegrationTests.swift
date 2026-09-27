@@ -68,16 +68,20 @@ final class SessionCoreIntegrationTests: XCTestCase {
     XCTAssertEqual(fixture.manager.coreSnapshotGeneration, initialGeneration + 1)
   }
 
-  func testInvalidGroupRelayMessageDoesNotAdvanceCoreState() throws {
+  func testInvalidGroupRelayMessageIsDurablyClassifiedOnce() throws {
     let fixture = try makeFixture()
     defer { wipe(fixture.store) }
     try fixture.manager.attachStore(fixture.store)
     let initialGeneration = fixture.manager.coreSnapshotGeneration
 
-    XCTAssertFalse(
+    XCTAssertTrue(
       fixture.manager.consumeGroupRelayMessage(
         Data("not an MLS message".utf8), requestID: "relay-entry-1"))
-    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, initialGeneration)
+    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, initialGeneration + 1)
+    XCTAssertTrue(
+      fixture.manager.consumeGroupRelayMessage(
+        Data("not an MLS message".utf8), requestID: "relay-entry-1"))
+    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, initialGeneration + 1)
   }
 
   func testCoreEventIsAcknowledgedOnlyAfterGroupHistoryPersists() throws {
@@ -324,6 +328,33 @@ extension SessionCoreIntegrationTests {
       XCTFail("Expected unauthorized recovery error")
     } catch {
       XCTAssertEqual(error as? SessionManager.GroupRecoveryError, .unauthorized)
+    }
+  }
+
+  func testOwnerRelayChangeRejectsDifferentCoordinatorBeforeCallingCore() async throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    let relay = try XCTUnwrap(URL(string: "wss://replacement.example/group/ws"))
+    let group = PigeonGroupState(
+      groupID: Data(repeating: 1, count: 32),
+      ownerIdentity: fixture.manager.myID,
+      adminIdentities: [fixture.manager.myID],
+      memberIdentities: [
+        fixture.manager.myID, Data(repeating: 3, count: 32), Data(repeating: 4, count: 32),
+      ],
+      name: "Birds", relayURL: "https://relay.example",
+      coordinationID: Data(repeating: 5, count: 32), meshEnabled: false,
+      epoch: 3, policyRevision: 1, dissolved: false,
+      capabilityPublicKey: Data(repeating: 6, count: 32),
+      capabilityID: Data(repeating: 8, count: 32),
+      coordinatorPublicKey: Data(repeating: 7, count: 32))
+    fixture.manager.resolveGroupCoordinatorKey = { _ in Data(repeating: 9, count: 32) }
+
+    do {
+      _ = try await fixture.manager.changeGroupRelay(group, to: relay)
+      XCTFail("Expected coordinator mismatch")
+    } catch {
+      XCTAssertEqual(error as? SessionManager.GroupRecoveryError, .coordinatorMismatch)
     }
   }
 

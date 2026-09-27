@@ -5,7 +5,8 @@ use crate::Error;
 use crate::group::{CoordinatorChain, GroupEngine, GroupId};
 use crate::storage::{SealedCheckpoint, StorageError};
 use crate::wire::{
-    MAX_GROUP_MEMBERS, MAX_MLS_OBJECT_BYTES, MAX_PENDING_OUTBOUND_ENTRIES, PROTOCOL_VERSION, proto,
+    MAX_CLIENT_CHECKPOINT_BYTES, MAX_GROUP_MEMBERS, MAX_MLS_OBJECT_BYTES,
+    MAX_PENDING_OUTBOUND_ENTRIES, MAX_STABLE_ID_BYTES, PROTOCOL_VERSION, proto,
 };
 
 pub(super) fn encode_message_id(bytes: &[u8; 16]) -> String {
@@ -122,13 +123,47 @@ pub(super) fn encode_checkpoint(state: &proto::ClientCheckpoint) -> SealedCheckp
 pub(super) fn decode_checkpoint(
     checkpoint: SealedCheckpoint,
 ) -> Result<proto::ClientCheckpoint, Error> {
-    if Sha256::digest(&checkpoint.bytes).as_slice() != checkpoint.sha256 {
+    if checkpoint.bytes.len() > MAX_CLIENT_CHECKPOINT_BYTES
+        || Sha256::digest(&checkpoint.bytes).as_slice() != checkpoint.sha256
+    {
         return Err(Error::Persistence(StorageError::Corrupt));
     }
     let state = proto::ClientCheckpoint::decode(checkpoint.bytes.as_slice())
         .map_err(|_| Error::Persistence(StorageError::Corrupt))?;
     if state.version != PROTOCOL_VERSION
         || state.generation != checkpoint.generation
+        || state.applied_command_ids.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state
+            .applied_command_ids
+            .iter()
+            .any(|id| id.is_empty() || id.len() > MAX_STABLE_ID_BYTES)
+        || state.groups.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state.pending_group_creations.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state.consumed_key_package_hashes.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state
+            .consumed_key_package_hashes
+            .iter()
+            .any(|hash| hash.len() != 32)
+        || state.processed_group_messages.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state.delivery_ledgers.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state.buffered_group_messages.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state.pending_group_mutations.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state.pending_group_additions.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state.pending_outbound.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state.pending_events.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state.pairwise_contacts.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state.pairwise_sessions.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state.pending_group_acknowledgements.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state.pending_group_acknowledgements.iter().any(|pending| {
+            pending.group_id.len() != 32
+                || pending.original_sender_identity.len() != 32
+                || pending.message_id.len() != 16
+        })
+        || state.pending_group_leaves.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state
+            .pending_group_leaves
+            .iter()
+            .any(|pending| pending.group_id.len() != 32)
         || state.consumed_pairwise_envelope_hashes.len() > MAX_PENDING_OUTBOUND_ENTRIES
         || state
             .consumed_pairwise_envelope_hashes

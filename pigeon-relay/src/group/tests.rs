@@ -8,6 +8,9 @@ use super::store::{
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
+use tempfile::tempdir;
+
+use crate::durable::{DurableError, GroupJournal, GROUP_DATABASE};
 
 fn config() -> Config {
     Config {
@@ -223,12 +226,12 @@ fn group_protocol_requires_current_version_negotiation() {
         gate_group_message(
             GroupClientMsg::Hello {
                 min_protocol_version: 1,
-                max_protocol_version: 5,
+                max_protocol_version: 6,
             },
             &mut negotiated
         ),
         GroupProtocolGate::Reply(GroupServerMsg::Compatible {
-            protocol_version: 5,
+            protocol_version: 6,
             ..
         })
     ));
@@ -320,4 +323,100 @@ fn replacement_rejects_replay_and_cannot_demote_permanent_owner() {
         store.replace_capabilities(&owner, 1, 2, [1; 32], demoted),
         Err(StoreError::InvalidRegistration)
     );
+}
+
+#[test]
+fn permanent_owner_tombstones_group_until_offline_readers_can_fetch_dissolution() {
+    let mut store = Store::bounded(config());
+    let group = store.register(registration(3)).unwrap();
+    store
+        .append(&group.writer(0), b"ciphertext".to_vec(), 1)
+        .unwrap();
+
+    store.revoke_group(&group.writer(0), 0, 10).unwrap();
+
+    assert_eq!(store.entry_count(group.id()), 1);
+    assert_eq!(store.fetch(&group.reader(1), 0).unwrap().len(), 1);
+    assert_eq!(
+        store.append(&group.writer(0), b"later".to_vec(), 11),
+        Err(StoreError::Unauthorized)
+    );
+    assert_eq!(
+        store.replace_capabilities(&group.writer(0), 0, 1, [1; 32], vec![]),
+        Err(StoreError::Unauthorized)
+    );
+
+    store.expire_at(71);
+    assert_eq!(
+        store.fetch(&group.reader(1), 0),
+        Err(StoreError::Unauthorized)
+    );
+    assert_eq!(store.total_bytes(), 0);
+}
+
+#[test]
+fn durable_group_state_survives_restart_with_rotation_cursors_and_tombstone() {
+    let directory = tempdir().unwrap();
+    let mut store =
+        Store::durable(config(), GroupJournal::open(directory.path()).unwrap(), 1).unwrap();
+    let group = store.register(registration(3)).unwrap();
+    let receipt = store
+        .append(&group.writer(0), b"durable ciphertext".to_vec(), 2)
+        .unwrap();
+    store.advance(&group.reader(1), receipt.sequence).unwrap();
+    let replacements = (0..3)
+        .map(|index| CapabilityRegistration {
+            capability_id: [(index + 111) as u8; 32],
+            public_key: [(index + 1) as u8; 32],
+            can_append: true,
+            can_read: true,
+            can_control: index == 0,
+        })
+        .collect::<Vec<_>>();
+    store
+        .replace_capabilities(&group.writer(0), 0, 1, [1; 32], replacements)
+        .unwrap();
+    let owner = store.resolve_capability(*group.id(), [111; 32]).unwrap();
+    store.revoke_group(&owner, 1, 3).unwrap();
+    drop(store);
+
+    let mut restored =
+        Store::durable(config(), GroupJournal::open(directory.path()).unwrap(), 4).unwrap();
+    let reader = restored.resolve_capability(*group.id(), [112; 32]).unwrap();
+    assert!(restored.fetch(&reader, 0).unwrap().is_empty());
+    let unread = restored.resolve_capability(*group.id(), [113; 32]).unwrap();
+    assert_eq!(restored.fetch(&unread, 0).unwrap().len(), 1);
+    assert_eq!(
+        restored.append(&owner, b"rejected".to_vec(), 4),
+        Err(StoreError::Unauthorized)
+    );
+
+    restored.expire_at(64);
+    drop(restored);
+    let expired =
+        Store::durable(config(), GroupJournal::open(directory.path()).unwrap(), 64).unwrap();
+    assert!(expired.resolve_capability(*group.id(), [112; 32]).is_none());
+}
+
+#[test]
+fn durable_group_state_rejects_corrupt_ciphertext_on_restart() {
+    let directory = tempdir().unwrap();
+    let mut store =
+        Store::durable(config(), GroupJournal::open(directory.path()).unwrap(), 1).unwrap();
+    let group = store.register(registration(3)).unwrap();
+    store
+        .append(&group.writer(0), b"durable ciphertext".to_vec(), 2)
+        .unwrap();
+    drop(store);
+
+    let connection = rusqlite::Connection::open(directory.path().join(GROUP_DATABASE)).unwrap();
+    connection
+        .execute("UPDATE entries SET ciphertext = X''", [])
+        .unwrap();
+    drop(connection);
+
+    assert!(matches!(
+        Store::durable(config(), GroupJournal::open(directory.path()).unwrap(), 3),
+        Err(DurableError::Corrupt("invalid group entry"))
+    ));
 }

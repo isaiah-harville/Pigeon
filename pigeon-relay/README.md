@@ -19,22 +19,25 @@ threat model and why remote delivery cannot be serverless.
 
 ```sh
 docker run -p 8080:8080 \
+  -v pigeon-relay-state:/var/lib/pigeon-relay \
   -e PIGEON_COORDINATOR_SIGNING_SEED_HEX="<64-hex-character-secret>" \
   ghcr.io/<owner>/pigeon-relay:latest
 ```
 
-The image is multi-arch (amd64/arm64), distroless, non-root, and keeps message
-state only in memory. Point your homelab Kubernetes / Compose / VPS at it and
-terminate TLS at your ingress (clients use `wss://`). The coordinator seed is
-required in release builds, must be generated from a cryptographically secure
-source, and must remain stable across restarts. Store it in a secret manager;
-never put it in an image, manifest, shell history, or logs.
+The image is multi-arch (amd64/arm64), distroless, and non-root. Pairwise queues
+are memory-only; the named volume preserves group/coordinator state. Point your
+homelab Kubernetes / Compose / VPS at it and terminate TLS at your ingress
+(clients use `wss://`). The coordinator seed is required in release builds, must
+be generated from a cryptographically secure source, and must remain stable
+across restarts. Store it in a secret manager; never put it in an image,
+manifest, shell history, or logs.
 
 ### Configuration (environment)
 
 | Variable                        | Default          | Meaning                                        |
 | ------------------------------- | ---------------- | ---------------------------------------------- |
 | `PIGEON_RELAY_ADDR`             | `0.0.0.0:8080`   | Listen address.                                |
+| `PIGEON_RELAY_STATE_DIR`        | `/var/lib/pigeon-relay` | Durable group/coordinator SQLite directory. |
 | `PIGEON_RELAY_TTL_SECS`         | `2592000` (30d)  | How long an undelivered envelope is kept.      |
 | `PIGEON_RELAY_MAX_QUEUE`        | `1000`           | Max envelopes retained per mailbox.            |
 | `PIGEON_RELAY_MAX_MAILBOXES`    | `10000`          | Max mailboxes held at once.                    |
@@ -47,22 +50,29 @@ never put it in an image, manifest, shell history, or logs.
 | `PIGEON_GROUP_MAX_TOTAL_BYTES`  | `536870912`      | Hard ceiling for all group ciphertext.         |
 | `PIGEON_GROUP_MAX_FETCH_BYTES`  | `4194304`        | Maximum group fetch response.                  |
 | `PIGEON_COORDINATOR_MAX_PER_EPOCH` | `256`         | Candidate attempts retained per epoch.         |
+| `PIGEON_COORDINATOR_MAX_PER_CAPABILITY_PER_EPOCH` | `8` | Candidate attempts per member capability per epoch; at most `MAX_PER_EPOCH`. |
+| `PIGEON_COORDINATOR_MAX_LOGS` | `10000` | Maximum durable coordinator logs. |
+| `PIGEON_COORDINATOR_MAX_CANDIDATES_PER_LOG` | `10000` | Maximum retained candidates per group log. |
 | `PIGEON_COORDINATOR_MAX_CANDIDATE_BYTES` | `1048576` | Maximum opaque MLS candidate.              |
 | `PIGEON_COORDINATOR_MAX_TOTAL_BYTES` | `268435456` | Hard ceiling for coordinator candidates.     |
 | `PIGEON_COORDINATOR_MAX_FETCH_BYTES` | `4194304`  | Maximum coordinator fetch response.            |
 | `PIGEON_COORDINATOR_TTL_SECS`   | `2592000` (30d)  | Coordinator candidate lifetime.                |
 | `PIGEON_COORDINATOR_SIGNING_SEED_HEX` | — (required in release) | Stable 32-byte Ed25519 seed, hex encoded. |
 
-Deposits are unauthenticated, so the last two are the abuse bound. Past
+Pairwise deposits are unauthenticated, so `PIGEON_RELAY_MAX_MAILBOXES` and
+`PIGEON_RELAY_MAX_TOTAL_BYTES` are their abuse bound. Past
 `MAX_MAILBOXES` a deposit to a *new* address is refused (existing mailboxes keep
 working); past `MAX_TOTAL_BYTES` each deposit evicts the oldest envelope from
 whichever mailbox is holding the most, so a flooding address pays for its own
 pressure instead of evicting everyone else's mail.
 
-Storage is **in-memory and ephemeral** by design — a relay is a transient
-rendezvous, not durable storage. The coordinator identity is the exception: its
-signing seed is supplied by the operator and must survive restarts. Clients
-authenticate that public key before selecting the deployment for a group.
+Pairwise mailboxes are **in-memory and ephemeral** by design; senders retransmit
+until acknowledgement. Group registrations, opaque group entries, capability
+cursors/tombstones, and coordinator receipt chains are committed to SQLite under
+`PIGEON_RELAY_STATE_DIR` before the relay acknowledges them. Mount that directory
+on persistent storage and back it up together with the coordinator seed. Clients
+authenticate the coordinator public key, and startup fails if the configured seed
+does not match the key bound into the stored receipt logs.
 
 ### APNs push gateway (official deployment only)
 
@@ -150,14 +160,28 @@ The challenge–response means the relay only ever learns *public* keys (which a
 the addresses anyway), and only the holder of a mailbox's private key can drain
 it. Delivery is at-least-once; Pigeon clients deduplicate at the mesh layer.
 
-Group connections separately negotiate protocol version 5 and authenticate a
+Group connections separately negotiate protocol version 6 and authenticate a
 group-scoped capability challenge. A canonical registration atomically replaces
 the complete capability set, which revokes removed members without exposing the
 roster's root identities. The coordinator orders opaque candidates and signs an
 append-only receipt chain; clients still validate every MLS commit and policy
 transition end to end. The service cannot decrypt, authorize, or forge a group
 transition, but it can observe group-level metadata and can delay or deny
-progress.
+progress. Each capability may submit at most
+`PIGEON_COORDINATOR_MAX_PER_CAPABILITY_PER_EPOCH` candidates per epoch, so one
+member cannot exhaust the epoch's shared candidate budget.
+
+When the owner dissolves a group, the owner's controller sends `revoke_group`
+after the terminal commit is appended. The relay then installs a draining
+tombstone: appends, coordinator submissions, and capability changes fail closed
+immediately, while existing readers can still authenticate, fetch the terminal
+ciphertext and the signed coordinator log, and advance their cursors. The group
+and its entries are deleted one `PIGEON_GROUP_TTL_SECS` after dissolution. A
+member offline for longer than that never receives the dissolution commit and
+sees only a relay that no longer recognizes the group.
+
+On the official deployment, group readers with a registered push token are woken
+for new mailbox entries, new coordinator receipts, and dissolution.
 
 ## Develop
 

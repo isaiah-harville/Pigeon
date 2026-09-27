@@ -2,7 +2,7 @@ import Foundation
 import PigeonFFI
 
 enum GroupRelayProtocol {
-  nonisolated static let version = 5
+  nonisolated static let version = 6
   nonisolated private static let identifierBytes = 32
 
   nonisolated static func hello() throws -> Data {
@@ -83,6 +83,11 @@ enum GroupRelayProtocol {
         "new_generation": value.newGeneration,
         "permanent_controller_public_key": value.permanentControllerPublicKey.hexEncoded,
         "capabilities": value.capabilities.map(capabilityObject),
+      ])
+    case .revokeAll:
+      return try encode([
+        "type": "revoke_group",
+        "expected_generation": value.expectedGeneration,
       ])
     case .unspecified, .unknown:
       throw RelayError.protocolError

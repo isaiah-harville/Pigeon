@@ -42,6 +42,7 @@ final class GroupRelayConnection {
   var ready = false
   var fetchedAfterConnect = false
   var needsMessageFetch = false
+  var needsCoordinatorFetch = false
   var authorization: GroupRelayAuthorizationState
 
   convenience init(group: PigeonGroupState) {
@@ -57,5 +58,28 @@ final class GroupRelayConnection {
     group.groupID == candidate.groupID && group.relayURL == candidate.relayURL
       && group.capabilityPublicKey == candidate.capabilityPublicKey
       && group.capabilityID == candidate.capabilityID
+  }
+
+  func noteWake() {
+    needsMessageFetch = true
+    needsCoordinatorFetch = true
+  }
+
+  func scheduleFetchesIfNeeded() {
+    guard queue.isEmpty else { return }
+    if !fetchedAfterConnect {
+      fetchedAfterConnect = true
+      queue.append(.fetchMessages)
+      queue.append(.fetchCoordinator(group.coordinatorSequence))
+      return
+    }
+    if needsMessageFetch {
+      needsMessageFetch = false
+      queue.append(.fetchMessages)
+    }
+    if needsCoordinatorFetch {
+      needsCoordinatorFetch = false
+      queue.append(.fetchCoordinator(group.coordinatorSequence))
+    }
   }
 }

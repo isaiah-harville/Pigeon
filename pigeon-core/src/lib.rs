@@ -50,14 +50,15 @@ pub use client::{
 };
 pub use error::Error;
 pub use group::{
-    Actor, AuthenticatedGroupMessage, BufferDisposition, CanonicalCandidate, CoordinatorBinding,
-    CoordinatorChain, CoordinatorChainError, CoordinatorReceipt, DeliveryLedger, EpochBuffer,
-    GroupAction, GroupApplication, GroupCiphertext, GroupCreationConfig, GroupDeliveryState,
-    GroupEngine, GroupId, GroupMessageId, GroupMutationCandidate, GroupRelayCapability,
-    GroupRelayControl, GroupRelayControlKind, GroupRelayRegistration, PendingMutation,
-    PigeonGroupPolicy, PolicyError, PolicyEvent, PolicyEventKind, RecoveryCertificate,
-    RecoveryEndorsement, RecoveryError, RecoveryProposal, coordinator_receipt_transcript,
-    relay_capability_id, select_canonical_candidate, validate_transition,
+    AcknowledgedMessage, Actor, AuthenticatedGroupMessage, BufferDisposition, CanonicalCandidate,
+    CoordinatorBinding, CoordinatorChain, CoordinatorChainError, CoordinatorReceipt,
+    DeliveryLedger, EpochBuffer, GroupAction, GroupApplication, GroupCiphertext,
+    GroupCreationConfig, GroupDeliveryState, GroupEngine, GroupId, GroupMessageId,
+    GroupMutationCandidate, GroupRelayCapability, GroupRelayControl, GroupRelayControlKind,
+    GroupRelayRegistration, PendingMutation, PigeonGroupPolicy, PolicyError, PolicyEvent,
+    PolicyEventKind, RecoveryCertificate, RecoveryEndorsement, RecoveryError, RecoveryProposal,
+    coordinator_receipt_transcript, relay_capability_id, select_canonical_candidate,
+    validate_transition,
 };
 pub use identity::{
     Account, GroupJoinMaterial, GroupJoinRequest, GroupMemberKeys, IdentityBundle, IdentityError,
@@ -70,8 +71,9 @@ pub use storage::{
 pub use wire::proto as wire_proto;
 pub use wire::{
     MAX_CLIENT_COMMAND_BYTES, MAX_DIRECT_MESSAGE_BYTES, MAX_FUTURE_EPOCH_BUFFER_BYTES,
-    MAX_FUTURE_EPOCHS, MAX_GROUP_APPLICATION_BYTES, MAX_GROUP_MEMBERS, MAX_MLS_OBJECT_BYTES,
-    MAX_PENDING_OUTBOUND_ENTRIES, MAX_PROPOSAL_CANDIDATES, decode_client_command,
+    MAX_FUTURE_EPOCHS, MAX_GROUP_ACKNOWLEDGEMENT_BATCH, MAX_GROUP_APPLICATION_BYTES,
+    MAX_GROUP_MEMBERS, MAX_MLS_OBJECT_BYTES, MAX_PENDING_OUTBOUND_ENTRIES, MAX_PROPOSAL_CANDIDATES,
+    decode_client_command,
 };
 
 /// The Olm message type that crosses pigeon-core's API surface. Re-exported so

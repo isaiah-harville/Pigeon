@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::coordinator::protocol::{CandidateWire, ReceiptWire};
 use crate::group::store::{CapabilityRegistration, GroupCapability, GroupRegistration, StoreError};
 
-pub const GROUP_PROTOCOL_VERSION: u32 = 5;
+pub const GROUP_PROTOCOL_VERSION: u32 = 6;
 pub const MAX_GROUP_FRAME_BYTES: usize = 2 * 1024 * 1024;
 pub const GROUP_REGISTRATION_DOMAIN: &[u8] = b"pigeon.relay.group.registration.v2";
 pub const GROUP_CHALLENGE_DOMAIN: &[u8] = b"pigeon.relay.group.challenge.v2";
@@ -60,6 +60,9 @@ pub enum GroupClientMsg {
         new_generation: u64,
         permanent_controller_public_key: String,
         capabilities: Vec<CapabilityWire>,
+    },
+    RevokeGroup {
+        expected_generation: u64,
     },
     RegisterPush {
         token: String,

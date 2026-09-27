@@ -108,7 +108,7 @@ extension GroupRelayTransport {
           epoch: source.epoch + 1,
           policyRevision: registration.authorizationGeneration, dissolved: source.dissolved,
           capabilityPublicKey: source.capabilityPublicKey, capabilityID: local.capabilityID,
-          coordinatorPublicKey: source.coordinatorPublicKey)
+          coordinatorPublicKey: source.coordinatorPublicKey, coordinatorSequence: 0)
         let connection = Connection(group: replacement, confirmsAuthorization: false)
         connections[item.destination] = connection
         start(connection)
@@ -216,7 +216,7 @@ extension GroupRelayTransport {
   ) throws {
     switch frame {
     case .wake:
-      connection.needsMessageFetch = true
+      connection.noteWake()
     case .entries(let entries):
       guard connection.awaiting == .fetchMessages else { throw RelayError.protocolError }
       connection.awaiting = nil
@@ -317,6 +317,9 @@ extension GroupRelayTransport {
       else { throw RelayError.protocolError }
     }
     connection.awaiting = nil
+    if let last = candidates.last?.receipt.sequence {
+      connection.queue.insert(.fetchCoordinator(last), at: 0)
+    }
   }
 }
 
@@ -326,14 +329,7 @@ extension GroupRelayTransport {
       connection.awaiting == nil,
       let socket = connection.socket
     else { return }
-    if connection.queue.isEmpty, !connection.fetchedAfterConnect {
-      connection.fetchedAfterConnect = true
-      connection.queue.append(.fetchMessages)
-      connection.queue.append(.fetchCoordinator(connection.group.epoch))
-    } else if connection.queue.isEmpty, connection.needsMessageFetch {
-      connection.needsMessageFetch = false
-      connection.queue.append(.fetchMessages)
-    }
+    connection.scheduleFetchesIfNeeded()
     guard !connection.queue.isEmpty else { return }
     let operation = connection.queue.removeFirst()
     connection.awaiting = operation

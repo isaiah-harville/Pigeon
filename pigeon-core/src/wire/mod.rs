@@ -111,6 +111,11 @@ pub(crate) fn validate_client_command(command: &proto::ClientCommand) -> Result<
                 "policy string",
             )?;
         }
+        proto::client_command::Body::FlushGroupAcknowledgements(flush) => {
+            if !flush.group_id.is_empty() {
+                check_exact_group_id(&flush.group_id)?;
+            }
+        }
         proto::client_command::Body::AcknowledgeEffects(acknowledgement) => {
             check_count(
                 acknowledgement.outbound_item_ids.len(),

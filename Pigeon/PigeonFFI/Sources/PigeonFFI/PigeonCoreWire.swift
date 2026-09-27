@@ -170,6 +170,7 @@ extension PigeonGroupRelayControlKind {
     switch proto {
     case .unspecified: self = .unspecified
     case .replaceAll: self = .replaceAll
+    case .revokeAll: self = .revokeAll
     case .grant, .revoke, .promoteAdmin, .demoteAdmin: self = .unknown(proto.rawValue)
     case .UNRECOGNIZED(let raw): self = .unknown(raw)
     }

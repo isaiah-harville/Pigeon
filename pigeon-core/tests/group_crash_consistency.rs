@@ -434,6 +434,8 @@ fn relay_and_mesh_copies_emit_one_received_event_and_one_acknowledgement() {
         consumed_pairwise_envelope_hashes: Vec::new(),
         deferred_events: Vec::new(),
         pending_group_recoveries: Vec::new(),
+        pending_group_acknowledgements: Vec::new(),
+        pending_group_leaves: Vec::new(),
     };
     let bytes = bob_checkpoint.encode_to_vec();
     let bob_store = SwitchableStore::with_checkpoint(SealedCheckpoint {
@@ -484,9 +486,20 @@ fn relay_and_mesh_copies_emit_one_received_event_and_one_acknowledgement() {
     bob_store.set_fail_replace(false);
     let relay = bob_client.execute(relay_command).unwrap();
     assert_eq!(relay.events.len(), 1);
-    assert_eq!(relay.outbound.len(), 1, "one acknowledgement is produced");
+    assert!(
+        relay.outbound.is_empty(),
+        "receipts are queued, not sent per message"
+    );
+    let flushed = bob_client
+        .execute(ClientCommand::flush_group_acknowledgements("bob-flush", None).unwrap())
+        .unwrap();
+    assert_eq!(
+        flushed.outbound.len(),
+        1,
+        "one batched acknowledgement is produced"
+    );
     let acknowledgement =
-        wire_proto::OutboundItem::decode(relay.outbound[0].encode().as_slice()).unwrap();
+        wire_proto::OutboundItem::decode(flushed.outbound[0].encode().as_slice()).unwrap();
     let delivered = owner_client
         .execute(ClientCommand::apply_group_message("bob-ack", acknowledgement.payload).unwrap())
         .unwrap();
@@ -508,4 +521,256 @@ fn relay_and_mesh_copies_emit_one_received_event_and_one_acknowledgement() {
         .unwrap();
     assert!(mesh.events.is_empty());
     assert!(mesh.outbound.is_empty());
+    let reflushed = bob_client
+        .execute(ClientCommand::flush_group_acknowledgements("bob-reflush", None).unwrap())
+        .unwrap();
+    assert!(
+        reflushed.outbound.is_empty(),
+        "the duplicate copy queues no receipt"
+    );
+}
+
+struct ThreeMemberGroup {
+    owner: PigeonClient<SwitchableStore, TestIdentity>,
+    bob: PigeonClient<SwitchableStore, TestIdentity>,
+    carol: PigeonClient<SwitchableStore, TestIdentity>,
+    group_id: GroupId,
+}
+
+fn joined_member(
+    identity: TestIdentity,
+    mls: &TransactionalOpenMlsStorage,
+    welcome: Vec<u8>,
+) -> PigeonClient<SwitchableStore, TestIdentity> {
+    let checkpoint = wire_proto::ClientCheckpoint {
+        version: 1,
+        openmls_checkpoint: mls.export_checkpoint().unwrap(),
+        ..Default::default()
+    };
+    let bytes = checkpoint.encode_to_vec();
+    let store = SwitchableStore::with_checkpoint(SealedCheckpoint {
+        generation: 0,
+        sha256: Sha256::digest(&bytes).into(),
+        bytes,
+    });
+    let mut client = PigeonClient::new(store, identity).unwrap();
+    client
+        .execute(ClientCommand::apply_group_welcome("welcome", welcome).unwrap())
+        .unwrap();
+    client
+}
+
+fn three_member_group() -> ThreeMemberGroup {
+    let (bob, carol) = (TestIdentity::new(22), TestIdentity::new(23));
+    let (bob_public, carol_public) = (bob.root_public(), carol.root_public());
+    let mut bob_mls = TransactionalOpenMlsStorage::new();
+    let mut carol_mls = TransactionalOpenMlsStorage::new();
+    let mut owner = PigeonClient::new(SwitchableStore::default(), TestIdentity::new(21)).unwrap();
+    let pending = owner
+        .execute(
+            ClientCommand::create_group(
+                "create-receipts",
+                "Receipt Birds",
+                vec![bob_public, carol_public],
+                "https://relay.example",
+                TestIdentity::new(61).root_public(),
+                false,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let bob_material = issue_join_material(&pending.outbound[0], &bob, &mut bob_mls);
+    let carol_material = issue_join_material(&pending.outbound[1], &carol, &mut carol_mls);
+    owner
+        .execute(
+            ClientCommand::apply_group_join_material(
+                "receipts-bob-package",
+                "create-receipts:join:0",
+                bob_material.encode(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let created = owner
+        .execute(
+            ClientCommand::apply_group_join_material(
+                "receipts-carol-package",
+                "create-receipts:join:1",
+                carol_material.encode(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let welcome_for = |member: [u8; 32]| {
+        created
+            .outbound
+            .iter()
+            .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
+            .find(|item| {
+                item.kind == wire_proto::OutboundKind::GroupWelcome as i32
+                    && item.destination == member
+            })
+            .unwrap()
+            .payload
+    };
+    let (bob_welcome, carol_welcome) = (welcome_for(bob_public), welcome_for(carol_public));
+    let event = wire_proto::AppEvent::decode(created.events[0].encode().as_slice()).unwrap();
+    let wire_proto::app_event::Body::GroupCreated(group) = event.body.unwrap() else {
+        panic!("expected GroupCreated");
+    };
+    ThreeMemberGroup {
+        owner,
+        bob: joined_member(bob, &bob_mls, bob_welcome),
+        carol: joined_member(carol, &carol_mls, carol_welcome),
+        group_id: GroupId::from_bytes(group.group_id.try_into().unwrap()),
+    }
+}
+
+fn group_text(
+    client: &mut PigeonClient<SwitchableStore, TestIdentity>,
+    command_id: &str,
+    group_id: GroupId,
+) -> Vec<u8> {
+    let sent = client
+        .execute(
+            ClientCommand::send_group_text(
+                command_id,
+                group_id,
+                command_id.as_bytes().to_vec(),
+                "",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    sent.outbound
+        .iter()
+        .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
+        .find(|item| item.kind == wire_proto::OutboundKind::GroupMessage as i32)
+        .unwrap()
+        .payload
+}
+
+fn delivery_counts(output: &pigeon_core::ClientOutput) -> Vec<(u32, u32)> {
+    output
+        .events
+        .iter()
+        .filter_map(|event| {
+            match wire_proto::AppEvent::decode(event.encode().as_slice())
+                .unwrap()
+                .body?
+            {
+                wire_proto::app_event::Body::GroupDeliveryChanged(delivery) => {
+                    Some((delivery.delivered_count, delivery.intended_count))
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn one_batched_receipt_settles_every_senders_messages_and_bystanders_ignore_it() {
+    let ThreeMemberGroup {
+        mut owner,
+        mut bob,
+        mut carol,
+        group_id,
+    } = three_member_group();
+    let owner_first = group_text(&mut owner, "owner-first", group_id);
+    let owner_second = group_text(&mut owner, "owner-second", group_id);
+    let carol_text = group_text(&mut carol, "carol-text", group_id);
+    for (index, message) in [owner_first, owner_second, carol_text]
+        .into_iter()
+        .enumerate()
+    {
+        let received = bob
+            .execute(ClientCommand::apply_group_message(format!("bob-{index}"), message).unwrap())
+            .unwrap();
+        assert!(received.outbound.is_empty(), "no receipt per message");
+    }
+
+    let flushed = bob
+        .execute(ClientCommand::flush_group_acknowledgements("bob-flush", Some(group_id)).unwrap())
+        .unwrap();
+    assert_eq!(
+        flushed.outbound.len(),
+        1,
+        "three receipts share one ciphertext"
+    );
+    let batch = wire_proto::OutboundItem::decode(flushed.outbound[0].encode().as_slice())
+        .unwrap()
+        .payload;
+
+    let owner_delivery = owner
+        .execute(ClientCommand::apply_group_message("owner-receipts", batch.clone()).unwrap())
+        .unwrap();
+    assert_eq!(delivery_counts(&owner_delivery), vec![(1, 2), (1, 2)]);
+
+    let carol_delivery = carol
+        .execute(ClientCommand::apply_group_message("carol-receipts", batch).unwrap())
+        .unwrap();
+    assert_eq!(delivery_counts(&carol_delivery), vec![(1, 2)]);
+
+    let generation = bob.checkpoint_generation();
+    let idle = bob
+        .execute(ClientCommand::flush_group_acknowledgements("bob-idle", None).unwrap())
+        .unwrap();
+    assert!(idle.outbound.is_empty(), "flushed receipts are not resent");
+    assert_eq!(
+        bob.checkpoint_generation(),
+        generation,
+        "an idle flush commits nothing"
+    );
+}
+
+#[test]
+fn a_full_receipt_batch_flushes_without_waiting_for_the_host() {
+    let ThreeMemberGroup {
+        mut owner,
+        mut bob,
+        group_id,
+        ..
+    } = three_member_group();
+    let mut automatic = Vec::new();
+    for index in 0..pigeon_core::MAX_GROUP_ACKNOWLEDGEMENT_BATCH {
+        let message = group_text(&mut owner, &format!("burst-{index}"), group_id);
+        let received = bob
+            .execute(
+                ClientCommand::apply_group_message(format!("bob-burst-{index}"), message).unwrap(),
+            )
+            .unwrap();
+        automatic.extend(received.outbound);
+    }
+    assert_eq!(automatic.len(), 1, "the full batch is flushed exactly once");
+    let batch = wire_proto::OutboundItem::decode(automatic[0].encode().as_slice())
+        .unwrap()
+        .payload;
+    let delivered = owner
+        .execute(ClientCommand::apply_group_message("owner-burst-receipts", batch).unwrap())
+        .unwrap();
+    assert_eq!(
+        delivery_counts(&delivered).len(),
+        pigeon_core::MAX_GROUP_ACKNOWLEDGEMENT_BATCH
+    );
+}
+
+#[test]
+fn acknowledgement_batches_are_bounded() {
+    use pigeon_core::{AcknowledgedMessage, GroupApplication, GroupMessageId};
+    assert!(GroupApplication::acknowledgements(Vec::new()).is_err());
+    let one = AcknowledgedMessage {
+        original_sender: [1; 32],
+        message_id: GroupMessageId::from_bytes([2; 16]),
+    };
+    assert!(
+        GroupApplication::acknowledgements(vec![one; pigeon_core::MAX_GROUP_ACKNOWLEDGEMENT_BATCH])
+            .is_ok()
+    );
+    assert!(
+        GroupApplication::acknowledgements(vec![
+            one;
+            pigeon_core::MAX_GROUP_ACKNOWLEDGEMENT_BATCH + 1
+        ])
+        .is_err()
+    );
 }

@@ -58,6 +58,7 @@ impl GroupRelayCapability {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GroupRelayControlKind {
     ReplaceAll,
+    RevokeAll,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,10 +80,20 @@ impl GroupRelayControl {
         event: &PolicyEvent,
     ) -> Result<Option<Self>, super::PolicyError> {
         prior.relay_capability_delta(next, event)?;
+        let kind = if next.dissolved() {
+            GroupRelayControlKind::RevokeAll
+        } else {
+            GroupRelayControlKind::ReplaceAll
+        };
+        let capabilities = if next.dissolved() {
+            Vec::new()
+        } else {
+            capabilities_for_policy(next, next_epoch)?
+        };
         Ok(Some(Self {
             coordination_id: prior.coordination_id(),
-            kind: GroupRelayControlKind::ReplaceAll,
-            capabilities: capabilities_for_policy(next, next_epoch)?,
+            kind,
+            capabilities,
             expected_generation: prior.revision(),
             new_generation: next.revision(),
             permanent_controller_public_key: next
@@ -119,7 +130,10 @@ impl GroupRelayControl {
         proto::GroupRelayControl {
             version: CONTROL_VERSION,
             coordination_id: self.coordination_id.to_vec(),
-            kind: proto::GroupRelayControlKind::ReplaceAll as i32,
+            kind: match self.kind {
+                GroupRelayControlKind::ReplaceAll => proto::GroupRelayControlKind::ReplaceAll,
+                GroupRelayControlKind::RevokeAll => proto::GroupRelayControlKind::RevokeAll,
+            } as i32,
             public_key: Vec::new(),
             capabilities: self.capabilities.iter().map(capability_proto).collect(),
             expected_generation: self.expected_generation,
@@ -134,10 +148,14 @@ impl GroupRelayControl {
             return Err(Error::ResourceLimit("group relay control bytes"));
         }
         let control = proto::GroupRelayControl::decode(bytes).map_err(|_| Error::Serialization)?;
+        let kind = match proto::GroupRelayControlKind::try_from(control.kind)
+            .map_err(|_| Error::Serialization)?
+        {
+            proto::GroupRelayControlKind::ReplaceAll => GroupRelayControlKind::ReplaceAll,
+            proto::GroupRelayControlKind::RevokeAll => GroupRelayControlKind::RevokeAll,
+            _ => return Err(Error::Serialization),
+        };
         if control.version != CONTROL_VERSION
-            || proto::GroupRelayControlKind::try_from(control.kind)
-                .map_err(|_| Error::Serialization)?
-                != proto::GroupRelayControlKind::ReplaceAll
             || control.new_generation != control.expected_generation.saturating_add(1)
         {
             return Err(Error::Serialization);
@@ -147,10 +165,16 @@ impl GroupRelayControl {
             .into_iter()
             .map(capability_from_proto)
             .collect::<Result<Vec<_>, _>>()?;
-        validate_capabilities(&capabilities)?;
+        match kind {
+            GroupRelayControlKind::ReplaceAll => validate_capabilities(&capabilities)?,
+            GroupRelayControlKind::RevokeAll if !capabilities.is_empty() => {
+                return Err(Error::Serialization);
+            }
+            GroupRelayControlKind::RevokeAll => {}
+        }
         Ok(Self {
             coordination_id: fixed(&control.coordination_id)?,
-            kind: GroupRelayControlKind::ReplaceAll,
+            kind,
             capabilities,
             expected_generation: control.expected_generation,
             new_generation: control.new_generation,

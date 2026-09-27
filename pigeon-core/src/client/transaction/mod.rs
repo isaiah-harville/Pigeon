@@ -16,6 +16,8 @@ use crate::identity::{IdentityPurpose, SecureIdentity};
 use crate::storage::StateStore;
 use crate::wire::{PROTOCOL_VERSION, proto};
 
+const GROUP_SECURITY_REJECTED_COORDINATOR_ENTRY_CODE: u32 = 2;
+
 pub struct PigeonClient<S, I> {
     store: S,
     identity: I,
@@ -48,6 +50,8 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 consumed_pairwise_envelope_hashes: Vec::new(),
                 deferred_events: Vec::new(),
                 pending_group_recoveries: Vec::new(),
+                pending_group_acknowledgements: Vec::new(),
+                pending_group_leaves: Vec::new(),
             },
         };
         Ok(Self {
@@ -79,12 +83,39 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 )?;
             }
             proto::client_command::Body::ApplyInbound(inbound) => {
-                self.stage_apply_inbound(
+                let pristine = candidate.clone();
+                if let Err(error) = self.stage_apply_inbound(
                     &command.inner.command_id,
                     inbound,
                     &mut candidate,
                     &mut output,
-                )?;
+                ) {
+                    let inbound_kind = proto::OutboundKind::try_from(inbound.kind).ok();
+                    if is_rejected_sequenced_input(&error)
+                        && inbound_kind == Some(proto::OutboundKind::GroupCoordinator)
+                    {
+                        candidate = pristine;
+                        output = ClientOutput::empty(candidate.generation + 1);
+                        if !self.stage_consume_rejected_group_coordinator(
+                            &command.inner.command_id,
+                            inbound,
+                            &mut candidate,
+                            &mut output,
+                        )? {
+                            return Err(error);
+                        }
+                    } else if is_rejected_sequenced_input(&error)
+                        && inbound_kind == Some(proto::OutboundKind::GroupMessage)
+                    {
+                        // The relay sequence is durable only after this empty
+                        // classification transaction lands. Cryptographic and
+                        // policy state remain exactly as they were.
+                        candidate = pristine;
+                        output = ClientOutput::empty(candidate.generation + 1);
+                    } else {
+                        return Err(error);
+                    }
+                }
             }
             proto::client_command::Body::SendGroupMessage(send) => {
                 self.stage_send_group_message(
@@ -185,6 +216,23 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     &mut output,
                 )?;
             }
+            proto::client_command::Body::FlushGroupAcknowledgements(flush) => {
+                // Hosts flush on timers and at unlock; with nothing queued the
+                // command commits nothing, so idle timers cost no checkpoint write.
+                if !candidate
+                    .pending_group_acknowledgements
+                    .iter()
+                    .any(|pending| flush.group_id.is_empty() || pending.group_id == flush.group_id)
+                {
+                    return Ok(ClientOutput::empty(self.state.generation));
+                }
+                self.stage_flush_group_acknowledgements(
+                    &command.inner.command_id,
+                    (!flush.group_id.is_empty()).then_some(flush.group_id.as_slice()),
+                    &mut candidate,
+                    &mut output,
+                )?;
+            }
             proto::client_command::Body::BeginGroupRecovery(recovery) => {
                 self.stage_begin_group_recovery(
                     &command.inner.command_id,
@@ -232,6 +280,11 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             }
         }
 
+        self.stage_flush_full_acknowledgement_batches(
+            &command.inner.command_id,
+            &mut candidate,
+            &mut output,
+        )?;
         self.stage_wrap_addressed_controls(&mut candidate, &mut output)?;
 
         if candidate.pending_outbound.len() + output.outbound.len()
@@ -270,6 +323,9 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         }
 
         candidate.generation += 1;
+        if candidate.applied_command_ids.len() >= crate::MAX_PENDING_OUTBOUND_ENTRIES {
+            candidate.applied_command_ids.remove(0);
+        }
         candidate
             .applied_command_ids
             .push(command.inner.command_id.clone());
@@ -297,16 +353,17 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             .iter()
             .map(|stored| {
                 let policy = PigeonGroupPolicy::decode(&stored.policy)?;
+                let coordinator_sequence = crate::group::CoordinatorChain::decode(
+                    &stored.coordinator_chain,
+                    policy.coordination_id(),
+                    policy.coordinator_public_key(),
+                )
+                .map_err(|_| Error::InvalidSignature)?
+                .last_sequence();
                 let capability_public_key = policy.member_capability_key(local_identity);
-                let pending_capability_id = self
-                    .state
-                    .deferred_events
-                    .iter()
-                    .find(|deferred| {
-                        deferred.group_id.as_slice() == policy.group_id().as_bytes()
-                            && !deferred.active_capability_id.is_empty()
-                    })
-                    .map(|deferred| deferred.active_capability_id.clone());
+                let pending_capability_id =
+                    pending_active_capability_id(&self.state, policy.group_id())
+                        .map(<[u8]>::to_vec);
                 Ok(proto::GroupState {
                     group_id: policy.group_id().as_bytes().to_vec(),
                     owner_identity: policy.owner().to_vec(),
@@ -343,6 +400,12 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                             .to_vec()
                         })
                     }),
+                    coordinator_sequence,
+                    local_leave_pending: self
+                        .state
+                        .pending_group_leaves
+                        .iter()
+                        .any(|pending| pending.group_id == stored.group_id),
                 })
             })
             .collect::<Result<Vec<_>, Error>>()?;
@@ -398,13 +461,8 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         if policy_capability != signing_capability {
             return Err(Error::InvalidSignature);
         }
-        let capability_id = self
-            .state
-            .deferred_events
-            .iter()
-            .find(|deferred| deferred.group_id.as_slice() == policy.group_id().as_bytes())
-            .filter(|deferred| !deferred.active_capability_id.is_empty())
-            .map(|deferred| deferred.active_capability_id.as_slice().try_into())
+        let capability_id = pending_active_capability_id(&self.state, policy.group_id())
+            .map(<[u8; 32]>::try_from)
             .transpose()
             .map_err(|_| Error::Serialization)?
             .unwrap_or_else(|| {
@@ -499,6 +557,10 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                                 ),
                             proto::OutboundKind::GroupWelcome => self
                                 .stage_apply_group_welcome(command_id, &inner, candidate, output),
+                            proto::OutboundKind::GroupLeaveProposal => self
+                                .stage_apply_group_leave_proposal(
+                                    command_id, &inner, candidate, output,
+                                ),
                             _ => Err(Error::MalformedBundle),
                         }?;
                     }
@@ -534,6 +596,92 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             _ => Err(Error::MalformedBundle),
         }
     }
+
+    /// Advances an authenticated coordinator receipt even when its opaque
+    /// candidate is invalid. Coordinator sequence numbers are a shared ordered
+    /// stream: rejecting an entry without durably consuming its receipt would
+    /// make every later valid entry fail with a missing predecessor.
+    fn stage_consume_rejected_group_coordinator(
+        &self,
+        command_id: &str,
+        inbound: &proto::ApplyInbound,
+        candidate: &mut proto::ClientCheckpoint,
+        output: &mut ClientOutput,
+    ) -> Result<bool, Error> {
+        let (receipt, opaque_candidate) =
+            crate::group::CoordinatorReceipt::decode_candidate(&inbound.payload)
+                .map_err(|_| Error::InvalidSignature)?;
+        let Some(index) = candidate.groups.iter().position(|stored| {
+            PigeonGroupPolicy::decode(&stored.policy)
+                .is_ok_and(|policy| policy.coordination_id() == receipt.coordination_id)
+        }) else {
+            return Ok(false);
+        };
+        let stored = &candidate.groups[index];
+        let policy = PigeonGroupPolicy::decode(&stored.policy)?;
+        let mut chain = crate::group::CoordinatorChain::decode(
+            &stored.coordinator_chain,
+            policy.coordination_id(),
+            policy.coordinator_public_key(),
+        )
+        .map_err(|_| Error::InvalidSignature)?;
+        let group_id = stored.group_id.clone();
+        let epoch = stored.epoch;
+        match chain.accept(&receipt, &opaque_candidate) {
+            Ok(_) => {
+                candidate.groups[index].coordinator_chain = chain.encode();
+                output.events.push(crate::client::AppEvent {
+                    inner: proto::AppEvent {
+                        version: PROTOCOL_VERSION,
+                        event_id: format!("{command_id}:rejected-coordinator-entry"),
+                        body: Some(proto::app_event::Body::GroupSecurityWarning(
+                            proto::GroupSecurityWarning {
+                                group_id,
+                                code: GROUP_SECURITY_REJECTED_COORDINATOR_ENTRY_CODE,
+                                evidence_id: receipt.receipt_hash().to_vec(),
+                                epoch,
+                            },
+                        )),
+                    },
+                });
+                Ok(true)
+            }
+            Err(_) => Ok(false),
+        }
+    }
+}
+
+/// The capability a group connection must keep authenticating with while a
+/// relay-control replacement is still in flight. The snapshot and the relay
+/// challenge signer must agree on it, or authentication fails until the
+/// replacement lands.
+fn pending_active_capability_id(
+    state: &proto::ClientCheckpoint,
+    group_id: crate::GroupId,
+) -> Option<&[u8]> {
+    state
+        .deferred_events
+        .iter()
+        .find(|deferred| {
+            deferred.group_id.as_slice() == group_id.as_bytes()
+                && !deferred.active_capability_id.is_empty()
+        })
+        .map(|deferred| deferred.active_capability_id.as_slice())
+}
+
+fn is_rejected_sequenced_input(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::InvalidKey
+            | Error::InvalidSignature
+            | Error::MalformedBundle
+            | Error::Serialization
+            | Error::ResourceLimit(_)
+            | Error::UnsupportedVersion { .. }
+            | Error::GroupPolicy(_)
+            | Error::Mls(_)
+            | Error::Decryption(_)
+    )
 }
 
 fn direct_application_event_id(sender_identity: &[u8], application_id: &str) -> String {
@@ -562,5 +710,40 @@ fn pairwise_account(state: &proto::ClientCheckpoint) -> Result<Option<PlatformAc
             )?))
         }
         _ => Err(Error::Serialization),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_capability_skips_authorization_waits_for_the_same_group() {
+        let group_id = crate::GroupId::from_bytes([7; 32]);
+        let state = proto::ClientCheckpoint {
+            deferred_events: vec![
+                proto::DeferredAppEvent {
+                    group_id: group_id.as_bytes().to_vec(),
+                    release_capability_id: vec![1; 32],
+                    ..Default::default()
+                },
+                proto::DeferredAppEvent {
+                    group_id: group_id.as_bytes().to_vec(),
+                    outbound_item_id: "relay-control".into(),
+                    active_capability_id: vec![2; 32],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            pending_active_capability_id(&state, group_id),
+            Some([2; 32].as_slice())
+        );
+        assert_eq!(
+            pending_active_capability_id(&state, crate::GroupId::from_bytes([8; 32])),
+            None
+        );
     }
 }

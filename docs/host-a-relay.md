@@ -18,21 +18,26 @@ relays are federated, and anyone can run their own.
 ## What you need
 
 - A machine reachable from the internet — a $5 VPS, a homelab box behind a
-  tunnel, or any Kubernetes cluster. The relay is tiny and stateless.
+  tunnel, or any Kubernetes cluster.
 - Docker (or any OCI runtime).
 - A domain name and TLS. Pigeon clients connect over `wss://`, so you need a
   certificate; terminate TLS at a reverse proxy in front of the relay.
 
-The relay holds queued envelopes **in memory only**, by design — a relay is a
-transient rendezvous point, not durable storage. It needs no database and no
-persistent volume. Restarting drops undelivered envelopes; senders retry.
+Pairwise envelopes remain **in memory only** and senders retry after a restart.
+Group registrations, opaque group ciphertext, capability state, dissolution
+tombstones, and coordinator receipt chains are committed to SQLite before they
+are acknowledged. Mount the relay state directory on persistent storage and keep
+the stable coordinator signing seed in a separate secret manager.
 
 ## 1. Run the container
 
 ```sh
+openssl rand -hex 32 # store this in your secret manager
 docker run -d --name pigeon-relay \
   --restart unless-stopped \
   -p 127.0.0.1:8080:8080 \
+  -v pigeon-relay-state:/var/lib/pigeon-relay \
+  -e PIGEON_COORDINATOR_SIGNING_SEED_HEX='<stored 64-character hex seed>' \
   ghcr.io/isaiah-harville/pigeon/relay:latest
 ```
 
@@ -55,9 +60,15 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"
+    volumes:
+      - pigeon-relay-state:/var/lib/pigeon-relay
     environment:
       PIGEON_RELAY_TTL_SECS: "2592000"
       PIGEON_RELAY_MAX_QUEUE: "1000"
+      PIGEON_COORDINATOR_SIGNING_SEED_HEX: "${PIGEON_COORDINATOR_SIGNING_SEED_HEX}"
+
+volumes:
+  pigeon-relay-state:
 ```
 
 ### Configuration
@@ -65,22 +76,41 @@ services:
 | Variable                       | Default         | Meaning                                    |
 | ------------------------------ | --------------- | ------------------------------------------ |
 | `PIGEON_RELAY_ADDR`            | `0.0.0.0:8080`  | Listen address inside the container.       |
+| `PIGEON_RELAY_STATE_DIR`       | `/var/lib/pigeon-relay` | Durable group/coordinator SQLite directory. |
 | `PIGEON_RELAY_TTL_SECS`        | `2592000` (30d) | How long an undelivered envelope is kept.  |
 | `PIGEON_RELAY_MAX_QUEUE`       | `1000`          | Max envelopes retained per mailbox.        |
 | `PIGEON_RELAY_MAX_MAILBOXES`   | `10000`         | Max mailboxes held at once.                |
 | `PIGEON_RELAY_MAX_TOTAL_BYTES` | `536870912`     | Hard ceiling on total stored ciphertext.   |
+| `PIGEON_GROUP_TTL_SECS` | `2592000` (30d) | Group ciphertext and dissolved-group read grace period. |
+| `PIGEON_GROUP_MAX_GROUPS` | `10000` | Maximum registered groups. |
+| `PIGEON_GROUP_MAX_CAPABILITIES` | `128` | Maximum member capabilities per group. |
+| `PIGEON_GROUP_MAX_ENTRY_BYTES` | `1048576` | Maximum opaque group entry. |
+| `PIGEON_GROUP_MAX_ENTRIES` | `10000` | Maximum retained entries per group. |
+| `PIGEON_GROUP_MAX_TOTAL_BYTES` | `536870912` | Hard ceiling on group ciphertext. |
+| `PIGEON_GROUP_MAX_FETCH_BYTES` | `4194304` | Maximum group fetch response. |
+| `PIGEON_COORDINATOR_MAX_PER_EPOCH` | `256` | Candidate attempts retained per epoch. |
+| `PIGEON_COORDINATOR_MAX_PER_CAPABILITY_PER_EPOCH` | `8` | Candidate attempts retained per member capability and epoch. |
+| `PIGEON_COORDINATOR_MAX_LOGS` | `10000` | Maximum durable coordinator logs. |
+| `PIGEON_COORDINATOR_MAX_CANDIDATES_PER_LOG` | `10000` | Maximum retained candidates per group log. |
+| `PIGEON_COORDINATOR_MAX_CANDIDATE_BYTES` | `1048576` | Maximum opaque MLS candidate. |
+| `PIGEON_COORDINATOR_MAX_TOTAL_BYTES` | `268435456` | Hard ceiling on coordinator candidates. |
+| `PIGEON_COORDINATOR_MAX_FETCH_BYTES` | `4194304` | Maximum coordinator fetch response. |
+| `PIGEON_COORDINATOR_TTL_SECS` | `2592000` (30d) | Coordinator candidate lifetime. |
+| `PIGEON_COORDINATOR_SIGNING_SEED_HEX` | required | Stable 32-byte Ed25519 seed, hex encoded. |
 
-Lower the TTL and queue size if you want a relay that forgets faster; both trade
-deliverability for retention.
+Lower TTLs and queue sizes if you want a relay that forgets faster; they trade
+deliverability for retention. Keep group and coordinator TTLs aligned so an
+offline member's authorization and terminal MLS commit expire together. Never
+rotate the coordinator seed for an existing deployment: clients authenticate
+that key as part of group policy, so rotation requires explicit in-app recovery.
 
-The last two are your capacity ceiling, and they matter because **anyone can
-deposit** — a sender is anonymous to the relay, so there is no account to rate
-limit. Past `MAX_MAILBOXES`, a deposit addressed to a *new* mailbox is refused
-and existing mailboxes keep working. Past `MAX_TOTAL_BYTES`, each deposit evicts
-the oldest envelope from whichever mailbox is holding the most, so an address
-flooding the relay pays for its own pressure rather than evicting everyone
-else's mail. Set them to what your host can actually afford: with the defaults,
-stored ciphertext stays under 512 MiB.
+`PIGEON_RELAY_MAX_MAILBOXES` and `PIGEON_RELAY_MAX_TOTAL_BYTES` are the pairwise
+capacity ceiling. They matter because **anyone can deposit** — a sender is
+anonymous to the relay, so there is no account to rate limit. Past the mailbox
+limit, a deposit addressed to a *new* mailbox is refused and existing mailboxes
+keep working. Past the byte limit, each deposit evicts the oldest envelope from
+whichever mailbox is holding the most, so a flooding address pays for its own
+pressure rather than evicting everyone else's mail.
 
 ## 2. Terminate TLS
 
@@ -177,7 +207,10 @@ do — you do not need to serve the world for it to work.
 
 - **Sizing.** Memory is capped by `MAX_TOTAL_BYTES` (512 MiB by default) plus a
   small per-connection overhead. A small VPS handles a community.
-- **Backups.** None. State is intentionally ephemeral.
+- **Backups.** Back up `/var/lib/pigeon-relay` and the coordinator seed as one
+  recovery set. Stop the relay for a filesystem copy, or use a SQLite-aware
+  snapshot; copying only the main database files while WAL files are active can
+  omit committed state. Pairwise queues are intentionally excluded.
 - **Updates.** `docker pull` the `latest` tag and recreate the container.
   Versioned tags (for example `v1.2.3`) are published for pinning.
 - **Logs.** The relay does not log addresses or content. Keep it that way — do

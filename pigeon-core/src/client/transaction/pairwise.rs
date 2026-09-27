@@ -11,6 +11,9 @@ use crate::storage::StateStore;
 use crate::wire::{PROTOCOL_VERSION, proto};
 use crate::{Error, SecureIdentity};
 
+/// Our own outbound session plus the peer's crossing initiation.
+const MAX_PAIRWISE_SESSIONS_PER_PEER: usize = 2;
+
 impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
     pub(super) fn stage_migrate_legacy_pairwise_state(
         &self,
@@ -275,6 +278,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             proto::OutboundKind::GroupJoinRequest
                 | proto::OutboundKind::GroupJoinMaterial
                 | proto::OutboundKind::GroupWelcome
+                | proto::OutboundKind::GroupLeaveProposal
         ) {
             return Ok(item);
         }
@@ -340,11 +344,8 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         }
         .encode_to_vec();
 
-        let body = if let Some(stored) = candidate
-            .pairwise_sessions
-            .iter_mut()
-            .find(|session| session.remote_identity.as_slice() == recipient)
-        {
+        let body = if let Some(index) = preferred_session_index(candidate, recipient)? {
+            let stored = &mut candidate.pairwise_sessions[index];
             let mut session = PlatformSession::import(&stored.state, recipient)?;
             let message = session.encrypt(&plaintext)?;
             stored.state = session.export()?;
@@ -410,12 +411,23 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             return Err(Error::InvalidSignature);
         }
         let sender_contact_card = envelope.sender_contact_card;
+        let mut crossing_request = false;
         let plaintext = match envelope.body.ok_or(Error::MalformedBundle)? {
             proto::pairwise_envelope::Body::Initiation(bytes) => {
-                if candidate
+                // A second initiation is admitted only when both sides opened a
+                // session before either received the other's (initiation
+                // glare): the one existing session is our own and unconfirmed.
+                // Once any session with the peer has received a message, later
+                // initiations are rejected, so replayed initiations cannot
+                // replace or multiply established sessions.
+                let existing = candidate
                     .pairwise_sessions
                     .iter()
-                    .any(|session| session.remote_identity.as_slice() == sender)
+                    .filter(|session| session.remote_identity.as_slice() == sender)
+                    .map(|session| PlatformSession::import(&session.state, sender))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if existing.len() >= MAX_PAIRWISE_SESSIONS_PER_PEER
+                    || existing.iter().any(PlatformSession::has_received_message)
                 {
                     return Err(Error::InvalidSignature);
                 }
@@ -445,7 +457,21 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     }
                     candidate.pairwise_contacts.push(incoming);
                 } else if !sender_contact_card.is_empty() {
-                    return Err(Error::InvalidSignature);
+                    // A card from a known sender is only valid as a crossing
+                    // message request: both sides scanned each other and sent
+                    // introductions. The card must still authenticate the
+                    // sender; its contents never replace the scanned contact.
+                    let known = candidate
+                        .pairwise_contacts
+                        .iter()
+                        .find(|contact| contact.identity.as_slice() == sender)
+                        .ok_or(Error::InvalidSignature)?;
+                    if pairwise_relationship(known)? != proto::PairwiseRelationship::OutgoingRequest
+                    {
+                        return Err(Error::InvalidSignature);
+                    }
+                    verified_incoming_contact(&sender_contact_card, sender, &initiation.identity)?;
+                    crossing_request = true;
                 }
                 let contact = candidate
                     .pairwise_contacts
@@ -479,18 +505,31 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 if !sender_contact_card.is_empty() {
                     return Err(Error::InvalidSignature);
                 }
-                let stored = candidate
+                let message = decode_olm_message(&bytes)?;
+                // After initiation glare the peer may send on either session.
+                // A failed attempt leaves the stored state untouched; only the
+                // session that authenticates the message is advanced.
+                let mut last_error = Error::InvalidKey;
+                let mut decrypted = None;
+                for stored in candidate
                     .pairwise_sessions
                     .iter_mut()
-                    .find(|session| session.remote_identity.as_slice() == sender)
-                    .ok_or(Error::InvalidKey)?;
-                let mut session = PlatformSession::import(&stored.state, sender)?;
-                if session.remote_identity_key() != sender {
-                    return Err(Error::InvalidSignature);
+                    .filter(|session| session.remote_identity.as_slice() == sender)
+                {
+                    let mut session = PlatformSession::import(&stored.state, sender)?;
+                    if session.remote_identity_key() != sender {
+                        return Err(Error::InvalidSignature);
+                    }
+                    match session.decrypt(&message) {
+                        Ok(plaintext) => {
+                            stored.state = session.export()?;
+                            decrypted = Some(plaintext);
+                            break;
+                        }
+                        Err(error) => last_error = error,
+                    }
                 }
-                let plaintext = session.decrypt(&decode_olm_message(&bytes)?)?;
-                stored.state = session.export()?;
-                plaintext
+                decrypted.ok_or(last_error)?
             }
         };
         let control = proto::PairwisePayload::decode(plaintext.as_slice())
@@ -532,6 +571,15 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     let contact = &mut candidate.pairwise_contacts[contact_index];
                     contact.relationship = proto::PairwiseRelationship::Contact as i32;
                     contact.introduction_sent = false;
+                }
+                // Crossing requests are mutual acceptance: each side already
+                // chose to message the other, so neither waits on the other's
+                // explicit acceptance.
+                Some(proto::direct_application::Body::Message(_)) if crossing_request => {
+                    let contact = &mut candidate.pairwise_contacts[contact_index];
+                    contact.relationship = proto::PairwiseRelationship::Contact as i32;
+                    contact.introduction_sent = false;
+                    contact.introduction_received = false;
                 }
                 _ => suppress_direct_event = true,
             },
@@ -619,6 +667,25 @@ fn verified_incoming_contact(
         introduction_received: false,
         introduction_sent: false,
     })
+}
+
+/// Chooses the session to encrypt with: the first one the peer has confirmed by
+/// sending on it, otherwise the first (our own unconfirmed outbound session).
+fn preferred_session_index(
+    candidate: &proto::ClientCheckpoint,
+    recipient: [u8; 32],
+) -> Result<Option<usize>, Error> {
+    let mut first = None;
+    for (index, stored) in candidate.pairwise_sessions.iter().enumerate() {
+        if stored.remote_identity.as_slice() != recipient {
+            continue;
+        }
+        if PlatformSession::import(&stored.state, recipient)?.has_received_message() {
+            return Ok(Some(index));
+        }
+        first.get_or_insert(index);
+    }
+    Ok(first)
 }
 
 fn pairwise_relationship(

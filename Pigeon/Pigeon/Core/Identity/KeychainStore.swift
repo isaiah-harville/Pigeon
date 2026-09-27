@@ -18,7 +18,7 @@ enum KeychainError: Error, Equatable {
 /// How readable a stored secret is relative to the device lock state. Both
 /// options are `ThisDeviceOnly` — never synced to iCloud, never restored onto a
 /// different device — and differ only in the lock-state window:
-enum KeychainAccessibility {
+enum KeychainAccessibility: Equatable {
   /// Readable only while the device is unlocked (strictest). Blocks access from
   /// a locked background launch.
   case whenUnlocked

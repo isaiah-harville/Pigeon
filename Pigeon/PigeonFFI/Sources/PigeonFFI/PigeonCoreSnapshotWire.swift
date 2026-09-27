@@ -36,6 +36,8 @@ extension PigeonGroupState {
       policyRevision: proto.policyRevision, dissolved: proto.dissolved,
       capabilityPublicKey: proto.capabilityPublicKey,
       capabilityID: proto.capabilityID,
-      coordinatorPublicKey: proto.coordinatorPublicKey)
+      coordinatorPublicKey: proto.coordinatorPublicKey,
+      coordinatorSequence: proto.coordinatorSequence,
+      localLeavePending: proto.localLeavePending)
   }
 }

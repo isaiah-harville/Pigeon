@@ -229,6 +229,28 @@ impl RecoveryEndorsement {
         self.signer_identity
     }
 
+    /// Checks that an eligible endorser signed exactly this proposal with the
+    /// recovery key bound in `policy`.
+    pub(crate) fn verify(
+        &self,
+        proposal: &RecoveryProposal,
+        policy: &PigeonGroupPolicy,
+    ) -> Result<(), RecoveryError> {
+        if !policy.can_endorse_recovery(self.signer_identity) {
+            return Err(RecoveryError::UnauthorizedSigner);
+        }
+        let recovery_key = policy
+            .member_recovery_key(self.signer_identity)
+            .ok_or(RecoveryError::UnauthorizedSigner)?;
+        VerifyingKey::from_bytes(&recovery_key)
+            .map_err(|_| RecoveryError::InvalidSignature)?
+            .verify_strict(
+                &proposal.signing_transcript(),
+                &Signature::from_bytes(&self.signature),
+            )
+            .map_err(|_| RecoveryError::InvalidSignature)
+    }
+
     pub fn encode(&self) -> Vec<u8> {
         self.to_proto().encode_to_vec()
     }
@@ -311,16 +333,7 @@ impl RecoveryCertificate {
             if !eligible.contains(&endorsement.signer_identity) {
                 return Err(RecoveryError::UnauthorizedSigner);
             }
-            let recovery_key = policy
-                .member_recovery_key(endorsement.signer_identity)
-                .ok_or(RecoveryError::UnauthorizedSigner)?;
-            VerifyingKey::from_bytes(&recovery_key)
-                .map_err(|_| RecoveryError::InvalidSignature)?
-                .verify_strict(
-                    &self.proposal.signing_transcript(),
-                    &Signature::from_bytes(&endorsement.signature),
-                )
-                .map_err(|_| RecoveryError::InvalidSignature)?;
+            endorsement.verify(&self.proposal, policy)?;
             valid += 1;
         }
         (valid >= required)

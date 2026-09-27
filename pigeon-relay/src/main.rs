@@ -12,6 +12,7 @@ mod app;
 mod clock;
 mod config;
 mod coordinator;
+mod durable;
 mod group;
 mod mailbox;
 mod push;
@@ -21,7 +22,8 @@ async fn main() {
     let config = config::RelayConfig::from_env()
         .unwrap_or_else(|error| panic!("failed to load relay configuration: {error}"));
     let addr = config.bind_addr.clone();
-    let state = app::build_state(config);
+    let state = app::build_state(config)
+        .unwrap_or_else(|error| panic!("failed to load durable relay state: {error}"));
     tokio::spawn(app::expiry_loop(state.clone()));
 
     let listener = tokio::net::TcpListener::bind(&addr)

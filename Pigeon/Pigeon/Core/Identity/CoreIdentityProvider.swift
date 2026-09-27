@@ -69,12 +69,13 @@ final class CoreIdentityProvider: PlatformIdentity, @unchecked Sendable {
       do {
         if let stored = try store.get() {
           guard stored.count == 32 else { throw PlatformError.InvalidOutput }
+          try store.setAccessibility(.whenUnlocked)
           key = try Curve25519.Signing.PrivateKey(rawRepresentation: stored)
         } else {
           let generated = Curve25519.Signing.PrivateKey()
           try store.set(
             generated.rawRepresentation,
-            accessibility: BackgroundDelivery.accessibility)
+            accessibility: .whenUnlocked)
           guard try store.get() == generated.rawRepresentation else {
             throw PlatformError.Unavailable
           }

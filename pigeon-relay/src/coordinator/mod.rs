@@ -10,6 +10,7 @@ use ed25519_dalek::SigningKey;
 pub(crate) mod protocol;
 pub(crate) mod store;
 
+use crate::durable::{CoordinatorJournal, DurableError};
 use store::{Config, Store};
 
 #[derive(Clone)]
@@ -18,10 +19,15 @@ pub struct Service {
 }
 
 impl Service {
-    pub fn new(config: Config, signer: SigningKey) -> Self {
-        Self {
-            store: Arc::new(Mutex::new(Store::new(config, signer))),
-        }
+    pub fn durable(
+        config: Config,
+        signer: SigningKey,
+        journal: CoordinatorJournal,
+        now: u64,
+    ) -> Result<Self, DurableError> {
+        Ok(Self {
+            store: Arc::new(Mutex::new(Store::durable(config, signer, journal, now)?)),
+        })
     }
 
     pub fn expire(&self, now: u64) {

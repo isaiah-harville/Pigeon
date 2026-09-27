@@ -113,6 +113,11 @@ sessions in `pigeon-core`). The mesh layer relays opaque ciphertext;
   biometric-gated vault regardless of this setting. Locked startup is
   load-existing-only: it can never generate or replace an identity before
   protected data becomes available.
+- MLS signing, group-capability, and group-recovery private keys always use
+  `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. They are migrated to that
+  class when loaded. A process that loaded them before screen lock may retain
+  them in memory for durable running-process delivery; a cold locked launch
+  cannot load them or mutate group cryptographic state.
 - **Secure Enclave is deliberately not used**: it supports only P-256, which is
   incompatible with the X25519/Ed25519 stack the protocols require.
 - The public key's **SHA-256 fingerprint** is the device's address/handle.
@@ -289,7 +294,11 @@ from reusing an MLS state or losing the sender's local message projection.
 Membership is mutable and capped at 128, with a minimum of three. The immutable
 owner identity is always an admin and cannot be removed or demoted. Authenticated
 policy commits enforce admin membership changes, owner-only name/relay/mesh
-changes, member leave, and owner dissolve. Each roster mutation advances the MLS
+changes, member leave, and owner dissolve. Dissolution is terminal: after the
+dissolution commit is appended, the owner revokes the group at the relay, which
+immediately refuses further appends, coordinator submissions, and capability
+changes but keeps read access and the signed coordinator log for one group TTL
+so offline members can still receive the terminal commit. Each roster mutation advances the MLS
 epoch: joiners receive no pre-join message keys, and former members receive no
 post-removal epoch keys.
 
@@ -300,12 +309,28 @@ The coordinator is untrusted for confidentiality and authorization: clients
 validate receipts, MLS commits, and policy transitions. A malicious coordinator
 can delay, drop, replay, or withhold progress, but should not be able to forge a
 valid transition or decrypt content. Pairwise Olm control messages carry join
-requests, join material, and welcomes before a new member can authenticate to the
-group mailbox; normal group messages are encrypted once with MLS, not fanned out.
+requests, join material, and welcomes before a new member can authenticate to
+the group mailbox. They also carry a member's signed leave proposal to current
+admins, allowing any online admin to commit the leave without owner availability.
+Normal group messages are encrypted once with MLS, not fanned out.
+
+Clients persist a coordinator receipt sequence independently from the group
+message cursor. A wake drains both bounded streams until empty. A correctly
+signed receipt whose opaque candidate fails MLS or policy validation is consumed
+transactionally and emits a security-warning event; this prevents a malformed
+entry from wedging every later sequence without treating it as valid group state.
 
 Local mesh delivery is an explicit per-group owner opt-in and is off by default.
 Relay and mesh copies use the same authenticated MLS ciphertext and replay
 ledger, so transport duplication cannot produce duplicate application events.
+
+Group delivery receipts are MLS application messages, so only members can read
+which messages they acknowledge. A member queues receipts durably and sends them
+as one batched acknowledgement per group after an interval that grows with group
+size (2 seconds, or half a second per member, whichever is longer), or as soon
+as 128 are queued. The relay sees each batch as one more opaque group entry from
+that member's capability; batching limits both mailbox growth and how precisely
+the relay can time when each member read the group.
 
 Every roster entry authenticates that member's Pigeon root identity, MLS
 signature key, relay-capability key, and recovery key in the MLS group-context
@@ -389,6 +414,13 @@ Pigeon keeps the trust cost minimal:
   timing, message sizes, and that *some* sender is delivering to recipient key X.
   Mitigations (sealed-sender addressing, padding, and routing over **Tor** to hide
   IPs) are planned, not yet implemented.
+- Pairwise queues are transient and memory-only. Group authorization,
+  ciphertext, cursors/tombstones, and signed coordinator receipt chains are
+  committed to local SQLite before acknowledgement so a restart cannot forget a
+  revocation or reuse a coordinator sequence. The durable database contains no
+  plaintext or private client keys, but it does retain group-level metadata and
+  opaque content until TTL/cursor reclamation. Startup fails closed if the
+  configured coordinator signing key does not match the stored log identity.
 - **Relay compatibility is negotiated before mailbox access.** The app and relay
   exchange inclusive minimum/maximum relay-protocol versions before publish,
   subscribe, authentication, acknowledgement, or push registration. Both select
@@ -432,7 +464,10 @@ traverses Apple.**
 The cost is **metadata, not confidentiality**. This centralizes the *wake signal*:
 the official gateway learns `device token ↔ "this mailbox has mail at time T"`, and
 Apple sees push-delivery metadata — more than the blind relay alone. Pushes are
-coalesced per mailbox to blunt deposit-driven timing leakage. This is a deliberate,
+coalesced per mailbox to blunt deposit-driven timing leakage. Group chats extend
+the same wake signal to group readers: the gateway learns `device token ↔ "this
+group has a new entry, coordinator receipt, or dissolution at time T"`, which
+also reveals which registered tokens read the same group. This is a deliberate,
 documented exception to the project's "no new network services beyond the relay"
 rule and to the relay's "learns only public keys" property (now also a device
 token, on the official deployment only). A future Notification Service Extension

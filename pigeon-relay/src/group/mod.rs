@@ -12,6 +12,7 @@ pub(crate) mod connection;
 pub(crate) mod protocol;
 pub(crate) mod store;
 
+use crate::durable::{DurableError, GroupJournal};
 use protocol::GroupServerMsg;
 use store::{Config, Store};
 
@@ -22,11 +23,11 @@ pub struct Service {
 }
 
 impl Service {
-    pub fn new(config: Config) -> Self {
-        Self {
-            store: Arc::new(Mutex::new(Store::bounded(config))),
+    pub fn durable(config: Config, journal: GroupJournal, now: u64) -> Result<Self, DurableError> {
+        Ok(Self {
+            store: Arc::new(Mutex::new(Store::durable(config, journal, now)?)),
             subscribers: Arc::new(Mutex::new(HashMap::new())),
-        }
+        })
     }
 
     pub fn expire(&self, now: u64) {

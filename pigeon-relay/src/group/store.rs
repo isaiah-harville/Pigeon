@@ -5,6 +5,10 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use crate::durable::{
+    fail_stop, CapabilityRecord, DurableError, GroupAuthorization, GroupJournal, GroupRecord,
+};
+
 pub const GROUP_ID_BYTES: usize = 32;
 pub const CAPABILITY_KEY_BYTES: usize = 32;
 
@@ -115,6 +119,7 @@ struct StoredGroup {
     authorization_generation: u64,
     entries: VecDeque<GroupEntry>,
     next_sequence: u64,
+    revoked_at: Option<u64>,
 }
 
 impl StoredGroup {
@@ -163,11 +168,12 @@ impl StoredGroup {
     }
 }
 
-#[derive(Debug)]
 pub struct Store {
     config: Config,
     groups: HashMap<[u8; GROUP_ID_BYTES], StoredGroup>,
     total_bytes: usize,
+    /// Write-through durable copy; `None` keeps the store memory-only.
+    journal: Option<GroupJournal>,
 }
 
 impl Store {
@@ -176,6 +182,110 @@ impl Store {
             config,
             groups: HashMap::new(),
             total_bytes: 0,
+            journal: None,
+        }
+    }
+
+    /// Restores every group from `journal` and writes through all later
+    /// mutations. Expiry and cursor garbage collection are re-applied, since the
+    /// journal applies them lazily.
+    pub fn durable(config: Config, journal: GroupJournal, now: u64) -> Result<Self, DurableError> {
+        let cutoff = now.saturating_sub(config.ttl_secs);
+        let mut store = Self::bounded(config);
+        let records = journal.load(cutoff)?;
+        if records.len() > store.config.max_groups {
+            return Err(DurableError::Corrupt(
+                "group count exceeds configured limit",
+            ));
+        }
+        for record in records {
+            validate_record(&record, &store.config, store.total_bytes)?;
+            let entries: VecDeque<GroupEntry> = record
+                .entries
+                .into_iter()
+                .map(|entry| GroupEntry {
+                    sequence: entry.sequence,
+                    ciphertext: entry.ciphertext,
+                    timestamp: entry.timestamp,
+                })
+                .collect();
+            store.total_bytes += entries
+                .iter()
+                .map(|entry| entry.ciphertext.len())
+                .sum::<usize>();
+            let capabilities = record
+                .capabilities
+                .into_iter()
+                .map(|capability| {
+                    (
+                        capability.capability_id,
+                        CapabilityState {
+                            public_key: capability.public_key,
+                            can_append: capability.can_append,
+                            can_read: capability.can_read,
+                            can_control: capability.can_control,
+                            cursor: capability.cursor,
+                        },
+                    )
+                })
+                .collect();
+            store.groups.insert(
+                record.coordination_id,
+                StoredGroup {
+                    capabilities,
+                    permanent_controller_public_key: record.permanent_controller_public_key,
+                    authorization_generation: record.authorization_generation,
+                    entries,
+                    next_sequence: record.next_sequence,
+                    revoked_at: record.revoked_at,
+                },
+            );
+        }
+        let freed = store
+            .groups
+            .values_mut()
+            .map(StoredGroup::collect_garbage)
+            .sum::<usize>();
+        store.total_bytes = store.total_bytes.saturating_sub(freed);
+        store.journal = Some(journal);
+        store.expire_at(now);
+        Ok(store)
+    }
+
+    /// Writes a group's authorization state and cursors through to the journal
+    /// before the caller releases the store lock.
+    fn persist_authorization(&mut self, coordination_id: [u8; GROUP_ID_BYTES]) {
+        let Some(journal) = self.journal.as_mut() else {
+            return;
+        };
+        let Some(group) = self.groups.get(&coordination_id) else {
+            return;
+        };
+        let capabilities = group
+            .capabilities
+            .iter()
+            .map(|(capability_id, state)| CapabilityRecord {
+                capability_id: *capability_id,
+                public_key: state.public_key,
+                can_append: state.can_append,
+                can_read: state.can_read,
+                can_control: state.can_control,
+                cursor: state.cursor,
+            })
+            .collect::<Vec<_>>();
+        let authorization = GroupAuthorization {
+            permanent_controller_public_key: group.permanent_controller_public_key,
+            authorization_generation: group.authorization_generation,
+            next_sequence: group.next_sequence,
+            revoked_at: group.revoked_at,
+            capabilities: &capabilities,
+            first_live_sequence: group
+                .entries
+                .front()
+                .map_or(group.next_sequence, |entry| entry.sequence),
+        };
+        if let Err(error) = journal.sync_authorization(&coordination_id, &authorization) {
+            fail_stop(error);
         }
     }
 
@@ -265,8 +375,10 @@ impl Store {
                 authorization_generation: registration.authorization_generation,
                 entries: VecDeque::new(),
                 next_sequence: 1,
+                revoked_at: None,
             },
         );
+        self.persist_authorization(registration.coordination_id);
         Ok(RegisteredGroup {
             coordination_id: registration.coordination_id,
             capabilities: registration.capabilities,
@@ -290,7 +402,8 @@ impl Store {
         let authorized = group
             .capabilities
             .get(&capability.capability_id)
-            .is_some_and(|state| state.can_append && state.public_key == capability.public_key);
+            .is_some_and(|state| state.can_append && state.public_key == capability.public_key)
+            && group.revoked_at.is_none();
         if !authorized {
             return Err(StoreError::Unauthorized);
         }
@@ -313,6 +426,17 @@ impl Store {
             .next_sequence
             .checked_add(1)
             .ok_or(StoreError::AtCapacity)?;
+        if let Some(journal) = self.journal.as_mut() {
+            if let Err(error) = journal.append_entry(
+                &capability.coordination_id,
+                group.next_sequence,
+                sequence,
+                &ciphertext,
+                now,
+            ) {
+                fail_stop(error);
+            }
+        }
         self.total_bytes += ciphertext.len();
         group.entries.push_back(GroupEntry {
             sequence,
@@ -378,6 +502,7 @@ impl Store {
         }
         reader.cursor = sequence;
         self.total_bytes = self.total_bytes.saturating_sub(group.collect_garbage());
+        self.persist_authorization(capability.coordination_id);
         Ok(())
     }
 
@@ -393,12 +518,13 @@ impl Store {
             .groups
             .get_mut(&controller.coordination_id)
             .ok_or(StoreError::Unauthorized)?;
-        let authorized = group
-            .capabilities
-            .get(&controller.capability_id)
-            .is_some_and(|capability| {
-                capability.can_control && capability.public_key == controller.public_key
-            });
+        let authorized = group.revoked_at.is_none()
+            && group
+                .capabilities
+                .get(&controller.capability_id)
+                .is_some_and(|capability| {
+                    capability.can_control && capability.public_key == controller.public_key
+                });
         if !authorized {
             return Err(StoreError::Unauthorized);
         }
@@ -456,6 +582,37 @@ impl Store {
         group.capabilities = next;
         group.authorization_generation = new_generation;
         self.total_bytes = self.total_bytes.saturating_sub(group.collect_garbage());
+        self.persist_authorization(controller.coordination_id);
+        Ok(())
+    }
+
+    pub fn revoke_group(
+        &mut self,
+        controller: &GroupCapability,
+        expected_generation: u64,
+        now: u64,
+    ) -> Result<(), StoreError> {
+        let group = self
+            .groups
+            .get_mut(&controller.coordination_id)
+            .ok_or(StoreError::Unauthorized)?;
+        let authorized = group.authorization_generation == expected_generation
+            && controller.public_key == group.permanent_controller_public_key
+            && group
+                .capabilities
+                .get(&controller.capability_id)
+                .is_some_and(|capability| {
+                    capability.can_control && capability.public_key == controller.public_key
+                });
+        if !authorized {
+            return Err(StoreError::Unauthorized);
+        }
+        // Keep read capabilities alive for one TTL after dissolution. The
+        // terminal MLS commit is coordinator-delivered, so an offline member
+        // must still be able to authenticate and fetch it. All mutating paths
+        // fail closed as soon as this tombstone is installed.
+        group.revoked_at.get_or_insert(now);
+        self.persist_authorization(controller.coordination_id);
         Ok(())
     }
 
@@ -484,8 +641,15 @@ impl Store {
     pub fn can_append(&self, capability: &GroupCapability) -> bool {
         self.groups
             .get(&capability.coordination_id)
-            .and_then(|group| group.capabilities.get(&capability.capability_id))
-            .is_some_and(|state| state.can_append && state.public_key == capability.public_key)
+            .is_some_and(|group| {
+                group.revoked_at.is_none()
+                    && group
+                        .capabilities
+                        .get(&capability.capability_id)
+                        .is_some_and(|state| {
+                            state.can_append && state.public_key == capability.public_key
+                        })
+            })
     }
 
     pub fn reader_keys(
@@ -521,7 +685,33 @@ impl Store {
     }
 
     pub fn expire_at(&mut self, now: u64) {
-        self.expire(now.saturating_sub(self.config.ttl_secs));
+        let cutoff = now.saturating_sub(self.config.ttl_secs);
+        if let Some(journal) = self.journal.as_mut() {
+            if let Err(error) = journal.expire(cutoff) {
+                fail_stop(error);
+            }
+        }
+        self.expire(cutoff);
+        let expired = self
+            .groups
+            .iter()
+            .filter_map(|(id, group)| {
+                group
+                    .revoked_at
+                    .is_some_and(|at| at < cutoff)
+                    .then_some(*id)
+            })
+            .collect::<Vec<_>>();
+        for id in expired {
+            if let Some(group) = self.groups.remove(&id) {
+                let freed = group
+                    .entries
+                    .iter()
+                    .map(|entry| entry.ciphertext.len())
+                    .sum::<usize>();
+                self.total_bytes = self.total_bytes.saturating_sub(freed);
+            }
+        }
     }
 
     #[cfg(test)]
@@ -535,4 +725,60 @@ impl Store {
     pub fn total_bytes(&self) -> usize {
         self.total_bytes
     }
+}
+
+fn validate_record(
+    record: &GroupRecord,
+    config: &Config,
+    existing_bytes: usize,
+) -> Result<(), DurableError> {
+    if record.capabilities.is_empty()
+        || record.capabilities.len() > config.max_capabilities_per_group
+        || record.entries.len() > config.max_entries_per_group
+        || record.next_sequence == 0
+    {
+        return Err(DurableError::Corrupt("invalid group bounds"));
+    }
+    let unique_ids = record
+        .capabilities
+        .iter()
+        .map(|capability| capability.capability_id)
+        .collect::<HashSet<_>>();
+    let unique_keys = record
+        .capabilities
+        .iter()
+        .map(|capability| capability.public_key)
+        .collect::<HashSet<_>>();
+    let last_sequence = record.next_sequence.saturating_sub(1);
+    if unique_ids.len() != record.capabilities.len()
+        || unique_keys.len() != record.capabilities.len()
+        || !record.capabilities.iter().any(|capability| {
+            capability.can_control
+                && capability.public_key == record.permanent_controller_public_key
+        })
+        || record.capabilities.iter().any(|capability| {
+            (!capability.can_append && !capability.can_read && !capability.can_control)
+                || capability.cursor > last_sequence
+        })
+    {
+        return Err(DurableError::Corrupt("invalid group capabilities"));
+    }
+    let mut prior = 0;
+    let mut bytes = existing_bytes;
+    for entry in &record.entries {
+        if entry.sequence == 0
+            || entry.sequence <= prior
+            || entry.sequence >= record.next_sequence
+            || entry.ciphertext.is_empty()
+            || entry.ciphertext.len() > config.max_entry_bytes
+        {
+            return Err(DurableError::Corrupt("invalid group entry"));
+        }
+        prior = entry.sequence;
+        bytes = bytes.saturating_add(entry.ciphertext.len());
+        if bytes > config.max_total_bytes {
+            return Err(DurableError::Corrupt("group bytes exceed configured limit"));
+        }
+    }
+    Ok(())
 }

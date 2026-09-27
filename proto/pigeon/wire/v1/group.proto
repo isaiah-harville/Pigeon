@@ -152,6 +152,7 @@ enum GroupRelayControlKind {
   GROUP_RELAY_CONTROL_KIND_PROMOTE_ADMIN = 3;
   GROUP_RELAY_CONTROL_KIND_DEMOTE_ADMIN = 4;
   GROUP_RELAY_CONTROL_KIND_REPLACE_ALL = 5;
+  GROUP_RELAY_CONTROL_KIND_REVOKE_ALL = 6;
 }
 
 message GroupRelayControl {
@@ -271,7 +272,15 @@ message GroupReaction {
   string reaction = 2;
 }
 
+// Delivery receipts for up to MAX_GROUP_ACKNOWLEDGEMENT_BATCH received messages.
+// Receipts are batched so group mailbox growth scales with time, not with
+// message count times member count.
 message GroupAcknowledgement {
+  reserved 1, 2;
+  repeated GroupAcknowledgedMessage messages = 3;
+}
+
+message GroupAcknowledgedMessage {
   bytes original_sender_identity = 1;
   bytes message_id = 2;
 }

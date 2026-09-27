@@ -97,6 +97,7 @@ public struct PigeonGroupRelayRegistration: Equatable, Sendable {
 public enum PigeonGroupRelayControlKind: Equatable, Sendable {
   case unspecified
   case replaceAll
+  case revokeAll
   case unknown(Int)
 }
 

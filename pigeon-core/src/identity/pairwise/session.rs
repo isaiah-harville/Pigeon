@@ -118,6 +118,12 @@ impl PlatformSession {
     pub(crate) fn remote_identity_key(&self) -> [u8; 32] {
         self.remote_identity_key
     }
+
+    /// Whether the peer has sent at least one message on this session, which
+    /// proves the peer holds the matching ratchet.
+    pub(crate) fn has_received_message(&self) -> bool {
+        self.olm.has_received_message()
+    }
 }
 
 impl Session {

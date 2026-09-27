@@ -24,8 +24,8 @@ pub use delivery::{DeliveryLedger, GroupDeliveryState};
 pub use engine::{GroupCreationConfig, GroupEngine};
 pub use id::GroupId;
 pub use message::{
-    AuthenticatedGroupMessage, GroupApplication, GroupCiphertext, GroupMessageId,
-    RecoveryControlKind,
+    AcknowledgedMessage, AuthenticatedGroupMessage, GroupApplication, GroupCiphertext,
+    GroupMessageId, RecoveryControlKind,
 };
 pub use pending::PendingMutation;
 pub use policy::{PigeonGroupPolicy, PolicyError, validate_transition};

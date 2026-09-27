@@ -26,7 +26,8 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
   authentication, or integrity.
 - **Crypto:** Signal-grade end-to-end encryption via **Olm** (the audited
   `vodozemac` crate) in the Rust `pigeon-core`, with Pigeon's own long-term
-  Ed25519 identity binding layered on top. Migrated (#79–#83) from the original
+  Ed25519 identity binding layered on top; group chats use MLS (RFC 9420)
+  through OpenMLS in the same core. Migrated (#79–#83) from the original
   clean-room Swift `PigeonCrypto` (Noise XX + Double Ratchet over CryptoKit),
   which has been removed. libsignal was rejected (AGPL/App-Store conflict,
   server-coupled design); a Rust core keeps the protocol portable across future
@@ -43,9 +44,10 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 
 ## Module layout
 
-- `pigeon-core/` — Rust crate (AGPL): the pairwise messaging core over Olm/
-  `vodozemac` — identity binding, account/prekeys, sessions, the protobuf wire
-  format. Reached from the app through the UniFFI bridge.
+- `pigeon-core/` — Rust crate (AGPL): the transactional messaging core —
+  identity binding, pairwise Olm/`vodozemac` sessions, MLS groups, checkpointed
+  state, and the protobuf wire format. Reached from the app through the UniFFI
+  bridge.
 - `pigeon-ffi/` — UniFFI crate: builds the XCFramework and generates the Swift
   bindings vended by the `PigeonFFI` package (the app's crypto/mesh facade).
 - `pigeon-mesh/` — Rust crate: Fragmentation, MeshPacket (dedup/TTL/relay),
@@ -118,6 +120,17 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 
 ### 🟡 In progress
 
+- **Group chats (1.4.0)** — OpenMLS-based group encryption and authenticated
+  mutable policy live in `pigeon-core`; the selected relay hosts the opaque group
+  mailbox and signed commit coordinator. Groups support 3–128 members, a
+  permanent owner, delegated admins, post-join history, owner-controlled name,
+  owner-controlled explicit mesh opt-in, member leave, and permanent dissolve.
+  The implementation includes adversarial state-machine tests, authenticated
+  coordinator failover without owner availability, atomic capability rotation,
+  and transactional crash recovery. Physical multi-device and locked-delivery
+  validation remain release gates. Metadata minimization and independent
+  cryptographic review remain audit-readiness work; do not describe Pigeon as
+  audited or production-secure without that evidence.
 - **UI polish** — ongoing refinement of chat/contacts.
 - **Security hardening / audit prep** — work toward the audit blockers below:
   traffic-analysis resistance (padding/cover traffic), key zeroization,
@@ -130,18 +143,6 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 - **External security audit** — required before any real-world "secure" claim.
 
 ### 🔭 Horizon
-
-**Group chats (1.4.0 implementation):** OpenMLS-based group encryption and
-authenticated mutable policy live in `pigeon-core`; the selected relay hosts the
-opaque group mailbox and signed commit coordinator. Groups support 3–128 members,
-a permanent owner, delegated admins, post-join history, owner-controlled name,
-owner-controlled explicit mesh opt-in, member leave, and permanent dissolve.
-The implementation includes adversarial state-machine tests, authenticated
-coordinator failover without owner availability, atomic capability rotation,
-and transactional crash recovery. Physical multi-device and locked-delivery
-validation remain release gates. Metadata minimization and independent
-cryptographic review remain audit-readiness work; do not describe Pigeon as
-audited or production-secure without that evidence.
 
 **Long-distance / non-Bluetooth transport** (same E2E ciphertext across local or
 federated paths):
@@ -168,9 +169,13 @@ Several are audit blockers (see [SECURITY_MODEL.md](SECURITY_MODEL.md) → Audit
 
 - **External security audit** — required before any real-world "secure" claim.
   **Audit blocker.** The messaging core is Olm via the audited `vodozemac` crate, but Pigeon's identity binding, wire formats, transports, and storage still need independent review.
-- **Re-handshake DoS** — mesh envelopes are unauthenticated, so a spoofed
-  `rehandshakeRequest`/handshake can force a session reset (no content breach —
-  the binding check holds). *Mitigated:* network-triggered re-handshakes are rate-limited per peer with a cooldown, so a spoofed flood costs at most one teardown per window; user-initiated resets bypass the gate.
+- **Pairwise session loss** — there is no network-triggered re-handshake. Once a
+  peer has confirmed a pairwise session, further initiations from that identity
+  are rejected, so a spoofed or replayed envelope cannot tear a session down.
+  Crossing first messages (both sides initiate before either receives) keep one
+  extra session so neither side is locked out. The trade-off: if one side loses
+  its pairwise state while keeping its identity, both sides must remove and
+  re-add the contact to re-establish.
 - **Connection topology** — two dual-role devices form *two* central↔peripheral
   links per pair, so each message crosses BLE twice. This is an **efficiency**
   issue only: the mesh dedup layer already drops the duplicate, so no duplicate is

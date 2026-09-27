@@ -616,6 +616,136 @@ fn recovery_quorum_round_trips_inside_mls_group_ciphertext() {
     assert!(kinds.contains(&(wire_proto::OutboundKind::GroupCoordinator as i32)));
 }
 
+#[test]
+fn endorsement_arriving_after_recovery_was_cancelled_is_consumed() {
+    let group = create_group_with_dave();
+    let mut owner = group.owner;
+    let mut dave = group.dave;
+    let dave_identity = TestIdentity::new(4).root_public();
+
+    let promotion = owner
+        .execute(
+            ClientCommand::promote_group_admin("promote-late-admin", group.group_id, dave_identity)
+                .unwrap(),
+        )
+        .unwrap();
+    let promotion_submission = promotion
+        .outbound
+        .iter()
+        .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
+        .find(|item| item.kind == wire_proto::OutboundKind::GroupCoordinator as i32)
+        .unwrap();
+    let promotion_submission =
+        wire_proto::GroupCoordinatorSubmission::decode(promotion_submission.payload.as_slice())
+            .unwrap();
+    let promoted = coordinator_candidate(
+        &promotion_submission,
+        3,
+        group.receipt_head,
+        group.coordination_id,
+    );
+    let promoted_head = CoordinatorReceipt::decode_candidate(&promoted)
+        .unwrap()
+        .0
+        .receipt_hash();
+    owner
+        .execute(
+            ClientCommand::apply_group_coordinator_candidate(
+                "owner-merges-late-promotion",
+                promoted.clone(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    dave.execute(
+        ClientCommand::apply_group_coordinator_candidate("dave-merges-late-promotion", promoted)
+            .unwrap(),
+    )
+    .unwrap();
+
+    let proposal = owner
+        .execute(
+            ClientCommand::begin_group_recovery(
+                "owner-begins-late-recovery",
+                group.group_id,
+                "https://replacement-late.example",
+                [84; 32],
+                TestIdentity::new(66).root_public(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let proposal = proposal
+        .outbound
+        .iter()
+        .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
+        .find(|item| item.kind == wire_proto::OutboundKind::GroupMessage as i32)
+        .unwrap();
+    let endorsement = dave
+        .execute(
+            ClientCommand::apply_group_message("dave-endorses-late", proposal.payload).unwrap(),
+        )
+        .unwrap();
+    let endorsement = endorsement
+        .outbound
+        .iter()
+        .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
+        .find(|item| item.kind == wire_proto::OutboundKind::GroupMessage as i32)
+        .unwrap();
+
+    // A canonical rename lands first and cancels the pending recovery.
+    let rename = owner
+        .execute(
+            ClientCommand::rename_group("rename-before-endorsement", group.group_id, "Birds Two")
+                .unwrap(),
+        )
+        .unwrap();
+    let rename_submission = rename
+        .outbound
+        .iter()
+        .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
+        .find(|item| item.kind == wire_proto::OutboundKind::GroupCoordinator as i32)
+        .unwrap();
+    let rename_submission =
+        wire_proto::GroupCoordinatorSubmission::decode(rename_submission.payload.as_slice())
+            .unwrap();
+    let renamed =
+        coordinator_candidate(&rename_submission, 4, promoted_head, group.coordination_id);
+    owner
+        .execute(
+            ClientCommand::apply_group_coordinator_candidate("merge-rename-first", renamed)
+                .unwrap(),
+        )
+        .unwrap();
+
+    let late = owner
+        .execute(
+            ClientCommand::apply_group_message("owner-gets-late-endorsement", endorsement.payload)
+                .unwrap(),
+        )
+        .unwrap();
+    assert!(late.outbound.iter().all(|item| {
+        wire_proto::OutboundItem::decode(item.encode().as_slice())
+            .unwrap()
+            .kind
+            != wire_proto::OutboundKind::GroupRelayRegistration as i32
+    }));
+
+    // The group is not wedged: a fresh recovery can still begin.
+    owner
+        .execute(
+            ClientCommand::begin_group_recovery(
+                "owner-begins-after-late",
+                group.group_id,
+                "https://replacement-after.example",
+                [85; 32],
+                TestIdentity::new(67).root_public(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+}
+
 struct AnchoredGroup {
     owner: PigeonClient<MemoryStateStore, TestIdentity>,
     group_id: GroupId,
@@ -689,6 +819,102 @@ fn create_anchored_group() -> AnchoredGroup {
         receipt_head: receipt_hash,
         initial_candidate: candidate,
     }
+}
+
+#[test]
+fn snapshot_exposes_durable_coordinator_cursor() {
+    let anchored = create_anchored_group();
+    let snapshot =
+        wire_proto::ClientSnapshot::decode(anchored.owner.snapshot().unwrap().encode().as_slice())
+            .unwrap();
+
+    assert_eq!(snapshot.groups.len(), 1);
+    assert_eq!(snapshot.groups[0].coordinator_sequence, 1);
+}
+
+#[test]
+fn invalid_coordinator_entry_is_consumed_before_a_later_valid_commit() {
+    let anchored = create_anchored_group();
+    let mut owner = anchored.owner;
+    let staged = owner
+        .execute(
+            ClientCommand::rename_group("stage-valid-rename", anchored.group_id, "Swifts").unwrap(),
+        )
+        .unwrap();
+    let outbound =
+        wire_proto::OutboundItem::decode(staged.outbound[0].encode().as_slice()).unwrap();
+    let valid_submission =
+        wire_proto::GroupCoordinatorSubmission::decode(outbound.payload.as_slice()).unwrap();
+    let mut invalid_submission = valid_submission.clone();
+    invalid_submission.candidate = vec![0xff, 0x00, 0x01];
+    let invalid = coordinator_candidate(
+        &invalid_submission,
+        2,
+        anchored.receipt_head,
+        anchored.coordination_id,
+    );
+    let invalid_receipt_head = CoordinatorReceipt::decode_candidate(&invalid)
+        .unwrap()
+        .0
+        .receipt_hash();
+
+    let rejected = owner
+        .execute(
+            ClientCommand::apply_group_coordinator_candidate("consume-invalid", invalid).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(rejected.events.len(), 1);
+    let warning = wire_proto::AppEvent::decode(rejected.events[0].encode().as_slice()).unwrap();
+    assert!(matches!(
+        warning.body,
+        Some(wire_proto::app_event::Body::GroupSecurityWarning(_))
+    ));
+    let after_invalid =
+        wire_proto::ClientSnapshot::decode(owner.snapshot().unwrap().encode().as_slice()).unwrap();
+    assert_eq!(after_invalid.groups[0].coordinator_sequence, 2);
+    assert_eq!(after_invalid.groups[0].name, "Friends");
+
+    let valid = coordinator_candidate(
+        &valid_submission,
+        3,
+        invalid_receipt_head,
+        anchored.coordination_id,
+    );
+    owner
+        .execute(
+            ClientCommand::apply_group_coordinator_candidate("merge-valid-after-invalid", valid)
+                .unwrap(),
+        )
+        .unwrap();
+    let merged =
+        wire_proto::ClientSnapshot::decode(owner.snapshot().unwrap().encode().as_slice()).unwrap();
+    assert_eq!(merged.groups[0].coordinator_sequence, 3);
+    assert_eq!(merged.groups[0].name, "Swifts");
+}
+
+#[test]
+fn invalid_sequenced_group_message_is_durably_classified() {
+    let anchored = create_anchored_group();
+    let mut owner = anchored.owner;
+    let generation = owner.checkpoint_generation();
+    let command =
+        ClientCommand::apply_group_message("relay-group-sequence-2", vec![0xff, 0x00, 0x01])
+            .unwrap();
+
+    let rejected = owner.execute(command).unwrap();
+
+    assert!(rejected.events.is_empty());
+    assert!(rejected.outbound.is_empty());
+    assert_eq!(owner.checkpoint_generation(), generation + 1);
+    let replay = owner
+        .execute(
+            ClientCommand::apply_group_message("relay-group-sequence-2", vec![0xff, 0x00, 0x01])
+                .unwrap(),
+        )
+        .unwrap();
+    assert!(replay.events.is_empty());
+    assert!(replay.outbound.is_empty());
+    assert_eq!(owner.checkpoint_generation(), generation + 1);
 }
 
 struct GroupWithDave {
@@ -1309,6 +1535,35 @@ impl StateStore for CheckpointFixtureStore {
         self.checkpoint = Some(next);
         Ok(())
     }
+}
+
+#[test]
+fn checkpoint_rejects_unbounded_idempotency_history() {
+    let mut client = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(1)).unwrap();
+    client
+        .execute(ClientCommand::ensure_pairwise_account("seed-checkpoint").unwrap())
+        .unwrap();
+    let checkpoint = client.store().load().unwrap().unwrap();
+    let mut state = wire_proto::ClientCheckpoint::decode(checkpoint.bytes.as_slice()).unwrap();
+    state.applied_command_ids = (0..=pigeon_core::MAX_PENDING_OUTBOUND_ENTRIES)
+        .map(|index| format!("command-{index}"))
+        .collect();
+    let bytes = state.encode_to_vec();
+    let oversized = pigeon_core::SealedCheckpoint {
+        generation: state.generation,
+        sha256: Sha256::digest(&bytes).into(),
+        bytes,
+    };
+
+    let result = PigeonClient::new(
+        CheckpointFixtureStore::from_checkpoint(oversized),
+        TestIdentity::new(1),
+    );
+
+    assert!(matches!(
+        result,
+        Err(Error::Persistence(pigeon_core::StorageError::Corrupt))
+    ));
 }
 
 #[test]
@@ -1950,6 +2205,67 @@ fn ordinary_member_leave_is_committed_by_an_online_admin() {
     let group_id = group.group_id;
     let coordination_id = group.coordination_id;
     let receipt_head = group.receipt_head;
+    let owner_pending =
+        wire_proto::ClientSnapshot::decode(owner.snapshot().unwrap().encode().as_slice())
+            .unwrap()
+            .pending_outbound
+            .into_iter()
+            .map(|item| item.item_id)
+            .collect();
+    owner
+        .execute(
+            ClientCommand::acknowledge_effects(
+                "clear-owner-fixture-effects",
+                owner_pending,
+                Vec::new(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let dave_pending =
+        wire_proto::ClientSnapshot::decode(dave.snapshot().unwrap().encode().as_slice())
+            .unwrap()
+            .pending_outbound
+            .into_iter()
+            .map(|item| item.item_id)
+            .collect();
+    dave.execute(
+        ClientCommand::acknowledge_effects("clear-dave-fixture-effects", dave_pending, Vec::new())
+            .unwrap(),
+    )
+    .unwrap();
+    owner
+        .execute(ClientCommand::ensure_pairwise_account("owner-pairwise-account").unwrap())
+        .unwrap();
+    dave.execute(ClientCommand::ensure_pairwise_account("dave-pairwise-account").unwrap())
+        .unwrap();
+    let owner_prekey =
+        wire_proto::ClientSnapshot::decode(owner.snapshot().unwrap().encode().as_slice())
+            .unwrap()
+            .pairwise_prekey_bundle;
+    let dave_prekey =
+        wire_proto::ClientSnapshot::decode(dave.snapshot().unwrap().encode().as_slice())
+            .unwrap()
+            .pairwise_prekey_bundle;
+    owner
+        .execute(
+            ClientCommand::register_pairwise_contact(
+                "owner-registers-dave",
+                dave_prekey,
+                "https://dave-relay.example",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    dave.execute(
+        ClientCommand::register_pairwise_contact(
+            "dave-registers-owner",
+            owner_prekey,
+            "https://owner-relay.example",
+        )
+        .unwrap(),
+    )
+    .unwrap();
 
     let proposed = dave
         .execute(ClientCommand::leave_group("dave-leaves", group_id).unwrap())
@@ -1958,17 +2274,15 @@ fn ordinary_member_leave_is_committed_by_an_online_admin() {
     assert_eq!(proposed.outbound.len(), 1);
     let proposal =
         wire_proto::OutboundItem::decode(proposed.outbound[0].encode().as_slice()).unwrap();
-    assert_eq!(
-        proposal.kind,
-        wire_proto::OutboundKind::GroupLeaveProposal as i32
-    );
-    let leave = wire_proto::GroupLeaveProposal::decode(proposal.payload.as_slice()).unwrap();
-    assert_eq!(leave.departing_identity, TestIdentity::new(4).root_public());
+    assert_eq!(proposal.kind, wire_proto::OutboundKind::Pairwise as i32);
+    assert_eq!(proposal.destination, TestIdentity::new(1).root_public());
+    let pending_leave =
+        wire_proto::ClientSnapshot::decode(dave.snapshot().unwrap().encode().as_slice()).unwrap();
+    assert!(pending_leave.groups[0].local_leave_pending);
 
     let staged = owner
         .execute(
-            ClientCommand::apply_group_leave_proposal("owner-commits-leave", proposal.payload)
-                .unwrap(),
+            ClientCommand::apply_pairwise_control("owner-commits-leave", proposal.payload).unwrap(),
         )
         .unwrap();
     assert!(staged.events.is_empty());
@@ -1979,7 +2293,6 @@ fn ordinary_member_leave_is_committed_by_an_online_admin() {
         wire_proto::GroupCoordinatorSubmission::decode(submission_item.payload.as_slice()).unwrap();
     let mutation = GroupMutationCandidate::decode(&submission.candidate).unwrap();
     assert_eq!(mutation.proposals().len(), 1);
-    assert_eq!(mutation.proposals()[0], leave.proposal);
 
     let canonical = coordinator_candidate(&submission, 3, receipt_head, coordination_id);
     let merged = owner
@@ -2027,4 +2340,7 @@ fn ordinary_member_leave_is_committed_by_an_online_admin() {
         .unwrap();
     assert_eq!(departed.events.len(), 1);
     assert!(departed.outbound.is_empty());
+    let departed_snapshot =
+        wire_proto::ClientSnapshot::decode(dave.snapshot().unwrap().encode().as_slice()).unwrap();
+    assert!(!departed_snapshot.groups[0].local_leave_pending);
 }

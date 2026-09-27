@@ -44,7 +44,6 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             .pending_group_mutations
             .iter()
             .any(|pending| pending.group_id == stored.group_id)
-            || !candidate.pending_group_recoveries.is_empty()
         {
             return Err(Error::Mls("group recovery already pending"));
         }
@@ -59,6 +58,21 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             policy.coordinator_public_key(),
         )
         .map_err(|_| Error::InvalidSignature)?;
+        // One recovery per group. A pending proposal that no longer matches the
+        // group's epoch, policy, or receipt head can never reach quorum, so a
+        // fresh proposal replaces it instead of blocking recovery forever.
+        if let Some(index) = pending_recovery_index(candidate, group_id)? {
+            let pending =
+                RecoveryProposal::decode(&candidate.pending_group_recoveries[index].proposal)
+                    .map_err(|_| Error::InvalidSignature)?;
+            if pending
+                .verify(&policy, stored.epoch, chain.receipt_head())
+                .is_ok()
+            {
+                return Err(Error::Mls("group recovery already pending"));
+            }
+            candidate.pending_group_recoveries.remove(index);
+        }
         let proposal = RecoveryProposal::new(
             &policy,
             stored.epoch,
@@ -107,29 +121,39 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 output,
             )?;
         }
-        self.try_finalize_group_recovery(command_id, candidate, output)
+        self.try_finalize_group_recovery(command_id, group_id, candidate, output)
     }
 
+    /// Endorses a recovery proposal received inside `group_id`. Proposals that
+    /// do not match this device's view of the group are consumed without an
+    /// endorsement: a stale or forged proposal must neither be signed nor
+    /// block the group's ordered message stream.
     pub(super) fn stage_apply_group_recovery_proposal(
         &self,
         command_id: &str,
+        group_id: GroupId,
         sender_identity: &[u8],
         inbound: &proto::ApplyInbound,
         candidate: &mut proto::ClientCheckpoint,
         output: &mut ClientOutput,
     ) -> Result<(), Error> {
         let sender: [u8; 32] = sender_identity.try_into().map_err(|_| Error::InvalidKey)?;
-        let proposal =
-            RecoveryProposal::decode(&inbound.payload).map_err(|_| Error::InvalidSignature)?;
+        let Ok(proposal) = RecoveryProposal::decode(&inbound.payload) else {
+            return Ok(());
+        };
+        if proposal.group_id() != *group_id.as_bytes() {
+            return Ok(());
+        }
         let stored = candidate
             .groups
             .iter()
-            .find(|stored| stored.group_id.as_slice() == proposal.group_id().as_slice())
+            .find(|stored| stored.group_id.as_slice() == group_id.as_bytes())
             .cloned()
             .ok_or(Error::InvalidKey)?;
         let policy = PigeonGroupPolicy::decode(&stored.policy)?;
-        if !policy.is_admin(sender) {
-            return Err(Error::InvalidSignature);
+        let local_identity = self.identity.ensure_public_key(IdentityPurpose::Root)?;
+        if !policy.is_admin(sender) || !policy.can_endorse_recovery(local_identity) {
+            return Ok(());
         }
         let chain = CoordinatorChain::decode(
             &stored.coordinator_chain,
@@ -137,18 +161,17 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             policy.coordinator_public_key(),
         )
         .map_err(|_| Error::InvalidSignature)?;
-        proposal
+        if proposal
             .verify(&policy, stored.epoch, chain.receipt_head())
-            .map_err(|_| Error::InvalidSignature)?;
-        let local_identity = self.identity.ensure_public_key(IdentityPurpose::Root)?;
-        if !policy.can_endorse_recovery(local_identity) {
-            return Err(Error::InvalidSignature);
+            .is_err()
+        {
+            return Ok(());
         }
         let endorsement = RecoveryEndorsement::sign(&proposal, &self.identity)?;
         self.stage_recovery_control(
             command_id,
             RecoveryControl {
-                group_id: GroupId::from_bytes(proposal.group_id()),
+                group_id,
                 kind: RecoveryControlKind::Endorsement,
                 recipient: Some(sender),
                 payload: endorsement.encode(),
@@ -159,43 +182,63 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         Ok(())
     }
 
+    /// Records an endorsement for this group's pending recovery. Endorsements
+    /// that arrive after the recovery finalized, duplicate a signer, or do not
+    /// verify against the pending proposal are consumed and ignored.
     pub(super) fn stage_apply_group_recovery_endorsement(
         &self,
         command_id: &str,
+        group_id: GroupId,
         sender_identity: &[u8],
         inbound: &proto::ApplyInbound,
         candidate: &mut proto::ClientCheckpoint,
         output: &mut ClientOutput,
     ) -> Result<(), Error> {
         let sender: [u8; 32] = sender_identity.try_into().map_err(|_| Error::InvalidKey)?;
-        let endorsement =
-            RecoveryEndorsement::decode(&inbound.payload).map_err(|_| Error::InvalidSignature)?;
+        let Ok(endorsement) = RecoveryEndorsement::decode(&inbound.payload) else {
+            return Ok(());
+        };
         if endorsement.signer_identity() != sender {
-            return Err(Error::InvalidSignature);
+            return Ok(());
         }
-        let pending = candidate
-            .pending_group_recoveries
-            .first_mut()
-            .ok_or(Error::InvalidKey)?;
+        let Some(index) = pending_recovery_index(candidate, group_id)? else {
+            return Ok(());
+        };
+        let pending = &candidate.pending_group_recoveries[index];
         if pending.endorsements.iter().any(|encoded| {
             RecoveryEndorsement::decode(encoded)
                 .is_ok_and(|existing| existing.signer_identity() == sender)
         }) {
             return Ok(());
         }
-        pending.endorsements.push(endorsement.encode());
-        self.try_finalize_group_recovery(command_id, candidate, output)
+        let proposal =
+            RecoveryProposal::decode(&pending.proposal).map_err(|_| Error::InvalidSignature)?;
+        let stored = candidate
+            .groups
+            .iter()
+            .find(|stored| stored.group_id.as_slice() == group_id.as_bytes())
+            .ok_or(Error::InvalidKey)?;
+        let policy = PigeonGroupPolicy::decode(&stored.policy)?;
+        if endorsement.verify(&proposal, &policy).is_err() {
+            return Ok(());
+        }
+        candidate.pending_group_recoveries[index]
+            .endorsements
+            .push(endorsement.encode());
+        self.try_finalize_group_recovery(command_id, group_id, candidate, output)
     }
 
     fn try_finalize_group_recovery(
         &self,
         command_id: &str,
+        group_id: GroupId,
         candidate: &mut proto::ClientCheckpoint,
         output: &mut ClientOutput,
     ) -> Result<(), Error> {
-        let Some(pending) = candidate.pending_group_recoveries.first().cloned() else {
+        let Some(index) = pending_recovery_index(candidate, group_id)? else {
             return Ok(());
         };
+        let pending = candidate.pending_group_recoveries[index].clone();
         let proposal =
             RecoveryProposal::decode(&pending.proposal).map_err(|_| Error::InvalidSignature)?;
         let endorsements = pending
@@ -226,7 +269,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             Err(RecoveryError::InsufficientQuorum) => return Ok(()),
             Err(_) => return Err(Error::InvalidSignature),
         }
-        candidate.pending_group_recoveries.remove(0);
+        candidate.pending_group_recoveries.remove(index);
         self.stage_recover_group(
             command_id,
             &proto::RecoverGroup {
@@ -369,4 +412,18 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         });
         Ok(())
     }
+}
+
+fn pending_recovery_index(
+    candidate: &proto::ClientCheckpoint,
+    group_id: GroupId,
+) -> Result<Option<usize>, Error> {
+    for (index, pending) in candidate.pending_group_recoveries.iter().enumerate() {
+        let proposal =
+            RecoveryProposal::decode(&pending.proposal).map_err(|_| Error::InvalidSignature)?;
+        if proposal.group_id() == *group_id.as_bytes() {
+            return Ok(Some(index));
+        }
+    }
+    Ok(None)
 }

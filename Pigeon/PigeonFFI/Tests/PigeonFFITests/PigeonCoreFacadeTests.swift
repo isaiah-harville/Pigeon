@@ -91,6 +91,22 @@ final class PigeonCoreFacadeTests: XCTestCase {
       Data(repeating: 3, count: 32))
   }
 
+  func testFlushGroupAcknowledgementsEncodesOneGroupOrEveryGroup() throws {
+    let one = try PigeonCoreCommand(
+      id: "flush-one",
+      body: .flushGroupAcknowledgements(groupID: Data(repeating: 4, count: 32))
+    ).proto()
+    XCTAssertEqual(one.flushGroupAcknowledgements.groupID, Data(repeating: 4, count: 32))
+
+    let every = try PigeonCoreCommand(
+      id: "flush-every", body: .flushGroupAcknowledgements(groupID: nil)
+    ).proto()
+    guard case .flushGroupAcknowledgements(let flush)? = every.body else {
+      return XCTFail("expected a flush command")
+    }
+    XCTAssertTrue(flush.groupID.isEmpty)
+  }
+
   func testFacadeMapsEveryEventAndPreservesUnknownEnums() throws {
     var output = Pigeon_Wire_V1_ClientOutput()
     output.checkpointGeneration = 12
@@ -400,6 +416,7 @@ extension PigeonCoreFacadeTests {
     group.capabilityPublicKey = Data([8])
     group.capabilityID = Data([10])
     group.coordinatorPublicKey = Data([9])
+    group.coordinatorSequence = 11
     var snapshot = Pigeon_Wire_V1_ClientSnapshot()
     snapshot.checkpointGeneration = 10
     snapshot.groups = [group]
@@ -418,7 +435,7 @@ extension PigeonCoreFacadeTests {
             relayURL: "https://relay.example", coordinationID: Data([5]),
             meshEnabled: true, epoch: 6, policyRevision: 7, dissolved: false,
             capabilityPublicKey: Data([8]), capabilityID: Data([10]),
-            coordinatorPublicKey: Data([9]))
+            coordinatorPublicKey: Data([9]), coordinatorSequence: 11)
         ]))
   }
 }

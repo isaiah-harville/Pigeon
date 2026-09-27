@@ -236,6 +236,11 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         candidate
             .consumed_key_package_hashes
             .extend(consumed_hashes);
+        let overflow = candidate
+            .consumed_key_package_hashes
+            .len()
+            .saturating_sub(crate::MAX_PENDING_OUTBOUND_ENTRIES);
+        candidate.consumed_key_package_hashes.drain(..overflow);
         candidate.openmls_checkpoint = mls_storage.export_checkpoint()?;
         let policy = engine.policy();
         candidate.groups.push(stored_group(&engine));

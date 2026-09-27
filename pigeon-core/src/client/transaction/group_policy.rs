@@ -170,6 +170,11 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 engine.merge_canonical_candidate(&mut mls_storage, &mutation)?
             };
         let local_identity = self.identity.ensure_public_key(IdentityPurpose::Root)?;
+        if event.kind == PolicyEventKind::MemberLeft && event.subject == Some(local_identity) {
+            candidate
+                .pending_group_leaves
+                .retain(|pending| pending.group_id != stored.group_id);
+        }
         let relay_control = if recovery.is_none() && prior.is_admin(local_identity) {
             GroupRelayControl::for_transition(
                 &prior,
@@ -468,6 +473,13 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         output: &mut ClientOutput,
     ) -> Result<(), Error> {
         if candidate
+            .pending_group_leaves
+            .iter()
+            .any(|pending| pending.group_id == change.group_id)
+        {
+            return Err(Error::Mls("group leave already pending"));
+        }
+        if candidate
             .pending_group_mutations
             .iter()
             .any(|pending| pending.group_id == change.group_id)
@@ -486,23 +498,37 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         let mut engine = GroupEngine::restore(&mls_storage, policy, stored.epoch)?;
         let proposal = engine.propose_leave(&self.identity, &mut mls_storage)?;
         let departing = self.identity.ensure_public_key(IdentityPurpose::Root)?;
+        let leave = proto::GroupLeaveProposal {
+            version: PROTOCOL_VERSION,
+            group_id: change.group_id.clone(),
+            proposal,
+            departing_identity: departing.to_vec(),
+        }
+        .encode_to_vec();
         candidate.openmls_checkpoint = mls_storage.export_checkpoint()?;
-        output.outbound.push(OutboundItem {
-            inner: proto::OutboundItem {
-                item_id: format!("{command_id}:leave-proposal"),
-                kind: proto::OutboundKind::GroupLeaveProposal as i32,
-                relay_url: stored.relay_url,
-                destination: engine.policy().coordination_id().to_vec(),
-                payload: proto::GroupLeaveProposal {
-                    version: PROTOCOL_VERSION,
-                    group_id: change.group_id.clone(),
-                    proposal,
-                    departing_identity: departing.to_vec(),
-                }
-                .encode_to_vec(),
-                local_only: false,
-            },
-        });
+        for (index, admin) in engine.policy().admins().iter().enumerate() {
+            if *admin == departing {
+                continue;
+            }
+            output.outbound.push(OutboundItem {
+                inner: proto::OutboundItem {
+                    item_id: format!("{command_id}:leave-proposal:{index}"),
+                    kind: proto::OutboundKind::GroupLeaveProposal as i32,
+                    relay_url: stored.relay_url.clone(),
+                    destination: admin.to_vec(),
+                    payload: leave.clone(),
+                    local_only: false,
+                },
+            });
+        }
+        if output.outbound.is_empty() {
+            return Err(Error::GroupPolicy(crate::group::PolicyError::InvalidRoster));
+        }
+        candidate
+            .pending_group_leaves
+            .push(proto::PendingGroupLeave {
+                group_id: change.group_id.clone(),
+            });
         Ok(())
     }
 
@@ -562,6 +588,9 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             Some(material.clone()),
         )?;
         candidate.openmls_checkpoint = mls_storage.export_checkpoint()?;
+        if candidate.consumed_key_package_hashes.len() >= crate::MAX_PENDING_OUTBOUND_ENTRIES {
+            candidate.consumed_key_package_hashes.remove(0);
+        }
         candidate
             .consumed_key_package_hashes
             .push(material.package_hash().to_vec());

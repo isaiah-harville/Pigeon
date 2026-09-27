@@ -286,6 +286,19 @@ fn membership_transitions_derive_exact_relay_capability_changes() {
             .unwrap();
     assert_eq!(renamed_control.kind(), GroupRelayControlKind::ReplaceAll);
     assert!(GroupRelayControl::for_transition(&prior, &renamed, 1, 2, &added).is_err());
+
+    let (dissolved, dissolved_event) = renamed
+        .apply(&GroupAction::Dissolve { actor: root(1) })
+        .unwrap();
+    let terminal = GroupRelayControl::for_transition(&renamed, &dissolved, 4, 5, &dissolved_event)
+        .unwrap()
+        .unwrap();
+    assert_eq!(terminal.kind(), GroupRelayControlKind::RevokeAll);
+    assert!(terminal.capabilities().is_empty());
+    assert_eq!(
+        GroupRelayControl::decode(&terminal.encode()).unwrap(),
+        terminal
+    );
 }
 
 #[test]

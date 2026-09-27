@@ -281,6 +281,25 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
                 });
                 reply(&tx, ok_or_error(result));
             }
+            GroupClientMsg::RevokeGroup {
+                expected_generation,
+            } => {
+                let result = authenticated.as_ref().map_or(Err(()), |controller| {
+                    state
+                        .service
+                        .store
+                        .lock()
+                        .unwrap()
+                        .revoke_group(controller, expected_generation, now())
+                        .map_err(|_| ())
+                });
+                if result.is_ok() {
+                    if let Some(capability) = authenticated.as_ref() {
+                        wake_and_push_readers(&state, capability.coordination_id);
+                    }
+                }
+                reply(&tx, ok_or_error(result));
+            }
             GroupClientMsg::RegisterPush { token } => {
                 let result = authenticated.as_ref().is_some_and(|capability| {
                     state.service.store.lock().unwrap().can_read(capability)
@@ -340,6 +359,7 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
                         .unwrap()
                         .submit(
                             capability.coordination_id,
+                            capability.capability_id,
                             claimed_base_epoch,
                             candidate,
                             now(),
@@ -348,7 +368,7 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
                 });
                 match result {
                     Ok(receipt) => {
-                        wake_readers(&state, capability.coordination_id);
+                        wake_and_push_readers(&state, capability.coordination_id);
                         reply(
                             &tx,
                             GroupServerMsg::CoordinatorReceipt {
@@ -401,6 +421,19 @@ fn wake_readers(state: &ConnectionState, coordination_id: [u8; 32]) {
         subscribers.retain(|subscriber| {
             subscriber.tx.try_send(GroupServerMsg::Wake).is_ok() || !subscriber.tx.is_closed()
         });
+    }
+}
+
+fn wake_and_push_readers(state: &ConnectionState, coordination_id: [u8; 32]) {
+    wake_readers(state, coordination_id);
+    for reader_key in state
+        .service
+        .store
+        .lock()
+        .unwrap()
+        .reader_keys(&coordination_id)
+    {
+        push::notify_deposit(state.push.clone(), push_scope(coordination_id, reader_key));
     }
 }
 

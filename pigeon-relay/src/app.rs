@@ -12,6 +12,7 @@ use axum::Router;
 
 use crate::clock::now;
 use crate::config::RelayConfig;
+use crate::durable::{self, CoordinatorJournal, DurableError, GroupJournal};
 use crate::push::{ApnsGateway, PushRegistry};
 use crate::{coordinator, group, mailbox};
 
@@ -26,23 +27,31 @@ pub struct AppState {
     pub(crate) connection_ids: Arc<AtomicU64>,
 }
 
-pub fn build_state(config: RelayConfig) -> AppState {
+pub fn build_state(config: RelayConfig) -> Result<AppState, DurableError> {
     let gateway = ApnsGateway::from_env();
     match &gateway {
         Some(_) => eprintln!("pigeon-relay: push gateway enabled"),
         None => eprintln!("pigeon-relay: push gateway disabled (no APNS config)"),
     }
 
-    AppState {
+    durable::prepare_data_dir(&config.state_dir)?;
+    let signer = coordinator_signer(config.coordinator_signing_seed);
+    let group_journal = GroupJournal::open(&config.state_dir)?;
+    let coordinator_journal =
+        CoordinatorJournal::open(&config.state_dir, signer.verifying_key().to_bytes())?;
+
+    Ok(AppState {
         mailbox: mailbox::Service::new(config.mailbox),
-        group: group::Service::new(config.group),
-        coordinator: coordinator::Service::new(
+        group: group::Service::durable(config.group, group_journal, now())?,
+        coordinator: coordinator::Service::durable(
             config.coordinator,
-            coordinator_signer(config.coordinator_signing_seed),
-        ),
+            signer,
+            coordinator_journal,
+            now(),
+        )?,
         push: Arc::new(PushRegistry::new(gateway, config.apns_min_interval)),
         connection_ids: Arc::new(AtomicU64::new(1)),
-    }
+    })
 }
 
 pub fn router(state: AppState) -> Router {
@@ -120,7 +129,10 @@ mod tests {
                 max_fetch_batch_bytes: 512,
             },
             coordinator: coordinator::store::Config {
+                max_logs: 8,
+                max_candidates_per_log: 8,
                 max_candidates_per_epoch: 8,
+                max_candidates_per_capability_per_epoch: 2,
                 max_candidate_bytes: 256,
                 max_total_bytes: 1024,
                 max_fetch_batch_bytes: 512,
@@ -128,12 +140,13 @@ mod tests {
             },
             apns_min_interval: Duration::from_secs(30),
             coordinator_signing_seed: Some([7; 32]),
+            state_dir: tempfile::tempdir().unwrap().keep(),
         }
     }
 
     #[tokio::test]
     async fn router_preserves_public_routes() {
-        let app = router(build_state(test_config()));
+        let app = router(build_state(test_config()).unwrap());
         let health = app
             .clone()
             .oneshot(Request::get("/healthz").body(Body::empty()).unwrap())

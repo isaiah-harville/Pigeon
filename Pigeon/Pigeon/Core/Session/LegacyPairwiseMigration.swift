@@ -15,6 +15,14 @@ extension SessionPersistence {
     }
     let sessions: [PigeonLegacyPairwiseSession] = try crypto.sessions.compactMap { element in
       let (key, entry) = element
+      guard entry.pendingInitiation == nil, entry.lastInitiationIn == nil,
+        entry.acceptedInitiationDigests.isEmpty
+      else {
+        // The core migration format cannot faithfully reconstruct these
+        // replay/in-flight fields. Refuse the upgrade instead of silently
+        // weakening replay continuity or stranding a first message.
+        throw SessionPersistenceError.invalidCryptoState
+      }
       guard let state = entry.pickle else { return nil }
       guard let identity = Data(base64Encoded: key), identity.count == 32 else {
         throw SessionPersistenceError.invalidCryptoState

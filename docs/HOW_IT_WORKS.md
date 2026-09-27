@@ -285,6 +285,9 @@ group authority: every client verifies the receipt, the MLS commit, and Pigeon's
 authenticated policy before changing state. It has no plaintext or group keys.
 After creation, the owner can be offline; invitations travel through existing
 pairwise-encrypted control channels and the selected relay completes coordination.
+An ordinary member's signed leave proposal also travels pairwise to current
+admins, so any online admin can submit the canonical removal without waiting for
+the owner.
 
 Pigeon groups have these product rules:
 
@@ -292,11 +295,16 @@ Pigeon groups have these product rules:
 - A permanent owner who cannot be demoted or removed. Admins can add/remove
   members and promote/demote other admins; no admin can demote themself.
 - Members other than the owner can leave while at least three members remain.
-  The owner can permanently dissolve the group.
+  The owner can permanently dissolve the group. Nobody can post after that, but
+  the relay keeps the group readable for a while (30 days by default) so members
+  who were offline still learn it ended.
 - Only the owner can change the shared name, selected relay, or local-mesh opt-in.
   Mesh is off by default for every group.
 - Membership and policy changes appear as status entries in the conversation,
   while verification failures appear as prominent security warnings.
+- "Delivered to" counts arrive in batches: each phone waits a few seconds (longer
+  in bigger groups) and then confirms everything it received in one encrypted
+  receipt, so a busy group doesn't flood its relay mailbox.
 
 ![MLS epochs prevent new or former members from reading outside their membership window](diagrams/pigeon_08_group_epoch.svg)
 
@@ -309,7 +317,19 @@ cryptographic boundary.
 Application messages are encrypted once for the MLS group and uploaded to the
 group mailbox. This avoids pairwise fan-out for ordinary group traffic. Pairwise
 encryption remains intentionally limited to bootstrapping invitations before a
-new member can authenticate to the group mailbox.
+new member can authenticate to the group mailbox and to routing signed leave
+proposals to admins.
+
+Each client persists two independent relay cursors: the group-message cursor and
+the signed coordinator receipt sequence. A relay wake schedules both drains, and
+bounded fetches continue until empty. An authenticated but invalid coordinator
+entry is recorded as a security warning and its receipt is durably consumed, so
+one bad entry cannot permanently block later valid commits.
+
+Owner dissolution installs a terminal relay tombstone. It immediately disables
+new appends and policy changes, while retaining read authentication and the
+terminal coordinator commit for one relay TTL so offline members can still learn
+that the group ended. The relay then reclaims the tombstoned group.
 
 ### Coordinator and relay recovery
 
@@ -477,9 +497,12 @@ security audit and must not be treated as proven-secure. See the
 
 - Long-term and purpose-scoped **Ed25519 identity keys** live in the iPhone
   **Keychain**, marked *this-device-only*: never synced to iCloud, never in
-  backups, and never moved to another device. Their lock-state accessibility is
-  `AfterFirstUnlock` by default for background delivery, or the stricter
-  `WhenUnlocked` if you disable it ([Apple Platform Security][appsec]).
+  backups, and never moved to another device. The root/relay identity uses
+  `AfterFirstUnlock` when background delivery is enabled, or `WhenUnlocked` when
+  disabled. MLS signing, group-capability, and recovery keys always use
+  `WhenUnlocked`; a process that loaded them while unlocked may retain them in
+  memory, but a cold locked launch cannot read them
+  ([Apple Platform Security][appsec]).
 - Evolving **Olm and MLS state** lives inside pigeon-core's atomic checkpoint.
   The checkpoint and message store are encrypted under a vault key sealed behind
   **Face ID / passcode**, so a cold background relaunch cannot open them while

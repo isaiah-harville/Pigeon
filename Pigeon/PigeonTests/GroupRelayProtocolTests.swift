@@ -17,10 +17,10 @@ final class GroupRelayProtocolTests: XCTestCase {
     XCTAssertNil(GroupRelayTransport.endpoint(for: URL(string: "file:///tmp/relay")))
   }
 
-  func testClientFramesMatchRelayVersionFiveWireFormat() throws {
+  func testClientFramesMatchRelayVersionSixWireFormat() throws {
     XCTAssertEqual(
       try object(GroupRelayProtocol.hello()),
-      ["type": "hello", "min_protocol_version": 5, "max_protocol_version": 5])
+      ["type": "hello", "min_protocol_version": 6, "max_protocol_version": 6])
 
     let registration = PigeonGroupRelayRegistration(
       coordinationID: coordinationID,
@@ -88,6 +88,15 @@ final class GroupRelayProtocolTests: XCTestCase {
           ]
         ],
       ])
+    XCTAssertEqual(
+      try object(
+        GroupRelayProtocol.action(
+          .control(
+            PigeonGroupRelayControl(
+              coordinationID: coordinationID, kind: .revokeAll, publicKey: Data(),
+              capabilities: [], expectedGeneration: 5, newGeneration: 6,
+              permanentControllerPublicKey: Data(repeating: 4, count: 32))))),
+      ["type": "revoke_group", "expected_generation": 5])
     XCTAssertEqual(
       try object(
         GroupRelayProtocol.action(

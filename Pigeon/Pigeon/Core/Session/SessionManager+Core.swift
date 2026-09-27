@@ -264,6 +264,9 @@ extension SessionManager {
         continue
       }
       guard let groupID = groupID(for: event) else { throw PlatformError.InvalidOutput }
+      if case .groupMessageReceived(let received) = event.body, received.senderIdentity != myID {
+        scheduleGroupAcknowledgementFlush(for: groupID)
+      }
       var conversation = candidate[groupID] ?? GroupConversation(id: groupID)
       try GroupEventReducer.reduce(event, into: &conversation, localIdentity: myID)
       candidate[groupID] = conversation

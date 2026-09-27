@@ -8,6 +8,7 @@ extension SessionManager {
     case unauthorized
     case invalidRelay
     case invalidCoordinatorKey
+    case coordinatorMismatch
   }
 
   /// Starts an authenticated coordinator/relay recovery. Quorum collection,
@@ -47,5 +48,28 @@ extension SessionManager {
             replacementRelayURL: replacementRelayURL.absoluteString,
             replacementCoordinationID: coordinationID,
             replacementCoordinatorPublicKey: coordinatorKey))))
+  }
+
+  /// Moves a healthy group between endpoints operated by the same coordinator.
+  /// A different coordinator key requires the quorum-based recovery flow.
+  @discardableResult
+  func changeGroupRelay(
+    _ group: PigeonGroupState,
+    to relayURL: URL
+  ) async throws -> PigeonCoreOutput {
+    guard !group.dissolved, group.ownerIdentity == myID else {
+      throw GroupRecoveryError.unauthorized
+    }
+    guard let scheme = relayURL.scheme?.lowercased(),
+      scheme == "https" || scheme == "wss",
+      GroupRelayTransport.endpoint(for: relayURL) != nil
+    else { throw GroupRecoveryError.invalidRelay }
+    let coordinatorKey = try await resolveGroupCoordinatorKey(relayURL)
+    guard coordinatorKey == group.coordinatorPublicKey else {
+      throw GroupRecoveryError.coordinatorMismatch
+    }
+    return try changeGroupPolicy(
+      .relayChanged, in: group, subjectIdentity: Data(),
+      stringValue: relayURL.absoluteString, boolValue: false)
   }
 }

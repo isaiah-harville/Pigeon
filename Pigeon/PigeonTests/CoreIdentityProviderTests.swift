@@ -12,19 +12,22 @@ private final class MemoryScopedKeyStore: KeyStore {
 
   var data: Data?
   var isUnavailable = false
+  var accessibility: KeychainAccessibility?
 
   func get() throws -> Data? {
     guard !isUnavailable else { throw StoreError.unavailable }
     return data
   }
 
-  func set(_ data: Data, accessibility _: KeychainAccessibility) throws {
+  func set(_ data: Data, accessibility: KeychainAccessibility) throws {
     guard !isUnavailable else { throw StoreError.unavailable }
     self.data = data
+    self.accessibility = accessibility
   }
 
-  func setAccessibility(_: KeychainAccessibility) throws {
+  func setAccessibility(_ accessibility: KeychainAccessibility) throws {
     guard !isUnavailable else { throw StoreError.unavailable }
+    self.accessibility = accessibility
   }
 
   func delete() throws {
@@ -41,6 +44,10 @@ private final class MemoryScopedKeyStoreFactory: IdentityKeyStoreFactory {
     let store = MemoryScopedKeyStore()
     stores[account] = store
     return store
+  }
+
+  func store(account: String) -> MemoryScopedKeyStore? {
+    stores[account]
   }
 }
 
@@ -80,6 +87,27 @@ final class CoreIdentityProviderTests: XCTestCase {
     XCTAssertEqual(
       try restored.ensurePublicKey(purpose: request(.groupCapability, group: 2)),
       capabilityA)
+  }
+
+  func testScopedKeysUseUnlockedOnlyKeychainAccessibility() throws {
+    let root = try IdentityManager(store: InMemoryKeyStore(seed: Data(repeating: 7, count: 32)))
+    let factory = MemoryScopedKeyStoreFactory()
+    let provider = CoreIdentityProvider(rootIdentity: root, storeFactory: factory)
+
+    _ = try provider.ensurePublicKey(purpose: request(.mls))
+    _ = try provider.ensurePublicKey(purpose: request(.groupCapability, group: 2))
+    _ = try provider.ensurePublicKey(purpose: request(.groupRecovery, group: 2))
+
+    XCTAssertEqual(
+      factory.store(account: "identity.mls.ed25519.private")?.accessibility,
+      .whenUnlocked)
+    let group = String(repeating: "02", count: 32)
+    XCTAssertEqual(
+      factory.store(account: "identity.group.\(group).capability.ed25519.private")?.accessibility,
+      .whenUnlocked)
+    XCTAssertEqual(
+      factory.store(account: "identity.group.\(group).recovery.ed25519.private")?.accessibility,
+      .whenUnlocked)
   }
 
   func testSignaturesVerifyUnderTheRequestedPurposeOnly() throws {

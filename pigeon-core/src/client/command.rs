@@ -312,6 +312,24 @@ impl ClientCommand {
         Ok(Self { inner })
     }
 
+    /// Sends queued delivery receipts for `group_id`, or for every group.
+    pub fn flush_group_acknowledgements(
+        command_id: impl Into<String>,
+        group_id: Option<GroupId>,
+    ) -> Result<Self, Error> {
+        let inner = proto::ClientCommand {
+            version: PROTOCOL_VERSION,
+            command_id: command_id.into(),
+            body: Some(proto::client_command::Body::FlushGroupAcknowledgements(
+                proto::FlushGroupAcknowledgements {
+                    group_id: group_id.map_or_else(Vec::new, |id| id.as_bytes().to_vec()),
+                },
+            )),
+        };
+        wire::validate_client_command(&inner)?;
+        Ok(Self { inner })
+    }
+
     pub fn confirm_group_relay_authorization(
         command_id: impl Into<String>,
         group_id: GroupId,

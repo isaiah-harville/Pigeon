@@ -24,6 +24,7 @@ message ClientCommand {
     ConfirmGroupRelayAuthorization confirm_group_relay_authorization = 22;
     RecoverGroup recover_group = 23;
     BeginGroupRecovery begin_group_recovery = 24;
+    FlushGroupAcknowledgements flush_group_acknowledgements = 25;
   }
 }
 
@@ -116,6 +117,13 @@ message ChangeGroupPolicy {
   bytes subject_identity = 3;
   string string_value = 4;
   bool bool_value = 5;
+}
+
+// Encrypts the queued delivery receipts for one group, or for every group when
+// group_id is empty, as batched acknowledgements. Hosts throttle this command;
+// the core also flushes a group on its own once a full batch is queued.
+message FlushGroupAcknowledgements {
+  bytes group_id = 1;
 }
 
 message AcknowledgeEffects {
@@ -220,6 +228,12 @@ message GroupState {
   bytes capability_public_key = 12;
   bytes coordinator_public_key = 13;
   bytes capability_id = 14;
+  // Last coordinator receipt durably consumed by the core. Relay transports
+  // fetch strictly after this cursor; MLS epoch is not a coordinator cursor.
+  uint64 coordinator_sequence = 15;
+  // True while this client is waiting for an admin to commit its authenticated
+  // leave proposal. This is durable so hosts do not invent lifecycle state.
+  bool local_leave_pending = 16;
 }
 
 message ClientCheckpoint {
@@ -244,6 +258,19 @@ message ClientCheckpoint {
   repeated bytes consumed_pairwise_envelope_hashes = 19;
   repeated DeferredAppEvent deferred_events = 20;
   repeated PendingGroupRecovery pending_group_recoveries = 21;
+  repeated PendingGroupAcknowledgement pending_group_acknowledgements = 22;
+  repeated PendingGroupLeave pending_group_leaves = 23;
+}
+
+message PendingGroupLeave {
+  bytes group_id = 1;
+}
+
+// A received group message whose delivery receipt has not been sent yet.
+message PendingGroupAcknowledgement {
+  bytes group_id = 1;
+  bytes original_sender_identity = 2;
+  bytes message_id = 3;
 }
 
 message PendingGroupRecovery {

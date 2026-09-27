@@ -3,8 +3,9 @@ use prost::Message;
 use super::GroupId;
 use crate::Error;
 use crate::wire::{
-    GROUP_ID_BYTES, IDENTITY_KEY_BYTES, MAX_GROUP_APPLICATION_BYTES, MAX_MLS_OBJECT_BYTES,
-    MAX_POLICY_STRING_BYTES, PROTOCOL_VERSION, proto,
+    GROUP_ID_BYTES, IDENTITY_KEY_BYTES, MAX_GROUP_ACKNOWLEDGEMENT_BATCH,
+    MAX_GROUP_APPLICATION_BYTES, MAX_MLS_OBJECT_BYTES, MAX_POLICY_STRING_BYTES, PROTOCOL_VERSION,
+    proto,
 };
 
 pub const GROUP_MESSAGE_ID_BYTES: usize = 16;
@@ -35,15 +36,20 @@ pub enum GroupApplication {
         sender_timestamp_ms: i64,
     },
     Acknowledgement {
-        original_sender: [u8; IDENTITY_KEY_BYTES],
-        message_id: GroupMessageId,
-        sender_timestamp_ms: i64,
+        messages: Vec<AcknowledgedMessage>,
     },
     RecoveryControl {
         kind: RecoveryControlKind,
         recipient: Option<[u8; IDENTITY_KEY_BYTES]>,
         payload: Vec<u8>,
     },
+}
+
+/// One received message covered by a batched delivery receipt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AcknowledgedMessage {
+    pub original_sender: [u8; IDENTITY_KEY_BYTES],
+    pub message_id: GroupMessageId,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -74,16 +80,9 @@ impl GroupApplication {
         }
     }
 
-    pub fn acknowledgement(
-        original_sender: [u8; IDENTITY_KEY_BYTES],
-        message_id: GroupMessageId,
-        sender_timestamp_ms: i64,
-    ) -> Self {
-        Self::Acknowledgement {
-            original_sender,
-            message_id,
-            sender_timestamp_ms,
-        }
+    pub fn acknowledgements(messages: Vec<AcknowledgedMessage>) -> Result<Self, Error> {
+        check_acknowledgement_batch(messages.len())?;
+        Ok(Self::Acknowledgement { messages })
     }
 
     pub fn recovery_control(
@@ -114,12 +113,8 @@ impl GroupApplication {
             | Self::Reaction {
                 sender_timestamp_ms,
                 ..
-            }
-            | Self::Acknowledgement {
-                sender_timestamp_ms,
-                ..
             } => *sender_timestamp_ms,
-            Self::RecoveryControl { .. } => 0,
+            Self::Acknowledgement { .. } | Self::RecoveryControl { .. } => 0,
         }
     }
 
@@ -148,14 +143,18 @@ impl GroupApplication {
                     reaction,
                 }))
             }
-            Self::Acknowledgement {
-                original_sender,
-                message_id,
-                ..
-            } => Ok(Body::Acknowledgement(proto::GroupAcknowledgement {
-                original_sender_identity: original_sender.to_vec(),
-                message_id: message_id.as_bytes().to_vec(),
-            })),
+            Self::Acknowledgement { messages } => {
+                check_acknowledgement_batch(messages.len())?;
+                Ok(Body::Acknowledgement(proto::GroupAcknowledgement {
+                    messages: messages
+                        .into_iter()
+                        .map(|message| proto::GroupAcknowledgedMessage {
+                            original_sender_identity: message.original_sender.to_vec(),
+                            message_id: message.message_id.as_bytes().to_vec(),
+                        })
+                        .collect(),
+                }))
+            }
             Self::RecoveryControl {
                 kind,
                 recipient,
@@ -201,11 +200,21 @@ impl GroupApplication {
                     sender_timestamp_ms,
                 })
             }
-            Body::Acknowledgement(acknowledgement) => Ok(Self::Acknowledgement {
-                original_sender: fixed_bytes(&acknowledgement.original_sender_identity)?,
-                message_id: message_id(&acknowledgement.message_id)?,
-                sender_timestamp_ms,
-            }),
+            Body::Acknowledgement(acknowledgement) => {
+                check_acknowledgement_batch(acknowledgement.messages.len())?;
+                Ok(Self::Acknowledgement {
+                    messages: acknowledgement
+                        .messages
+                        .iter()
+                        .map(|message| {
+                            Ok(AcknowledgedMessage {
+                                original_sender: fixed_bytes(&message.original_sender_identity)?,
+                                message_id: message_id(&message.message_id)?,
+                            })
+                        })
+                        .collect::<Result<_, Error>>()?,
+                })
+            }
             Body::RecoveryControl(control) => {
                 if control.payload.is_empty() || control.payload.len() > MAX_MLS_OBJECT_BYTES {
                     return Err(Error::ResourceLimit("group recovery control bytes"));
@@ -420,4 +429,11 @@ fn optional_message_id(bytes: &[u8]) -> Result<Option<GroupMessageId>, Error> {
 
 fn fixed_bytes<const N: usize>(bytes: &[u8]) -> Result<[u8; N], Error> {
     bytes.try_into().map_err(|_| Error::Serialization)
+}
+
+fn check_acknowledgement_batch(len: usize) -> Result<(), Error> {
+    if len == 0 || len > MAX_GROUP_ACKNOWLEDGEMENT_BATCH {
+        return Err(Error::ResourceLimit("group acknowledgement batch"));
+    }
+    Ok(())
 }

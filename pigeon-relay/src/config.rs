@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Pigeon contributors.
 
 use std::fmt;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::coordinator::store::Config as CoordinatorConfig;
@@ -18,6 +19,7 @@ pub struct RelayConfig {
     pub coordinator: CoordinatorConfig,
     pub apns_min_interval: Duration,
     pub coordinator_signing_seed: Option<[u8; 32]>,
+    pub state_dir: PathBuf,
 }
 
 impl fmt::Debug for RelayConfig {
@@ -29,6 +31,7 @@ impl fmt::Debug for RelayConfig {
             .field("group", &self.group)
             .field("coordinator", &self.coordinator)
             .field("apns_min_interval", &self.apns_min_interval)
+            .field("state_dir", &self.state_dir)
             .field(
                 "coordinator_signing_seed",
                 &self.coordinator_signing_seed.map(|_| "[REDACTED]"),
@@ -120,10 +123,21 @@ impl RelayConfig {
         )?;
 
         let coordinator = CoordinatorConfig {
+            max_logs: parse_usize(&mut lookup, "PIGEON_COORDINATOR_MAX_LOGS", group.max_groups)?,
+            max_candidates_per_log: parse_usize(
+                &mut lookup,
+                "PIGEON_COORDINATOR_MAX_CANDIDATES_PER_LOG",
+                10_000,
+            )?,
             max_candidates_per_epoch: parse_usize(
                 &mut lookup,
                 "PIGEON_COORDINATOR_MAX_PER_EPOCH",
                 256,
+            )?,
+            max_candidates_per_capability_per_epoch: parse_usize(
+                &mut lookup,
+                "PIGEON_COORDINATOR_MAX_PER_CAPABILITY_PER_EPOCH",
+                8,
             )?,
             max_candidate_bytes: parse_usize(
                 &mut lookup,
@@ -152,6 +166,11 @@ impl RelayConfig {
             coordinator.max_fetch_batch_bytes,
             coordinator.max_total_bytes,
         )?;
+        validate_not_larger(
+            "PIGEON_COORDINATOR_MAX_PER_CAPABILITY_PER_EPOCH",
+            coordinator.max_candidates_per_capability_per_epoch,
+            coordinator.max_candidates_per_epoch,
+        )?;
 
         let apns_min_interval =
             Duration::from_secs(parse_u64(&mut lookup, "PIGEON_APNS_MIN_INTERVAL_SECS", 30)?);
@@ -159,6 +178,15 @@ impl RelayConfig {
             lookup("PIGEON_COORDINATOR_SIGNING_SEED_HEX"),
             "PIGEON_COORDINATOR_SIGNING_SEED_HEX",
         )?;
+        let state_dir = PathBuf::from(
+            lookup("PIGEON_RELAY_STATE_DIR").unwrap_or_else(|| "/var/lib/pigeon-relay".into()),
+        );
+        if state_dir.as_os_str().is_empty() {
+            return Err(ConfigError::new(
+                "PIGEON_RELAY_STATE_DIR",
+                "must not be empty",
+            ));
+        }
 
         Ok(Self {
             bind_addr,
@@ -167,6 +195,7 @@ impl RelayConfig {
             coordinator,
             apns_min_interval,
             coordinator_signing_seed,
+            state_dir,
         })
     }
 }

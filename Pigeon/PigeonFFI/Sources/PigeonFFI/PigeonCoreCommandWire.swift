@@ -42,6 +42,10 @@ extension PigeonCoreCommand {
       recovery.replacementCoordinationID = value.replacementCoordinationID
       recovery.replacementCoordinatorPublicKey = value.replacementCoordinatorPublicKey
       command.beginGroupRecovery = recovery
+    case .flushGroupAcknowledgements(let groupID):
+      var flush = Pigeon_Wire_V1_FlushGroupAcknowledgements()
+      flush.groupID = groupID ?? Data()
+      command.flushGroupAcknowledgements = flush
     default:
       return false
     }

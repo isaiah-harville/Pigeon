@@ -51,6 +51,20 @@ final class SessionPersistenceTests: XCTestCase {
     XCTAssertEqual(migration.sessions.first?.state, Data("session".utf8))
   }
 
+  func testLegacyMigrationRejectsInFlightInitiationStateInsteadOfDroppingIt() throws {
+    let store = freshStore()
+    var crypto = PersistedCrypto()
+    crypto.olmAccountPickle = Data("account".utf8)
+    crypto.olmFallbackKey = Data(repeating: 3, count: 32)
+    let peer = Data(repeating: 4, count: 32)
+    crypto.sessions[peer.base64EncodedString()] = PersistedSession(
+      pickle: Data("session".utf8), pendingInitiation: Data("pending".utf8),
+      lastInitiationIn: nil, acceptedInitiationDigests: [])
+    XCTAssertTrue(store.companion(suffix: ".crypto").save(crypto))
+
+    XCTAssertThrowsError(try SessionPersistence().attach(store))
+  }
+
   func testFirstCoreOwnedSaveRetiresLegacyPairwiseBlob() throws {
     let store = freshStore()
     var crypto = PersistedCrypto()
