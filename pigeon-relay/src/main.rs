@@ -17,6 +17,9 @@ mod group;
 mod mailbox;
 mod push;
 
+#[cfg(test)]
+mod live_group_socket_tests;
+
 #[tokio::main]
 async fn main() {
     let arguments = std::env::args().collect::<Vec<_>>();
