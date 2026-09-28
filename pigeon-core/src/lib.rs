@@ -46,7 +46,8 @@ mod storage;
 mod wire;
 
 pub use client::{
-    AppEvent, ClientCommand, ClientOutput, ClientSnapshot, OutboundItem, PigeonClient,
+    AppEvent, ClientCommand, ClientOutput, ClientSnapshot, GroupMessageOutcome, OutboundItem,
+    PigeonClient,
 };
 pub use error::Error;
 pub use group::{

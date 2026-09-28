@@ -15,9 +15,15 @@ enum GroupRelaySocket {
     case .data(let bytes): data = bytes
     @unknown default: throw RelayError.protocolError
     }
+    return try decode(data)
+  }
+
+  static func decode(_ data: Data) throws -> GroupRelayProtocol.ServerFrame {
     guard data.count <= 2 * 1024 * 1024,
       let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
     else { throw RelayError.protocolError }
-    return GroupRelayProtocol.classify(object)
+    let frame = GroupRelayProtocol.classify(object)
+    guard frame != .ignored else { throw RelayError.protocolError }
+    return frame
   }
 }

@@ -106,13 +106,8 @@ final class GroupRelayProtocolTests: XCTestCase {
               candidate: Data([5, 6]))))),
       ["type": "coordinator_submit", "claimed_base_epoch": 6, "candidate": "BQY="])
     XCTAssertEqual(
-      try object(
-        GroupRelayProtocol.action(
-          .coordinatorFetch(
-            PigeonGroupCoordinatorFetch(
-              coordinationID: coordinationID, groupID: Data(repeating: 1, count: 32),
-              fromEpoch: 7, throughEpoch: 9)))),
-      ["type": "coordinator_fetch", "after_sequence": 6])
+      try object(GroupRelayProtocol.coordinatorFetch(after: 12)),
+      ["type": "coordinator_fetch", "after_sequence": 12])
   }
 
   func testServerFramesAreStrictlyClassifiedAndBounded() {
@@ -190,6 +185,72 @@ final class GroupRelayProtocolTests: XCTestCase {
         return true
       })
     XCTAssertEqual(confirmations, 1)
+  }
+
+  func testProtocolVersionRejectsOutOfRangeAndFractionalJSONIntegers() throws {
+    for literal in ["9223372036854775808", "18446744073709551615", "1.5", "true"] {
+      let frame = try decodedFrame("{\"type\":\"compatible\",\"protocol_version\":\(literal)}")
+      XCTAssertEqual(frame, .ignored, literal)
+    }
+    XCTAssertEqual(
+      try decodedFrame("{\"type\":\"compatible\",\"protocol_version\":9223372036854775807}"),
+      .compatible(protocolVersion: Int.max, relayVersion: nil))
+  }
+
+  func testSequenceRejectsOutOfRangeAndFractionalJSONIntegers() throws {
+    for literal in ["18446744073709551616", "0.5", "true"] {
+      XCTAssertEqual(
+        try decodedFrame("{\"type\":\"appended\",\"sequence\":\(literal)}"),
+        .ignored, literal)
+    }
+    XCTAssertEqual(
+      try decodedFrame("{\"type\":\"appended\",\"sequence\":18446744073709551615}"),
+      .appended(sequence: UInt64.max))
+  }
+
+  func testEntryCountAndMalformedResponsesFailExplicitly() throws {
+    let entry: [String: Any] = ["sequence": 1, "timestamp": 1, "ciphertext": "AQ=="]
+    XCTAssertNotEqual(
+      GroupRelayProtocol.classify([
+        "type": "entries", "entries": Array(repeating: entry, count: 512),
+      ]),
+      .ignored)
+    XCTAssertEqual(
+      GroupRelayProtocol.classify([
+        "type": "entries", "entries": Array(repeating: entry, count: 513),
+      ]),
+      .ignored)
+    XCTAssertThrowsError(
+      try GroupRelaySocket.decode(Data("{\"type\":\"entries\",\"entries\":{}}".utf8)))
+    XCTAssertThrowsError(
+      try GroupRelaySocket.decode(
+        Data(
+          "{\"type\":\"wake\",\"padding\":\"\(String(repeating: "x", count: 2 * 1024 * 1024))\"}"
+            .utf8)))
+  }
+
+  func testConnectionDrainsAnotherMessagePageAfterDurableAdvance() {
+    let connection = GroupRelayConnection(group: testGroup())
+    connection.ready = true
+    connection.fetchedAfterConnect = true
+    connection.scheduleNextMessagePage(after: 5)
+    XCTAssertEqual(connection.queue, [.advance(5), .fetchMessages])
+  }
+
+  private func decodedFrame(_ json: String) throws -> GroupRelayProtocol.ServerFrame {
+    let object = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+    return GroupRelayProtocol.classify(object)
+  }
+
+  private func testGroup() -> PigeonGroupState {
+    PigeonGroupState(
+      groupID: coordinationID, ownerIdentity: coordinationID,
+      adminIdentities: [], memberIdentities: [], name: "test",
+      relayURL: "https://relay.example", coordinationID: coordinationID,
+      meshEnabled: false, epoch: 1, policyRevision: 1, dissolved: false,
+      capabilityPublicKey: coordinationID, capabilityID: coordinationID,
+      coordinatorPublicKey: coordinationID, coordinatorSequence: 0)
   }
 
   private func object(_ data: Data) throws -> NSDictionary {

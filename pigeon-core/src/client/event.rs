@@ -29,6 +29,14 @@ pub struct ClientOutput {
     pub checkpoint_generation: u64,
     pub events: Vec<AppEvent>,
     pub outbound: Vec<OutboundItem>,
+    pub group_message_outcome: GroupMessageOutcome,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GroupMessageOutcome {
+    Unspecified,
+    Accepted,
+    Rejected,
 }
 
 #[derive(Clone, Debug)]
@@ -48,6 +56,7 @@ impl ClientOutput {
             checkpoint_generation,
             events: Vec::new(),
             outbound: Vec::new(),
+            group_message_outcome: GroupMessageOutcome::Unspecified,
         }
     }
 
@@ -64,6 +73,11 @@ impl ClientOutput {
                 .iter()
                 .map(|item| item.inner.clone())
                 .collect(),
+            group_message_outcome: match self.group_message_outcome {
+                GroupMessageOutcome::Unspecified => proto::GroupMessageOutcome::Unspecified,
+                GroupMessageOutcome::Accepted => proto::GroupMessageOutcome::Accepted,
+                GroupMessageOutcome::Rejected => proto::GroupMessageOutcome::Rejected,
+            } as i32,
         }
         .encode_to_vec()
     }

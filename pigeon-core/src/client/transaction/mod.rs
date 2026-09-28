@@ -9,7 +9,7 @@ use checkpoint::{decode_checkpoint, encode_checkpoint};
 use sha2::{Digest, Sha256};
 
 use crate::Error;
-use crate::client::{ClientCommand, ClientOutput, ClientSnapshot};
+use crate::client::{ClientCommand, ClientOutput, ClientSnapshot, GroupMessageOutcome};
 use crate::group::{PigeonGroupPolicy, group_relay_challenge_transcript, relay_capability_id};
 use crate::identity::PlatformAccount;
 use crate::identity::{IdentityPurpose, SecureIdentity};
@@ -83,6 +83,10 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 )?;
             }
             proto::client_command::Body::ApplyInbound(inbound) => {
+                let inbound_kind = proto::OutboundKind::try_from(inbound.kind).ok();
+                if inbound_kind == Some(proto::OutboundKind::GroupMessage) {
+                    output.group_message_outcome = GroupMessageOutcome::Accepted;
+                }
                 let pristine = candidate.clone();
                 if let Err(error) = self.stage_apply_inbound(
                     &command.inner.command_id,
@@ -90,7 +94,6 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     &mut candidate,
                     &mut output,
                 ) {
-                    let inbound_kind = proto::OutboundKind::try_from(inbound.kind).ok();
                     if is_rejected_sequenced_input(&error)
                         && inbound_kind == Some(proto::OutboundKind::GroupCoordinator)
                     {
@@ -112,6 +115,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                         // policy state remain exactly as they were.
                         candidate = pristine;
                         output = ClientOutput::empty(candidate.generation + 1);
+                        output.group_message_outcome = GroupMessageOutcome::Rejected;
                     } else {
                         return Err(error);
                     }

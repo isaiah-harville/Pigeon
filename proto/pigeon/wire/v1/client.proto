@@ -192,6 +192,15 @@ message ClientOutput {
   uint64 checkpoint_generation = 1;
   repeated AppEvent events = 2;
   repeated OutboundItem outbound = 3;
+  GroupMessageOutcome group_message_outcome = 4;
+}
+
+// Set only for an ApplyInbound group message. A rejected result is returned
+// only after the command ID was durably committed without changing MLS state.
+enum GroupMessageOutcome {
+  GROUP_MESSAGE_OUTCOME_UNSPECIFIED = 0;
+  GROUP_MESSAGE_OUTCOME_ACCEPTED = 1;
+  GROUP_MESSAGE_OUTCOME_REJECTED = 2;
 }
 
 // Read-only application projection. Hosts rebuild their local UI state from

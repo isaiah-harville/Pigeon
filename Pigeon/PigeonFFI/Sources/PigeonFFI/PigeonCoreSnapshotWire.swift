@@ -1,7 +1,14 @@
+public enum PigeonGroupMessageOutcome: Equatable, Sendable {
+  case unspecified
+  case accepted
+  case rejected
+}
+
 public struct PigeonCoreOutput: Equatable, Sendable {
   public let checkpointGeneration: UInt64
   public let events: [PigeonCoreEvent]
   public let outbound: [PigeonCoreOutboundItem]
+  public let groupMessageOutcome: PigeonGroupMessageOutcome
 }
 
 extension PigeonCoreSnapshot {

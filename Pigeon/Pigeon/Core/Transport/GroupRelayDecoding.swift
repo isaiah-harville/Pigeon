@@ -96,18 +96,14 @@ extension GroupRelayProtocol {
     guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else {
       return nil
     }
-    let double = number.doubleValue
-    guard double.rounded() == double, double >= 0, double <= Double(Int.max) else { return nil }
-    return Int(double)
+    return Int(number.stringValue).flatMap { $0 >= 0 ? $0 : nil }
   }
 
   nonisolated private static func uint64(_ value: Any?) -> UInt64? {
     guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else {
       return nil
     }
-    let double = number.doubleValue
-    guard double.rounded() == double, double >= 0, double <= Double(UInt64.max) else { return nil }
-    return number.uint64Value
+    return UInt64(number.stringValue)
   }
 
   nonisolated private static func decodeHex(_ value: String) -> Data? {

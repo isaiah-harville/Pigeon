@@ -10,6 +10,7 @@ public enum PigeonCoreWireError: Error, Equatable, Sendable {
   case invalidPairwiseRelationship(Int)
   case notRelayAction(PigeonCoreOutboundKind)
   case malformedRelayAction
+  case invalidGroupMessageOutcome(Int)
 }
 
 extension FfiClient {
@@ -37,6 +38,12 @@ extension PigeonCoreOutput {
     checkpointGeneration = proto.checkpointGeneration
     events = try proto.events.map(PigeonCoreEvent.init(proto:))
     outbound = proto.outbound.map(PigeonCoreOutboundItem.init(proto:))
+    switch proto.groupMessageOutcome {
+    case .unspecified: groupMessageOutcome = .unspecified
+    case .accepted: groupMessageOutcome = .accepted
+    case .rejected: groupMessageOutcome = .rejected
+    case .UNRECOGNIZED(let value): throw PigeonCoreWireError.invalidGroupMessageOutcome(value)
+    }
   }
 }
 

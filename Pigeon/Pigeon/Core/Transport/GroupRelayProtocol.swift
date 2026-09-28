@@ -56,9 +56,10 @@ enum GroupRelayProtocol {
         "type": "coordinator_submit", "claimed_base_epoch": value.claimedBaseEpoch,
         "candidate": value.candidate.base64EncodedString(),
       ])
-    case .coordinatorFetch(let value):
-      let cursor = value.fromEpoch == 0 ? 0 : value.fromEpoch - 1
-      return try encode(["type": "coordinator_fetch", "after_sequence": cursor])
+    case .coordinatorFetch:
+      // A group epoch is not a coordinator receipt sequence. The transport
+      // supplies the durable sequence from its current group snapshot.
+      throw RelayError.protocolError
     }
   }
 

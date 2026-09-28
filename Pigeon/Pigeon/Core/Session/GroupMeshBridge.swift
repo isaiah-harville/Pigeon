@@ -77,7 +77,9 @@ extension SessionManager {
     }
     guard isPersistenceHealthy else { return .retryAfterRestart }
     let requestID = "group-mesh-\(Data(SHA256.hash(data: encoded)).hexEncoded)"
-    return consumeGroupRelayMessage(envelope.payload, requestID: requestID)
-      ? .consumed : .retryAfterRestart
+    switch consumeGroupRelayMessage(envelope.payload, requestID: requestID) {
+    case .accepted, .rejected: return .consumed
+    case .retry: return .retryAfterRestart
+    }
   }
 }

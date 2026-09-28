@@ -6,14 +6,6 @@ extension SessionManager {
   static let maximumGroupMembers = 128
   static let maximumGroupMessageBytes = 64 * 1024
 
-  enum GroupCreationError: Error, Equatable {
-    case invalidName
-    case invalidRoster
-    case invalidRelay
-    case unreachableMember
-    case invalidCoordinatorKey
-  }
-
   enum GroupMessagingError: Error, Equatable {
     case invalidMessage
     case inactiveGroup
@@ -181,7 +173,7 @@ extension SessionManager {
       return try coreClient.relayChallengeSignature(groupID: groupID, nonce: nonce)
     }
     transport.onMessage = { [weak self] ciphertext, requestID in
-      self?.consumeGroupRelayMessage(ciphertext, requestID: requestID) ?? false
+      self?.consumeGroupRelayMessage(ciphertext, requestID: requestID) ?? .retry
     }
     transport.onCoordinatorCandidate = { [weak self] receipt, candidate, requestID in
       self?.consumeCoordinatorCandidate(
@@ -281,10 +273,10 @@ extension SessionManager {
     try acknowledgeCoreEvents(events.map(\.id))
   }
 
-  func consumeGroupRelayMessage(_ ciphertext: Data, requestID: String) -> Bool {
-    guard isUnlocked, isPersistenceHealthy else { return false }
+  func consumeGroupRelayMessage(_ ciphertext: Data, requestID: String) -> GroupRelayMessageOutcome {
+    guard isUnlocked, isPersistenceHealthy else { return .retry }
     do {
-      try executeCore(
+      let output = try executeCore(
         PigeonCoreCommand(
           id: "group-message:\(requestID)",
           body: .applyInbound(
@@ -292,9 +284,12 @@ extension SessionManager {
               kind: .groupMessage,
               payload: ciphertext,
               requestID: requestID))))
-      return true
+      switch output.groupMessageOutcome {
+      case .rejected: return .rejected
+      case .accepted, .unspecified: return .accepted
+      }
     } catch {
-      return false
+      return .retry
     }
   }
 

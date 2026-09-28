@@ -7,12 +7,10 @@ import PigeonFFI
 /// core consumption.
 @MainActor
 final class GroupRelayTransport {
-  private typealias Connection = GroupRelayConnection
-  private typealias Effect = GroupRelayEffect
-  private typealias Operation = GroupRelayOperation
+  typealias Connection = GroupRelayConnection
 
   typealias ChallengeSigner = (_ groupID: Data, _ nonce: Data) throws -> Data
-  typealias MessageConsumer = (_ ciphertext: Data, _ requestID: String) -> Bool
+  typealias MessageConsumer = (_ ciphertext: Data, _ requestID: String) -> GroupRelayMessageOutcome
   typealias CoordinatorConsumer = (
     _ receipt: PigeonCoordinatorReceipt, _ candidate: Data, _ requestID: String
   ) -> Bool
@@ -113,9 +111,9 @@ extension GroupRelayTransport {
         connections[item.destination] = connection
         start(connection)
       }
-      guard let connection = connections[item.destination], !contains(item.id, in: connection)
+      guard let connection = connections[item.destination], !connection.containsEffect(id: item.id)
       else { continue }
-      connection.queue.append(.effect(Effect(id: item.id, action: action)))
+      connection.queue.append(.effect(GroupRelayEffect(id: item.id, action: action)))
       sendNext(connection)
     }
   }
@@ -160,7 +158,7 @@ extension GroupRelayTransport {
       version == GroupRelayProtocol.version
     else { throw RelayError.incompatible }
 
-    let registration = takeRegistration(from: connection)
+    let registration = connection.takeRegistration()
     if let registration {
       connection.awaiting = .effect(registration)
       try await GroupRelaySocket.send(GroupRelayProtocol.action(registration.action), over: socket)
@@ -210,7 +208,7 @@ extension GroupRelayTransport {
     }
   }
 
-  private func handle(
+  func handle(
     _ frame: GroupRelayProtocol.ServerFrame,
     for connection: Connection
   ) throws {
@@ -231,7 +229,9 @@ extension GroupRelayTransport {
       try completeCoordinatorFetch(candidates, for: connection)
     case .error:
       throw RelayError.protocolError
-    case .compatible, .incompatible, .challenge, .registered, .coordinatorKey, .ignored:
+    case .ignored:
+      throw RelayError.protocolError
+    case .compatible, .incompatible, .challenge, .registered, .coordinatorKey:
       break
     }
     sendNext(connection)
@@ -243,10 +243,15 @@ extension GroupRelayTransport {
     var lastSequence: UInt64?
     for entry in entries {
       let requestID = "relay-group-\(connection.group.coordinationID.hexEncoded)-\(entry.sequence)"
-      guard onMessage?(entry.ciphertext, requestID) == true else { throw RelayError.protocolError }
+      switch onMessage?(entry.ciphertext, requestID) {
+      case .accepted, .rejected:
+        break
+      case .retry, .none:
+        throw RelayError.protocolError
+      }
       lastSequence = entry.sequence
     }
-    if let lastSequence { connection.queue.insert(.advance(lastSequence), at: 0) }
+    if let lastSequence { connection.scheduleNextMessagePage(after: lastSequence) }
   }
 
   private func completeSimpleEffect(for connection: Connection) throws {
@@ -308,13 +313,26 @@ extension GroupRelayTransport {
     _ candidates: [GroupRelayProtocol.CoordinatorCandidate],
     for connection: Connection
   ) throws {
-    guard case .fetchCoordinator? = connection.awaiting else { throw RelayError.protocolError }
+    guard let awaiting = connection.awaiting else { throw RelayError.protocolError }
+    switch awaiting {
+    case .fetchCoordinator:
+      break
+    case .effect(let effect):
+      guard case .coordinatorFetch = effect.action else { throw RelayError.protocolError }
+    case .fetchMessages, .advance:
+      throw RelayError.protocolError
+    }
     for value in candidates {
       let requestID =
         "relay-coordinator-"
         + "\(value.receipt.coordinationID.hexEncoded)-\(value.receipt.sequence)"
       guard onCoordinatorCandidate?(value.receipt.publicValue, value.candidate, requestID) == true
       else { throw RelayError.protocolError }
+    }
+    if case .effect(let effect) = awaiting,
+      onEffectDelivered?(effect.id) != true
+    {
+      throw RelayError.protocolError
     }
     connection.awaiting = nil
     if let last = candidates.last?.receipt.sequence {
@@ -335,8 +353,8 @@ extension GroupRelayTransport {
     connection.awaiting = operation
     Task { [weak self, weak connection] in
       do {
-        guard let self else { return }
-        let data = try self.data(for: operation)
+        guard let self, let connection else { return }
+        let data = try self.data(for: operation, connection: connection)
         try await GroupRelaySocket.send(data, over: socket)
       } catch {
         connection?.socket?.cancel(with: .internalServerError, reason: nil)
@@ -344,33 +362,17 @@ extension GroupRelayTransport {
     }
   }
 
-  private func data(for operation: Operation) throws -> Data {
+  func data(for operation: GroupRelayOperation, connection: Connection) throws -> Data {
     switch operation {
-    case .effect(let effect): return try GroupRelayProtocol.action(effect.action)
+    case .effect(let effect):
+      if case .coordinatorFetch = effect.action {
+        return try GroupRelayProtocol.coordinatorFetch(after: connection.group.coordinatorSequence)
+      }
+      return try GroupRelayProtocol.action(effect.action)
     case .fetchMessages: return try GroupRelayProtocol.fetch(after: 0)
     case .advance(let sequence): return try GroupRelayProtocol.advance(to: sequence)
     case .fetchCoordinator(let sequence):
       return try GroupRelayProtocol.coordinatorFetch(after: sequence)
-    }
-  }
-
-  private func takeRegistration(from connection: Connection) -> Effect? {
-    guard
-      let index = connection.queue.firstIndex(where: { operation in
-        if case .effect(let effect) = operation, case .registration = effect.action {
-          return true
-        }
-        return false
-      }), case .effect(let effect) = connection.queue.remove(at: index)
-    else { return nil }
-    return effect
-  }
-
-  private func contains(_ id: String, in connection: Connection) -> Bool {
-    if case .effect(let effect)? = connection.awaiting, effect.id == id { return true }
-    return connection.queue.contains { operation in
-      if case .effect(let effect) = operation { return effect.id == id }
-      return false
     }
   }
 

@@ -535,13 +535,14 @@ struct ThreeMemberGroup {
     bob: PigeonClient<SwitchableStore, TestIdentity>,
     carol: PigeonClient<SwitchableStore, TestIdentity>,
     group_id: GroupId,
+    bob_store: SwitchableStore,
 }
 
 fn joined_member(
     identity: TestIdentity,
     mls: &TransactionalOpenMlsStorage,
     welcome: Vec<u8>,
-) -> PigeonClient<SwitchableStore, TestIdentity> {
+) -> (PigeonClient<SwitchableStore, TestIdentity>, SwitchableStore) {
     let checkpoint = wire_proto::ClientCheckpoint {
         version: 1,
         openmls_checkpoint: mls.export_checkpoint().unwrap(),
@@ -553,11 +554,11 @@ fn joined_member(
         sha256: Sha256::digest(&bytes).into(),
         bytes,
     });
-    let mut client = PigeonClient::new(store, identity).unwrap();
+    let mut client = PigeonClient::new(store.clone(), identity).unwrap();
     client
         .execute(ClientCommand::apply_group_welcome("welcome", welcome).unwrap())
         .unwrap();
-    client
+    (client, store)
 }
 
 fn three_member_group() -> ThreeMemberGroup {
@@ -618,11 +619,14 @@ fn three_member_group() -> ThreeMemberGroup {
     let wire_proto::app_event::Body::GroupCreated(group) = event.body.unwrap() else {
         panic!("expected GroupCreated");
     };
+    let (bob_client, bob_store) = joined_member(bob, &bob_mls, bob_welcome);
+    let (carol_client, _) = joined_member(carol, &carol_mls, carol_welcome);
     ThreeMemberGroup {
         owner,
-        bob: joined_member(bob, &bob_mls, bob_welcome),
-        carol: joined_member(carol, &carol_mls, carol_welcome),
+        bob: bob_client,
+        carol: carol_client,
         group_id: GroupId::from_bytes(group.group_id.try_into().unwrap()),
+        bob_store,
     }
 }
 
@@ -669,12 +673,71 @@ fn delivery_counts(output: &pigeon_core::ClientOutput) -> Vec<(u32, u32)> {
 }
 
 #[test]
+fn malformed_group_entry_is_durably_rejected_before_next_valid_message() {
+    let ThreeMemberGroup {
+        mut owner,
+        mut bob,
+        bob_store: store,
+        group_id,
+        ..
+    } = three_member_group();
+    let valid = group_text(&mut owner, "after-poison", group_id);
+    let malformed = ClientCommand::apply_group_message("relay-poison", vec![0xff]).unwrap();
+
+    store.set_fail_replace(true);
+    assert!(matches!(
+        bob.execute(malformed.clone()),
+        Err(Error::Persistence(_))
+    ));
+    store.set_fail_replace(false);
+    let rejected = bob.execute(malformed).unwrap();
+    assert_eq!(
+        rejected.group_message_outcome,
+        pigeon_core::GroupMessageOutcome::Rejected
+    );
+    assert!(rejected.events.is_empty());
+
+    let mut relaunched = PigeonClient::new(store, TestIdentity::new(22)).unwrap();
+    let accepted = relaunched
+        .execute(ClientCommand::apply_group_message("relay-valid", valid).unwrap())
+        .unwrap();
+    assert_eq!(
+        accepted.group_message_outcome,
+        pigeon_core::GroupMessageOutcome::Accepted
+    );
+    assert_eq!(accepted.events.len(), 1);
+}
+
+#[test]
+fn distant_future_epoch_is_durably_rejected_before_later_entries() {
+    let ThreeMemberGroup {
+        mut owner,
+        mut bob,
+        group_id,
+        ..
+    } = three_member_group();
+    let valid = group_text(&mut owner, "future-after-epoch", group_id);
+    let mut hinted = wire_proto::GroupApplicationCiphertext::decode(valid.as_slice()).unwrap();
+    hinted.epoch += pigeon_core::MAX_FUTURE_EPOCHS as u64 + 1;
+    let command =
+        ClientCommand::apply_group_message("future-dependent", hinted.encode_to_vec()).unwrap();
+    let generation = bob.checkpoint_generation();
+    let rejected = bob.execute(command).unwrap();
+    assert_eq!(
+        rejected.group_message_outcome,
+        pigeon_core::GroupMessageOutcome::Rejected
+    );
+    assert_eq!(bob.checkpoint_generation(), generation + 1);
+}
+
+#[test]
 fn one_batched_receipt_settles_every_senders_messages_and_bystanders_ignore_it() {
     let ThreeMemberGroup {
         mut owner,
         mut bob,
         mut carol,
         group_id,
+        ..
     } = three_member_group();
     let owner_first = group_text(&mut owner, "owner-first", group_id);
     let owner_second = group_text(&mut owner, "owner-second", group_id);

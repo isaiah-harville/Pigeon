@@ -1,6 +1,12 @@
 import Foundation
 import PigeonFFI
 
+enum GroupRelayMessageOutcome: Equatable {
+  case accepted
+  case rejected
+  case retry
+}
+
 struct GroupRelayAuthorizationState {
   private var requiresConfirmation: Bool
   private var isConfirmed = false
@@ -65,6 +71,10 @@ final class GroupRelayConnection {
     needsCoordinatorFetch = true
   }
 
+  func scheduleNextMessagePage(after sequence: UInt64) {
+    queue.insert(contentsOf: [.advance(sequence), .fetchMessages], at: 0)
+  }
+
   func scheduleFetchesIfNeeded() {
     guard queue.isEmpty else { return }
     if !fetchedAfterConnect {
@@ -80,6 +90,26 @@ final class GroupRelayConnection {
     if needsCoordinatorFetch {
       needsCoordinatorFetch = false
       queue.append(.fetchCoordinator(group.coordinatorSequence))
+    }
+  }
+
+  func takeRegistration() -> GroupRelayEffect? {
+    guard
+      let index = queue.firstIndex(where: { operation in
+        if case .effect(let effect) = operation, case .registration = effect.action {
+          return true
+        }
+        return false
+      }), case .effect(let effect) = queue.remove(at: index)
+    else { return nil }
+    return effect
+  }
+
+  func containsEffect(id: String) -> Bool {
+    if case .effect(let effect)? = awaiting, effect.id == id { return true }
+    return queue.contains { operation in
+      if case .effect(let effect) = operation { return effect.id == id }
+      return false
     }
   }
 }

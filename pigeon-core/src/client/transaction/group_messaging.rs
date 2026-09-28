@@ -238,14 +238,16 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             .epoch()
             .checked_sub(stored.epoch)
             .ok_or(Error::Serialization)?;
+        if gap > MAX_FUTURE_EPOCHS as u64 {
+            return Err(Error::ResourceLimit("future group epoch gap"));
+        }
         let buffered_bytes: usize = candidate
             .buffered_group_messages
             .iter()
             .map(|message| message.ciphertext.len())
             .sum();
-        let warning_code = if gap > MAX_FUTURE_EPOCHS as u64 {
-            Some(1)
-        } else if candidate.buffered_group_messages.len() >= MAX_PENDING_OUTBOUND_ENTRIES
+        let warning_code = if candidate.buffered_group_messages.len()
+            >= MAX_PENDING_OUTBOUND_ENTRIES
             || buffered_bytes.saturating_add(inbound.payload.len()) > MAX_FUTURE_EPOCH_BUFFER_BYTES
         {
             Some(2)

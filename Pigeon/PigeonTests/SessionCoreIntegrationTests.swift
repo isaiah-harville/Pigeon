@@ -74,13 +74,13 @@ final class SessionCoreIntegrationTests: XCTestCase {
     try fixture.manager.attachStore(fixture.store)
     let initialGeneration = fixture.manager.coreSnapshotGeneration
 
-    XCTAssertTrue(
+    XCTAssertEqual(
       fixture.manager.consumeGroupRelayMessage(
-        Data("not an MLS message".utf8), requestID: "relay-entry-1"))
+        Data("not an MLS message".utf8), requestID: "relay-entry-1"), .rejected)
     XCTAssertEqual(fixture.manager.coreSnapshotGeneration, initialGeneration + 1)
-    XCTAssertTrue(
+    XCTAssertEqual(
       fixture.manager.consumeGroupRelayMessage(
-        Data("not an MLS message".utf8), requestID: "relay-entry-1"))
+        Data("not an MLS message".utf8), requestID: "relay-entry-1"), .accepted)
     XCTAssertEqual(fixture.manager.coreSnapshotGeneration, initialGeneration + 1)
   }
 
