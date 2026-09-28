@@ -42,18 +42,18 @@ manifest, shell history, or logs.
 | `PIGEON_RELAY_MAX_QUEUE`        | `1000`           | Max envelopes retained per mailbox.            |
 | `PIGEON_RELAY_MAX_MAILBOXES`    | `10000`          | Max mailboxes held at once.                    |
 | `PIGEON_RELAY_MAX_TOTAL_BYTES`  | `536870912`      | Hard ceiling on total stored ciphertext.       |
-| `PIGEON_GROUP_TTL_SECS`         | `2592000` (30d)  | Group entry and registration lifetime.         |
+| `PIGEON_GROUP_TTL_SECS`         | `2592000` (30d)  | Entry, unused registration, and dissolution grace lifetime. |
 | `PIGEON_GROUP_MAX_GROUPS`       | `10000`          | Maximum registered groups.                     |
 | `PIGEON_GROUP_MAX_CAPABILITIES` | `128`            | Maximum capabilities in one group.             |
-| `PIGEON_GROUP_MAX_ENTRY_BYTES`  | `1048576`        | Maximum opaque group entry.                    |
+| `PIGEON_GROUP_MAX_ENTRY_BYTES`  | `1048576`        | Maximum opaque group entry (at most 1 MiB).   |
 | `PIGEON_GROUP_MAX_ENTRIES`      | `10000`          | Maximum entries retained per group.            |
 | `PIGEON_GROUP_MAX_TOTAL_BYTES`  | `536870912`      | Hard ceiling for all group ciphertext.         |
 | `PIGEON_GROUP_MAX_FETCH_BYTES`  | `4194304`        | Maximum group fetch response.                  |
 | `PIGEON_COORDINATOR_MAX_PER_EPOCH` | `256`         | Candidate attempts retained per epoch.         |
 | `PIGEON_COORDINATOR_MAX_PER_CAPABILITY_PER_EPOCH` | `8` | Candidate attempts per member capability per epoch; at most `MAX_PER_EPOCH`. |
-| `PIGEON_COORDINATOR_MAX_LOGS` | `10000` | Maximum durable coordinator logs. |
+| `PIGEON_COORDINATOR_MAX_LOGS` | `10000` | Maximum logs with retained candidates; receipt heads remain durable. |
 | `PIGEON_COORDINATOR_MAX_CANDIDATES_PER_LOG` | `10000` | Maximum retained candidates per group log. |
-| `PIGEON_COORDINATOR_MAX_CANDIDATE_BYTES` | `1048576` | Maximum opaque MLS candidate.              |
+| `PIGEON_COORDINATOR_MAX_CANDIDATE_BYTES` | `1048576` | Maximum opaque MLS candidate (at most 1 MiB). |
 | `PIGEON_COORDINATOR_MAX_TOTAL_BYTES` | `268435456` | Hard ceiling for coordinator candidates.     |
 | `PIGEON_COORDINATOR_MAX_FETCH_BYTES` | `4194304`  | Maximum coordinator fetch response.            |
 | `PIGEON_COORDINATOR_TTL_SECS`   | `2592000` (30d)  | Coordinator candidate lifetime.                |
@@ -73,6 +73,29 @@ cursors/tombstones, and coordinator receipt chains are committed to SQLite under
 on persistent storage and back it up together with the coordinator seed. Clients
 authenticate the coordinator public key, and startup fails if the configured seed
 does not match the key bound into the stored receipt logs.
+
+An unused registration expires after one group TTL if it has never stored a
+group entry, submitted a coordinator candidate, or changed authorization. Groups that have carried traffic retain
+authorization until owner dissolution or operator action. Expired coordinator
+candidates stop consuming active-log capacity; their signed sequence and head
+remain on disk so later receipts continue the same chain.
+Expired registrations leave a compact owner-binding tombstone, so another key
+cannot claim the same coordination ID. These tombstones and coordinator heads
+remain durable and can grow with sustained registration abuse.
+
+Admission allows at most eight registration attempts per WebSocket connection
+and 60 new groups per minute across the relay process. Identical retries for an
+existing group do not consume the global budget. The limit keeps bursts from
+immediately filling durable storage; an attacker who can sustain valid
+registrations and traffic can still occupy capacity.
+
+To reclaim an empty registration at capacity, stop the relay and run
+`pigeon-relay reclaim-empty-group <state-dir> <coordination-id-hex>`. The command
+refuses a group with queued ciphertext or retained coordinator candidates. It
+keeps the coordinator receipt head, if any. Back up both SQLite databases and
+the signing seed together before maintenance. Reclaiming an empty but still
+used group makes its clients re-register and may interrupt delivery; inspect
+the group lifecycle before using this operator command.
 
 ### APNs push gateway (official deployment only)
 

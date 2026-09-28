@@ -10,6 +10,8 @@ use crate::group::store::Config as GroupConfig;
 use crate::mailbox::store::Config as MailboxConfig;
 
 const DEFAULT_TTL_SECS: u64 = 30 * 24 * 3600;
+// One MiB of opaque bytes expands below the client's two MiB JSON frame limit.
+const MAX_FETCHED_ITEM_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone)]
 pub struct RelayConfig {
@@ -69,6 +71,13 @@ impl fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
+fn validate_fetched_item_limit(variable: &'static str, value: usize) -> Result<(), ConfigError> {
+    if value > MAX_FETCHED_ITEM_BYTES {
+        return Err(ConfigError::new(variable, "must not exceed one MiB"));
+    }
+    Ok(())
+}
+
 impl RelayConfig {
     pub fn from_env() -> Result<Self, ConfigError> {
         Self::from_lookup(|key| std::env::var(key).ok())
@@ -111,6 +120,7 @@ impl RelayConfig {
                 4 * 1024 * 1024,
             )?,
         };
+        validate_fetched_item_limit("PIGEON_GROUP_MAX_ENTRY_BYTES", group.max_entry_bytes)?;
         validate_not_larger(
             "PIGEON_GROUP_MAX_ENTRY_BYTES",
             group.max_entry_bytes,
@@ -156,6 +166,10 @@ impl RelayConfig {
             )?,
             ttl_secs: parse_u64(&mut lookup, "PIGEON_COORDINATOR_TTL_SECS", DEFAULT_TTL_SECS)?,
         };
+        validate_fetched_item_limit(
+            "PIGEON_COORDINATOR_MAX_CANDIDATE_BYTES",
+            coordinator.max_candidate_bytes,
+        )?;
         validate_not_larger(
             "PIGEON_COORDINATOR_MAX_CANDIDATE_BYTES",
             coordinator.max_candidate_bytes,
@@ -283,6 +297,20 @@ mod tests {
         })
         .unwrap_err();
         assert_eq!(error.variable(), "PIGEON_GROUP_MAX_GROUPS");
+    }
+
+    #[test]
+    fn fetched_item_limits_keep_single_json_frame_below_client_limit() {
+        for variable in [
+            "PIGEON_GROUP_MAX_ENTRY_BYTES",
+            "PIGEON_COORDINATOR_MAX_CANDIDATE_BYTES",
+        ] {
+            let error = RelayConfig::from_lookup(|key| {
+                (key == variable).then(|| (1024 * 1024 + 1).to_string())
+            })
+            .unwrap_err();
+            assert_eq!(error.variable(), variable);
+        }
     }
 
     #[test]

@@ -30,7 +30,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 pub const GROUP_DATABASE: &str = "groups.sqlite3";
 pub const COORDINATOR_DATABASE: &str = "coordinator.sqlite3";
 
-const GROUP_SCHEMA_VERSION: i64 = 1;
+const GROUP_SCHEMA_VERSION: i64 = 4;
 const COORDINATOR_SCHEMA_VERSION: i64 = 1;
 const COORDINATOR_KEY: &str = "coordinator_public_key";
 
@@ -40,7 +40,9 @@ const GROUP_SCHEMA: &str = "
         permanent_controller_public_key BLOB NOT NULL,
         authorization_generation INTEGER NOT NULL,
         next_sequence INTEGER NOT NULL,
-        revoked_at INTEGER
+        revoked_at INTEGER,
+        registered_at INTEGER NOT NULL,
+        coordinator_active INTEGER NOT NULL
     ) WITHOUT ROWID;
     CREATE TABLE capabilities (
         coordination_id BLOB NOT NULL
@@ -62,6 +64,11 @@ const GROUP_SCHEMA: &str = "
         PRIMARY KEY (coordination_id, sequence)
     );
     CREATE INDEX entries_by_timestamp ON entries(timestamp);
+    CREATE TABLE retired_groups (
+        coordination_id BLOB PRIMARY KEY NOT NULL,
+        permanent_controller_public_key BLOB NOT NULL,
+        terminal INTEGER NOT NULL
+    ) WITHOUT ROWID;
 ";
 
 const COORDINATOR_SCHEMA: &str = "
@@ -220,6 +227,8 @@ pub struct GroupRecord {
     pub authorization_generation: u64,
     pub next_sequence: u64,
     pub revoked_at: Option<u64>,
+    pub registered_at: u64,
+    pub coordinator_active: bool,
     pub capabilities: Vec<CapabilityRecord>,
     pub entries: Vec<EntryRecord>,
 }
@@ -231,6 +240,8 @@ pub struct GroupAuthorization<'a> {
     pub authorization_generation: u64,
     pub next_sequence: u64,
     pub revoked_at: Option<u64>,
+    pub registered_at: u64,
+    pub coordinator_active: bool,
     pub capabilities: &'a [CapabilityRecord],
     /// Entries below this sequence were dropped from memory.
     pub first_live_sequence: u64,
@@ -246,6 +257,40 @@ impl GroupJournal {
     }
 
     fn with_connection(mut connection: Connection) -> Result<Self, DurableError> {
+        let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if version == 1 {
+            let transaction = connection.transaction()?;
+            transaction.execute_batch(
+                "ALTER TABLE groups ADD COLUMN registered_at INTEGER NOT NULL DEFAULT 0;
+                 UPDATE groups SET registered_at = unixepoch();",
+            )?;
+            transaction.pragma_update(None, "user_version", 2)?;
+            transaction.commit()?;
+        }
+        let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if version == 2 {
+            let transaction = connection.transaction()?;
+            // Legacy registrations may already have signed coordinator
+            // receipts. Preserve them until an operator deliberately reclaims.
+            transaction.execute_batch(
+                "ALTER TABLE groups ADD COLUMN coordinator_active INTEGER NOT NULL DEFAULT 1;",
+            )?;
+            transaction.pragma_update(None, "user_version", 3)?;
+            transaction.commit()?;
+        }
+        let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if version == 3 {
+            let transaction = connection.transaction()?;
+            transaction.execute_batch(
+                "CREATE TABLE retired_groups (
+                    coordination_id BLOB PRIMARY KEY NOT NULL,
+                    permanent_controller_public_key BLOB NOT NULL,
+                    terminal INTEGER NOT NULL
+                ) WITHOUT ROWID;",
+            )?;
+            transaction.pragma_update(None, "user_version", GROUP_SCHEMA_VERSION)?;
+            transaction.commit()?;
+        }
         migrate(&mut connection, GROUP_SCHEMA, GROUP_SCHEMA_VERSION)?;
         Ok(Self { connection })
     }
@@ -254,9 +299,12 @@ impl GroupJournal {
         let mut groups = Vec::new();
         let mut statement = self.connection.prepare(
             "SELECT coordination_id, permanent_controller_public_key, authorization_generation,
-                    next_sequence, revoked_at
+                    next_sequence, revoked_at, registered_at, coordinator_active
              FROM groups
-             WHERE revoked_at IS NULL OR revoked_at >= ?1
+             WHERE (revoked_at IS NULL OR revoked_at >= ?1)
+               AND NOT (revoked_at IS NULL AND next_sequence = 1
+                        AND authorization_generation = 0 AND coordinator_active = 0
+                        AND registered_at < ?1)
              ORDER BY coordination_id",
         )?;
         let mut rows = statement.query(params![to_sql(cutoff)])?;
@@ -267,6 +315,8 @@ impl GroupJournal {
                 authorization_generation: from_sql(row.get(2)?),
                 next_sequence: from_sql(row.get(3)?),
                 revoked_at: row.get::<_, Option<i64>>(4)?.map(from_sql),
+                registered_at: from_sql(row.get(5)?),
+                coordinator_active: row.get(6)?,
                 capabilities: Vec::new(),
                 entries: Vec::new(),
             });
@@ -304,6 +354,24 @@ impl GroupJournal {
         Ok(groups)
     }
 
+    pub fn retired_controller(
+        &self,
+        coordination_id: &[u8; 32],
+    ) -> Result<Option<([u8; 32], bool)>, DurableError> {
+        let stored: Option<(Vec<u8>, bool)> = self
+            .connection
+            .query_row(
+                "SELECT permanent_controller_public_key, terminal FROM retired_groups
+                 WHERE coordination_id = ?1",
+                params![coordination_id.as_slice()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        stored
+            .map(|(bytes, terminal)| Ok((fixed(bytes, "retired controller key")?, terminal)))
+            .transpose()
+    }
+
     /// Writes a group's complete authorization state and drops entries memory
     /// no longer holds. Used for registration, capability replacement,
     /// revocation, and cursor advances.
@@ -315,19 +383,24 @@ impl GroupJournal {
         let transaction = self.connection.transaction()?;
         transaction.execute(
             "INSERT INTO groups (coordination_id, permanent_controller_public_key,
-                                 authorization_generation, next_sequence, revoked_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)
+                                 authorization_generation, next_sequence, revoked_at,
+                                 registered_at, coordinator_active)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT (coordination_id) DO UPDATE SET
                  permanent_controller_public_key = excluded.permanent_controller_public_key,
                  authorization_generation = excluded.authorization_generation,
                  next_sequence = excluded.next_sequence,
-                 revoked_at = excluded.revoked_at",
+                 revoked_at = excluded.revoked_at,
+                 registered_at = excluded.registered_at,
+                 coordinator_active = excluded.coordinator_active",
             params![
                 coordination_id.as_slice(),
                 group.permanent_controller_public_key.as_slice(),
                 to_sql(group.authorization_generation),
                 to_sql(group.next_sequence),
                 group.revoked_at.map(to_sql),
+                to_sql(group.registered_at),
+                group.coordinator_active,
             ],
         )?;
         transaction.execute(
@@ -399,12 +472,73 @@ impl GroupJournal {
             params![to_sql(cutoff)],
         )?;
         transaction.execute(
+            "INSERT OR IGNORE INTO retired_groups
+             (coordination_id, permanent_controller_public_key, terminal)
+             SELECT coordination_id, permanent_controller_public_key,
+                    revoked_at IS NOT NULL FROM groups
+             WHERE (revoked_at IS NOT NULL AND revoked_at < ?1)
+                OR (revoked_at IS NULL AND next_sequence = 1
+                    AND authorization_generation = 0 AND coordinator_active = 0
+                    AND registered_at < ?1)",
+            params![to_sql(cutoff)],
+        )?;
+        transaction.execute(
             "DELETE FROM groups WHERE revoked_at IS NOT NULL AND revoked_at < ?1",
+            params![to_sql(cutoff)],
+        )?;
+        transaction.execute(
+            "DELETE FROM groups WHERE revoked_at IS NULL AND next_sequence = 1
+             AND authorization_generation = 0 AND coordinator_active = 0
+             AND registered_at < ?1",
             params![to_sql(cutoff)],
         )?;
         transaction.commit()?;
         Ok(())
     }
+}
+
+/// Offline operator action for a registration with no queued ciphertext or
+/// coordinator candidates. A retained coordinator log head is never deleted:
+/// a future registration of the same ID must continue its signed chain.
+pub fn reclaim_empty_group(dir: &Path, coordination_id: &[u8; 32]) -> Result<bool, DurableError> {
+    let group_path = dir.join(GROUP_DATABASE);
+    let coordinator_path = dir.join(COORDINATOR_DATABASE);
+    if !group_path.exists() || !coordinator_path.exists() {
+        return Err(DurableError::Corrupt("relay databases are missing"));
+    }
+    let mut coordinator = open(Some(&coordinator_path))?;
+    let group = GroupJournal::open(dir)?.connection;
+    let transaction = coordinator.transaction()?;
+    let candidate_count: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM candidates WHERE coordination_id = ?1",
+        params![coordination_id.as_slice()],
+        |row| row.get(0),
+    )?;
+    if candidate_count != 0 {
+        return Ok(false);
+    }
+    let entry_count: i64 = group.query_row(
+        "SELECT COUNT(*) FROM entries WHERE coordination_id = ?1",
+        params![coordination_id.as_slice()],
+        |row| row.get(0),
+    )?;
+    if entry_count != 0 {
+        return Ok(false);
+    }
+    group.execute(
+        "INSERT OR IGNORE INTO retired_groups
+         (coordination_id, permanent_controller_public_key, terminal)
+         SELECT coordination_id, permanent_controller_public_key,
+                revoked_at IS NOT NULL FROM groups
+         WHERE coordination_id = ?1",
+        params![coordination_id.as_slice()],
+    )?;
+    let removed = group.execute(
+        "DELETE FROM groups WHERE coordination_id = ?1",
+        params![coordination_id.as_slice()],
+    )?;
+    transaction.commit()?;
+    Ok(removed != 0)
 }
 
 // MARK: - Coordinator
@@ -575,5 +709,48 @@ impl CoordinatorJournal {
             params![to_sql(cutoff)],
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn legacy_group_migration_preserves_existing_authorization() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join(GROUP_DATABASE);
+        let connection = Connection::open(&path).unwrap();
+        let legacy_schema = GROUP_SCHEMA.replace(
+            ",\n        registered_at INTEGER NOT NULL,\n        coordinator_active INTEGER NOT NULL",
+            "",
+        );
+        let legacy_schema = legacy_schema.replace(
+            "    CREATE TABLE retired_groups (\n        coordination_id BLOB PRIMARY KEY NOT NULL,\n        permanent_controller_public_key BLOB NOT NULL,\n        terminal INTEGER NOT NULL\n    ) WITHOUT ROWID;\n",
+            "",
+        );
+        connection.execute_batch(&legacy_schema).unwrap();
+        connection
+            .execute(
+                "INSERT INTO groups (coordination_id, permanent_controller_public_key,
+             authorization_generation, next_sequence, revoked_at) VALUES (?1, ?2, 0, 1, NULL)",
+                params![[9_u8; 32].as_slice(), [1_u8; 32].as_slice()],
+            )
+            .unwrap();
+        connection.pragma_update(None, "user_version", 1).unwrap();
+        drop(connection);
+
+        GroupJournal::open(directory.path()).unwrap();
+        let connection = Connection::open(&path).unwrap();
+        let (registered_at, coordinator_active): (i64, bool) = connection
+            .query_row(
+                "SELECT registered_at, coordinator_active FROM groups WHERE coordination_id = ?1",
+                params![[9_u8; 32].as_slice()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert!(registered_at > 0);
+        assert!(coordinator_active);
     }
 }

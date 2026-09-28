@@ -81,18 +81,18 @@ volumes:
 | `PIGEON_RELAY_MAX_QUEUE`       | `1000`          | Max envelopes retained per mailbox.        |
 | `PIGEON_RELAY_MAX_MAILBOXES`   | `10000`         | Max mailboxes held at once.                |
 | `PIGEON_RELAY_MAX_TOTAL_BYTES` | `536870912`     | Hard ceiling on total stored ciphertext.   |
-| `PIGEON_GROUP_TTL_SECS` | `2592000` (30d) | Group ciphertext and dissolved-group read grace period. |
+| `PIGEON_GROUP_TTL_SECS` | `2592000` (30d) | Group ciphertext, unused registration, and dissolved-group read grace period. |
 | `PIGEON_GROUP_MAX_GROUPS` | `10000` | Maximum registered groups. |
 | `PIGEON_GROUP_MAX_CAPABILITIES` | `128` | Maximum member capabilities per group. |
-| `PIGEON_GROUP_MAX_ENTRY_BYTES` | `1048576` | Maximum opaque group entry. |
+| `PIGEON_GROUP_MAX_ENTRY_BYTES` | `1048576` | Maximum opaque group entry (at most 1 MiB). |
 | `PIGEON_GROUP_MAX_ENTRIES` | `10000` | Maximum retained entries per group. |
 | `PIGEON_GROUP_MAX_TOTAL_BYTES` | `536870912` | Hard ceiling on group ciphertext. |
 | `PIGEON_GROUP_MAX_FETCH_BYTES` | `4194304` | Maximum group fetch response. |
 | `PIGEON_COORDINATOR_MAX_PER_EPOCH` | `256` | Candidate attempts retained per epoch. |
 | `PIGEON_COORDINATOR_MAX_PER_CAPABILITY_PER_EPOCH` | `8` | Candidate attempts retained per member capability and epoch. |
-| `PIGEON_COORDINATOR_MAX_LOGS` | `10000` | Maximum durable coordinator logs. |
+| `PIGEON_COORDINATOR_MAX_LOGS` | `10000` | Maximum logs with retained candidates; receipt heads remain durable. |
 | `PIGEON_COORDINATOR_MAX_CANDIDATES_PER_LOG` | `10000` | Maximum retained candidates per group log. |
-| `PIGEON_COORDINATOR_MAX_CANDIDATE_BYTES` | `1048576` | Maximum opaque MLS candidate. |
+| `PIGEON_COORDINATOR_MAX_CANDIDATE_BYTES` | `1048576` | Maximum opaque MLS candidate (at most 1 MiB). |
 | `PIGEON_COORDINATOR_MAX_TOTAL_BYTES` | `268435456` | Hard ceiling on coordinator candidates. |
 | `PIGEON_COORDINATOR_MAX_FETCH_BYTES` | `4194304` | Maximum coordinator fetch response. |
 | `PIGEON_COORDINATOR_TTL_SECS` | `2592000` (30d) | Coordinator candidate lifetime. |

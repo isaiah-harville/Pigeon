@@ -116,7 +116,12 @@ impl Store {
         let cutoff = now.saturating_sub(config.ttl_secs);
         let mut store = Self::new(config, signer);
         let records = journal.load(cutoff)?;
-        if records.len() > store.config.max_logs {
+        if records
+            .iter()
+            .filter(|record| !record.candidates.is_empty())
+            .count()
+            > store.config.max_logs
+        {
             return Err(DurableError::Corrupt(
                 "coordinator log count exceeds configured limit",
             ));
@@ -179,7 +184,17 @@ impl Store {
             return Err(StoreError::OversizedCandidate);
         }
         self.expire_memory(now);
-        if !self.logs.contains_key(&coordination_id) && self.logs.len() >= self.config.max_logs {
+        if self
+            .logs
+            .get(&coordination_id)
+            .is_none_or(|log| log.candidates.is_empty())
+            && self
+                .logs
+                .values()
+                .filter(|log| !log.candidates.is_empty())
+                .count()
+                >= self.config.max_logs
+        {
             return Err(StoreError::AtCapacity);
         }
         let log = self
@@ -291,7 +306,7 @@ impl Store {
                     .filter(|entry| entry.receipt.sequence > after_sequence)
                     .take_while(|entry| {
                         let next = bytes.saturating_add(entry.candidate.len());
-                        if next > self.config.max_fetch_batch_bytes {
+                        if bytes > 0 && next > self.config.max_fetch_batch_bytes {
                             false
                         } else {
                             bytes = next;

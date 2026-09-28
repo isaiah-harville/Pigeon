@@ -75,6 +75,59 @@ fn coordinator_expiry_reclaims_opaque_candidates_without_reusing_sequences() {
 }
 
 #[test]
+fn expired_head_only_logs_do_not_consume_active_log_capacity() {
+    let mut limits = store_config();
+    limits.max_logs = 1;
+    let mut store = Store::new(limits, SigningKey::from_bytes(&[77; 32]));
+    let first = store
+        .submit([5; 32], [9; 32], 1, b"old".to_vec(), 1)
+        .unwrap();
+    store.expire_at(62);
+    store
+        .submit([6; 32], [9; 32], 1, b"other".to_vec(), 62)
+        .unwrap();
+    assert_eq!(
+        store.submit([5; 32], [9; 32], 2, b"blocked".to_vec(), 62),
+        Err(StoreError::AtCapacity)
+    );
+    store.expire_at(123);
+    let resumed = store
+        .submit([5; 32], [9; 32], 2, b"resumed".to_vec(), 123)
+        .unwrap();
+    assert_eq!(resumed.sequence, first.sequence + 1);
+    assert_eq!(resumed.prior_receipt_hash, first.receipt_hash());
+}
+
+#[test]
+fn durable_head_only_logs_do_not_block_restart_at_capacity() {
+    let directory = tempdir().unwrap();
+    let signer = SigningKey::from_bytes(&[77; 32]);
+    let mut limits = store_config();
+    limits.max_logs = 1;
+    let journal =
+        CoordinatorJournal::open(directory.path(), signer.verifying_key().to_bytes()).unwrap();
+    let mut store = Store::durable(limits.clone(), signer, journal, 1).unwrap();
+    let first = store
+        .submit([5; 32], [9; 32], 1, b"old".to_vec(), 1)
+        .unwrap();
+    drop(store);
+
+    let signer = SigningKey::from_bytes(&[77; 32]);
+    let journal =
+        CoordinatorJournal::open(directory.path(), signer.verifying_key().to_bytes()).unwrap();
+    let mut restored = Store::durable(limits, signer, journal, 62).unwrap();
+    restored
+        .submit([6; 32], [9; 32], 1, b"other".to_vec(), 62)
+        .unwrap();
+    restored.expire_at(123);
+    let resumed = restored
+        .submit([5; 32], [9; 32], 2, b"resumed".to_vec(), 123)
+        .unwrap();
+    assert_eq!(resumed.sequence, first.sequence + 1);
+    assert_eq!(resumed.prior_receipt_hash, first.receipt_hash());
+}
+
+#[test]
 fn durable_coordinator_chain_survives_restart_and_rejects_a_new_signer() {
     let directory = tempdir().unwrap();
     let signer = SigningKey::from_bytes(&[77; 32]);

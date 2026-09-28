@@ -5,12 +5,15 @@ use super::protocol::{
 use super::store::{
     CapabilityRegistration, Config, GroupCapability, GroupRegistration, Store, StoreError,
 };
+use super::{RegistrationAdmission, RegistrationAttempts};
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
 use tempfile::tempdir;
 
-use crate::durable::{DurableError, GroupJournal, GROUP_DATABASE};
+use crate::durable::{
+    reclaim_empty_group, CoordinatorJournal, DurableError, GroupJournal, GROUP_DATABASE,
+};
 
 fn config() -> Config {
     Config {
@@ -22,6 +25,34 @@ fn config() -> Config {
         max_total_bytes: 4096,
         max_fetch_batch_bytes: 2048,
     }
+}
+
+#[test]
+fn registration_admission_limits_one_window_and_recovers_next_window() {
+    let mut admission = RegistrationAdmission::default();
+    for _ in 0..60 {
+        assert!(admission.admit(100));
+    }
+    assert!(!admission.admit(159));
+    assert!(admission.admit(160));
+}
+
+#[test]
+fn socket_registration_attempts_are_bounded() {
+    let mut attempts = RegistrationAttempts::default();
+    for _ in 0..8 {
+        assert!(attempts.admit());
+    }
+    assert!(!attempts.admit());
+}
+
+#[test]
+fn existing_registration_is_visible_to_admission_check() {
+    let mut store = Store::bounded(config());
+    let registration = registration(3);
+    assert!(!store.contains_group(&registration.coordination_id));
+    store.register(registration.clone()).unwrap();
+    assert!(store.contains_group(&registration.coordination_id));
 }
 
 fn registration(readers: usize) -> GroupRegistration {
@@ -209,6 +240,206 @@ fn identical_group_registration_retry_is_idempotent_but_conflicts_fail() {
 }
 
 #[test]
+fn unused_registrations_expire_but_used_groups_keep_their_authorization() {
+    let mut limits = config();
+    limits.max_groups = 2;
+    let mut store = Store::bounded(limits);
+    let idle = store.register(registration(3)).unwrap();
+    let mut used_registration = registration(3);
+    used_registration.coordination_id = [10; 32];
+    let used = store.register(used_registration).unwrap();
+    store.append(&used.writer(0), b"used".to_vec(), 1).unwrap();
+    store.expire_at(62);
+
+    assert!(store
+        .resolve_capability(*idle.id(), idle.reader(0).capability_id)
+        .is_none());
+    assert!(store
+        .resolve_capability(*used.id(), used.reader(0).capability_id)
+        .is_some());
+    let mut replacement = registration(3);
+    replacement.coordination_id = [11; 32];
+    assert!(store.register(replacement).is_ok());
+}
+
+#[test]
+fn expired_registration_id_remains_bound_to_original_controller() {
+    let mut store = Store::bounded(config());
+    let original = registration(3);
+    store.register(original.clone()).unwrap();
+    store.expire_at(62);
+
+    let mut takeover = original.clone();
+    takeover.permanent_controller_public_key = [2; 32];
+    takeover.capabilities[1].can_control = true;
+    assert_eq!(store.register(takeover), Err(StoreError::AlreadyRegistered));
+    assert!(store.register(original).is_ok());
+}
+
+#[test]
+fn unused_registration_is_reclaimed_before_durable_capacity_check() {
+    let directory = tempdir().unwrap();
+    let mut limits = config();
+    limits.max_groups = 1;
+    let mut store = Store::durable(
+        limits.clone(),
+        GroupJournal::open(directory.path()).unwrap(),
+        1,
+    )
+    .unwrap();
+    store.register(registration(3)).unwrap();
+    drop(store);
+
+    let mut restored =
+        Store::durable(limits, GroupJournal::open(directory.path()).unwrap(), 62).unwrap();
+    let mut replacement = registration(3);
+    replacement.coordination_id = [11; 32];
+    assert!(restored.register(replacement).is_ok());
+}
+
+#[test]
+fn durable_expired_id_rejects_a_new_controller_after_restart() {
+    let directory = tempdir().unwrap();
+    let mut store =
+        Store::durable(config(), GroupJournal::open(directory.path()).unwrap(), 1).unwrap();
+    let original = registration(3);
+    store.register(original.clone()).unwrap();
+    drop(store);
+    let mut restored =
+        Store::durable(config(), GroupJournal::open(directory.path()).unwrap(), 62).unwrap();
+    let mut takeover = original;
+    takeover.permanent_controller_public_key = [2; 32];
+    takeover.capabilities[1].can_control = true;
+    assert_eq!(
+        restored.register(takeover),
+        Err(StoreError::AlreadyRegistered)
+    );
+}
+
+#[test]
+fn coordinator_activity_keeps_group_authorization_across_restart() {
+    let directory = tempdir().unwrap();
+    let mut store =
+        Store::durable(config(), GroupJournal::open(directory.path()).unwrap(), 1).unwrap();
+    let group = store.register(registration(3)).unwrap();
+    store.mark_coordinator_activity(group.id());
+    drop(store);
+
+    let restored =
+        Store::durable(config(), GroupJournal::open(directory.path()).unwrap(), 62).unwrap();
+    assert!(restored
+        .resolve_capability(*group.id(), group.reader(0).capability_id)
+        .is_some());
+}
+
+#[test]
+fn operator_can_reclaim_empty_registration_across_restart() {
+    let directory = tempdir().unwrap();
+    CoordinatorJournal::open(directory.path(), [77; 32]).unwrap();
+    let mut limits = config();
+    limits.max_groups = 1;
+    let mut store = Store::durable(
+        limits.clone(),
+        GroupJournal::open(directory.path()).unwrap(),
+        1,
+    )
+    .unwrap();
+    let idle = store.register(registration(3)).unwrap();
+    drop(store);
+
+    assert!(reclaim_empty_group(directory.path(), idle.id()).unwrap());
+    let mut restored =
+        Store::durable(limits, GroupJournal::open(directory.path()).unwrap(), 2).unwrap();
+    let mut takeover = registration(3);
+    takeover.permanent_controller_public_key = [2; 32];
+    takeover.capabilities[1].can_control = true;
+    assert_eq!(
+        restored.register(takeover),
+        Err(StoreError::AlreadyRegistered)
+    );
+    let mut replacement = registration(3);
+    replacement.coordination_id = [11; 32];
+    assert!(restored.register(replacement).is_ok());
+}
+
+#[test]
+fn operator_reclamation_refuses_unread_ciphertext() {
+    let directory = tempdir().unwrap();
+    CoordinatorJournal::open(directory.path(), [77; 32]).unwrap();
+    let mut store =
+        Store::durable(config(), GroupJournal::open(directory.path()).unwrap(), 1).unwrap();
+    let group = store.register(registration(3)).unwrap();
+    store
+        .append(&group.writer(0), b"unread".to_vec(), 2)
+        .unwrap();
+    drop(store);
+
+    assert!(!reclaim_empty_group(directory.path(), group.id()).unwrap());
+    let restored =
+        Store::durable(config(), GroupJournal::open(directory.path()).unwrap(), 3).unwrap();
+    assert_eq!(restored.fetch(&group.reader(1), 0).unwrap().len(), 1);
+}
+
+#[test]
+fn operator_reclamation_preserves_coordinator_receipt_head() {
+    let directory = tempdir().unwrap();
+    let signer = SigningKey::from_bytes(&[77; 32]);
+    let journal =
+        CoordinatorJournal::open(directory.path(), signer.verifying_key().to_bytes()).unwrap();
+    let mut coordinator = crate::coordinator::store::Store::durable(
+        crate::coordinator::store::Config {
+            max_logs: 1,
+            max_candidates_per_log: 4,
+            max_candidates_per_epoch: 4,
+            max_candidates_per_capability_per_epoch: 4,
+            max_candidate_bytes: 128,
+            max_total_bytes: 1024,
+            max_fetch_batch_bytes: 1024,
+            ttl_secs: 60,
+        },
+        signer,
+        journal,
+        1,
+    )
+    .unwrap();
+    let mut group_store =
+        Store::durable(config(), GroupJournal::open(directory.path()).unwrap(), 1).unwrap();
+    let group = group_store.register(registration(3)).unwrap();
+    let first = coordinator
+        .submit(*group.id(), [1; 32], 1, b"candidate".to_vec(), 1)
+        .unwrap();
+    coordinator.expire_at(62);
+    drop(coordinator);
+    drop(group_store);
+
+    assert!(reclaim_empty_group(directory.path(), group.id()).unwrap());
+    let signer = SigningKey::from_bytes(&[77; 32]);
+    let journal =
+        CoordinatorJournal::open(directory.path(), signer.verifying_key().to_bytes()).unwrap();
+    let mut coordinator = crate::coordinator::store::Store::durable(
+        crate::coordinator::store::Config {
+            max_logs: 1,
+            max_candidates_per_log: 4,
+            max_candidates_per_epoch: 4,
+            max_candidates_per_capability_per_epoch: 4,
+            max_candidate_bytes: 128,
+            max_total_bytes: 1024,
+            max_fetch_batch_bytes: 1024,
+            ttl_secs: 60,
+        },
+        signer,
+        journal,
+        62,
+    )
+    .unwrap();
+    let next = coordinator
+        .submit(*group.id(), [1; 32], 2, b"next".to_vec(), 62)
+        .unwrap();
+    assert_eq!(next.sequence, first.sequence + 1);
+    assert_eq!(next.prior_receipt_hash, first.receipt_hash());
+}
+
+#[test]
 fn group_protocol_requires_current_version_negotiation() {
     let mut negotiated = false;
     assert!(matches!(
@@ -352,6 +583,10 @@ fn permanent_owner_tombstones_group_until_offline_readers_can_fetch_dissolution(
         Err(StoreError::Unauthorized)
     );
     assert_eq!(store.total_bytes(), 0);
+    assert_eq!(
+        store.register(registration(3)),
+        Err(StoreError::AlreadyRegistered)
+    );
 }
 
 #[test]
@@ -393,9 +628,13 @@ fn durable_group_state_survives_restart_with_rotation_cursors_and_tombstone() {
 
     restored.expire_at(64);
     drop(restored);
-    let expired =
+    let mut expired =
         Store::durable(config(), GroupJournal::open(directory.path()).unwrap(), 64).unwrap();
     assert!(expired.resolve_capability(*group.id(), [112; 32]).is_none());
+    assert_eq!(
+        expired.register(registration(3)),
+        Err(StoreError::AlreadyRegistered)
+    );
 }
 
 #[test]

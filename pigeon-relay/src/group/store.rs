@@ -120,6 +120,8 @@ struct StoredGroup {
     entries: VecDeque<GroupEntry>,
     next_sequence: u64,
     revoked_at: Option<u64>,
+    registered_at: u64,
+    coordinator_active: bool,
 }
 
 impl StoredGroup {
@@ -172,6 +174,7 @@ pub struct Store {
     config: Config,
     groups: HashMap<[u8; GROUP_ID_BYTES], StoredGroup>,
     total_bytes: usize,
+    retired_controllers: HashMap<[u8; GROUP_ID_BYTES], ([u8; CAPABILITY_KEY_BYTES], bool)>,
     /// Write-through durable copy; `None` keeps the store memory-only.
     journal: Option<GroupJournal>,
 }
@@ -182,6 +185,7 @@ impl Store {
             config,
             groups: HashMap::new(),
             total_bytes: 0,
+            retired_controllers: HashMap::new(),
             journal: None,
         }
     }
@@ -238,6 +242,8 @@ impl Store {
                     entries,
                     next_sequence: record.next_sequence,
                     revoked_at: record.revoked_at,
+                    registered_at: record.registered_at,
+                    coordinator_active: record.coordinator_active,
                 },
             );
         }
@@ -278,6 +284,8 @@ impl Store {
             authorization_generation: group.authorization_generation,
             next_sequence: group.next_sequence,
             revoked_at: group.revoked_at,
+            registered_at: group.registered_at,
+            coordinator_active: group.coordinator_active,
             capabilities: &capabilities,
             first_live_sequence: group
                 .entries
@@ -289,10 +297,20 @@ impl Store {
         }
     }
 
+    #[cfg(test)]
     pub fn register(
         &mut self,
         registration: GroupRegistration,
     ) -> Result<RegisteredGroup, StoreError> {
+        self.register_at(registration, 0)
+    }
+
+    pub fn register_at(
+        &mut self,
+        registration: GroupRegistration,
+        now: u64,
+    ) -> Result<RegisteredGroup, StoreError> {
+        self.expire_at(now);
         if registration.capabilities.is_empty()
             || registration.capabilities.len() > self.config.max_capabilities_per_group
         {
@@ -348,6 +366,20 @@ impl Store {
             }
             return Err(StoreError::AlreadyRegistered);
         }
+        let retired_controller = if let Some(journal) = self.journal.as_ref() {
+            journal
+                .retired_controller(&registration.coordination_id)
+                .unwrap_or_else(|error| fail_stop(error))
+        } else {
+            self.retired_controllers
+                .get(&registration.coordination_id)
+                .copied()
+        };
+        if retired_controller.is_some_and(|(key, terminal)| {
+            terminal || key != registration.permanent_controller_public_key
+        }) {
+            return Err(StoreError::AlreadyRegistered);
+        }
         if self.groups.len() >= self.config.max_groups {
             return Err(StoreError::AtCapacity);
         }
@@ -376,6 +408,8 @@ impl Store {
                 entries: VecDeque::new(),
                 next_sequence: 1,
                 revoked_at: None,
+                registered_at: now,
+                coordinator_active: false,
             },
         );
         self.persist_authorization(registration.coordination_id);
@@ -468,7 +502,7 @@ impl Store {
             .filter(|entry| entry.sequence > effective_cursor)
             .take_while(|entry| {
                 let next = bytes.saturating_add(entry.ciphertext.len());
-                if next > self.config.max_fetch_batch_bytes {
+                if next > self.config.max_fetch_batch_bytes && bytes != 0 {
                     false
                 } else {
                     bytes = next;
@@ -631,6 +665,21 @@ impl Store {
             })
     }
 
+    pub fn contains_group(&self, coordination_id: &[u8; GROUP_ID_BYTES]) -> bool {
+        self.groups.contains_key(coordination_id)
+    }
+
+    /// Pins authorization before a coordinator receipt can be signed. A
+    /// candidate rejected later may leave a harmless pinned registration.
+    pub fn mark_coordinator_activity(&mut self, coordination_id: &[u8; GROUP_ID_BYTES]) {
+        if let Some(group) = self.groups.get_mut(coordination_id) {
+            if !group.coordinator_active {
+                group.coordinator_active = true;
+                self.persist_authorization(*coordination_id);
+            }
+        }
+    }
+
     pub fn can_read(&self, capability: &GroupCapability) -> bool {
         self.groups
             .get(&capability.coordination_id)
@@ -700,10 +749,27 @@ impl Store {
                     .revoked_at
                     .is_some_and(|at| at < cutoff)
                     .then_some(*id)
+                    .or_else(|| {
+                        (group.revoked_at.is_none()
+                            && group.next_sequence == 1
+                            && group.authorization_generation == 0
+                            && !group.coordinator_active
+                            && group.registered_at < cutoff)
+                            .then_some(*id)
+                    })
             })
             .collect::<Vec<_>>();
         for id in expired {
             if let Some(group) = self.groups.remove(&id) {
+                if self.journal.is_none() {
+                    self.retired_controllers.insert(
+                        id,
+                        (
+                            group.permanent_controller_public_key,
+                            group.revoked_at.is_some(),
+                        ),
+                    );
+                }
                 let freed = group
                     .entries
                     .iter()
