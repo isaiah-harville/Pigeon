@@ -1,6 +1,7 @@
 use super::protocol::{
-    challenge_transcript, gate_group_message, registration_transcript, verify_challenge,
-    verify_registration, CapabilityWire, GroupClientMsg, GroupProtocolGate, GroupServerMsg,
+    challenge_transcript, gate_group_message, registration_transcript, verify_admission_solution,
+    verify_challenge, verify_registration, CapabilityWire, GroupClientMsg, GroupProtocolGate,
+    GroupServerMsg,
 };
 use super::store::{
     CapabilityRegistration, Config, GroupCapability, GroupRegistration, Store, StoreError,
@@ -18,6 +19,7 @@ use crate::durable::{
 fn config() -> Config {
     Config {
         ttl_secs: 60,
+        lease_secs: 60,
         max_groups: 4,
         max_capabilities_per_group: 128,
         max_entry_bytes: 1024,
@@ -38,6 +40,39 @@ fn registration_admission_limits_one_window_and_recovers_next_window() {
 }
 
 #[test]
+fn admission_work_is_bound_to_challenge_and_registration() {
+    let registration = registration(3);
+    let transcript = registration_transcript(
+        registration.coordination_id,
+        registration.authorization_generation,
+        registration.permanent_controller_public_key,
+        &registration.capabilities,
+    );
+    let challenge = [7_u8; 32];
+    let solution = (0_u64..)
+        .find(|nonce| verify_admission_solution(&challenge, &transcript, &nonce.to_be_bytes(), 12))
+        .unwrap()
+        .to_be_bytes();
+    assert!(verify_admission_solution(
+        &challenge,
+        &transcript,
+        &solution,
+        12
+    ));
+    assert!(!verify_admission_solution(
+        &[8; 32],
+        &transcript,
+        &solution,
+        12
+    ));
+    let mut other = transcript.clone();
+    other.push(1);
+    assert!(!verify_admission_solution(
+        &challenge, &other, &solution, 12
+    ));
+}
+
+#[test]
 fn socket_registration_attempts_are_bounded() {
     let mut attempts = RegistrationAttempts::default();
     for _ in 0..8 {
@@ -53,6 +88,144 @@ fn existing_registration_is_visible_to_admission_check() {
     assert!(!store.contains_group(&registration.coordination_id));
     store.register(registration.clone()).unwrap();
     assert!(store.contains_group(&registration.coordination_id));
+}
+
+#[test]
+fn owner_only_registration_can_submit_first_epoch_zero_commit() {
+    let mut groups = Store::bounded(config());
+    let group = groups.register(registration(1)).unwrap();
+    assert!(groups.can_append(&group.writer(0)));
+    let mut coordinator = crate::coordinator::store::Store::new(
+        crate::coordinator::store::Config {
+            max_logs: 1,
+            max_candidates_per_log: 4,
+            max_candidates_per_epoch: 4,
+            max_candidates_per_capability_per_epoch: 4,
+            max_candidate_bytes: 128,
+            max_total_bytes: 1024,
+            max_fetch_batch_bytes: 1024,
+            ttl_secs: 60,
+        },
+        SigningKey::from_bytes(&[77; 32]),
+    );
+    let receipt = coordinator
+        .submit(
+            *group.id(),
+            group.writer(0).capability_id,
+            0,
+            b"first".to_vec(),
+            1,
+        )
+        .unwrap();
+    assert_eq!(receipt.claimed_base_epoch, 0);
+}
+
+#[test]
+fn inactive_group_reactivates_without_resetting_authorization_or_sequence() {
+    let directory = tempdir().unwrap();
+    let mut limits = config();
+    limits.max_groups = 1;
+    limits.lease_secs = 5;
+    limits.ttl_secs = 60;
+    let mut store = Store::durable(
+        limits.clone(),
+        GroupJournal::open(directory.path()).unwrap(),
+        1,
+    )
+    .unwrap();
+    let first = registration(3);
+    let group = store.register_at(first.clone(), 1).unwrap();
+    store.append(&group.writer(0), vec![1], 2).unwrap();
+    store.expire_at(8);
+    assert!(!store.groups_active_for_test(&first.coordination_id));
+    assert_eq!(store.total_bytes(), 1);
+    assert!(store.contains_group(&first.coordination_id));
+    assert!(store.register_at(first.clone(), 8).is_ok());
+    let mut stale = first.clone();
+    stale.capabilities[1].capability_id = [44; 32];
+    assert_eq!(
+        store.register_at(stale, 8),
+        Err(StoreError::AlreadyRegistered)
+    );
+    let mut second = registration(3);
+    second.coordination_id = [8; 32];
+    store.register_at(second, 8).unwrap();
+    assert_eq!(
+        store.activate(&group.reader(1), 8),
+        Err(StoreError::AtCapacity)
+    );
+    drop(store);
+    let mut store =
+        Store::durable(limits, GroupJournal::open(directory.path()).unwrap(), 14).unwrap();
+    let reader = store
+        .resolve_capability(first.coordination_id, group.reader(1).capability_id)
+        .unwrap();
+    store.activate(&reader, 14).unwrap();
+    assert_eq!(store.fetch(&reader, 0).unwrap()[0].ciphertext, vec![1]);
+    assert_eq!(
+        store
+            .append(&group.writer(0), vec![2], 15)
+            .unwrap()
+            .sequence,
+        2
+    );
+}
+
+#[test]
+fn removed_capability_cannot_reactivate_inactive_group() {
+    let directory = tempdir().unwrap();
+    let mut limits = config();
+    limits.lease_secs = 5;
+    let mut store =
+        Store::durable(limits, GroupJournal::open(directory.path()).unwrap(), 1).unwrap();
+    let group = store.register_at(registration(3), 1).unwrap();
+    let removed = group.reader(2);
+    let retained = group.reader(1);
+    let mut replacements = registration(3).capabilities;
+    replacements[2].capability_id = [104; 32];
+    replacements[2].public_key = [4; 32];
+    store
+        .replace_capabilities(&group.writer(0), 0, 1, [1; 32], replacements)
+        .unwrap();
+    store.expire_at(7);
+    assert!(store
+        .resolve_capability(*group.id(), removed.capability_id)
+        .is_none());
+    assert_eq!(store.activate(&removed, 7), Err(StoreError::Unauthorized));
+    store.activate(&retained, 7).unwrap();
+    assert_eq!(
+        store.append(&group.writer(0), vec![7], 8).unwrap().sequence,
+        1
+    );
+}
+
+#[test]
+fn inactive_ciphertext_still_counts_toward_byte_quota_after_restart() {
+    let directory = tempdir().unwrap();
+    let mut limits = config();
+    limits.lease_secs = 5;
+    limits.ttl_secs = 60;
+    limits.max_total_bytes = 1;
+    let mut store = Store::durable(
+        limits.clone(),
+        GroupJournal::open(directory.path()).unwrap(),
+        1,
+    )
+    .unwrap();
+    let first = store.register_at(registration(3), 1).unwrap();
+    store.append(&first.writer(0), vec![1], 2).unwrap();
+    store.expire_at(8);
+    drop(store);
+    let mut store =
+        Store::durable(limits, GroupJournal::open(directory.path()).unwrap(), 8).unwrap();
+    assert_eq!(store.total_bytes(), 1);
+    let mut second = registration(3);
+    second.coordination_id = [8; 32];
+    let second = store.register_at(second, 8).unwrap();
+    assert_eq!(
+        store.append(&second.writer(0), vec![2], 8),
+        Err(StoreError::AtCapacity)
+    );
 }
 
 fn registration(readers: usize) -> GroupRegistration {
@@ -314,6 +487,12 @@ fn durable_expired_id_rejects_a_new_controller_after_restart() {
         restored.register(takeover),
         Err(StoreError::AlreadyRegistered)
     );
+    let mut changed = registration(3);
+    changed.authorization_generation = 1;
+    assert_eq!(
+        restored.register(changed),
+        Err(StoreError::AlreadyRegistered)
+    );
 }
 
 #[test]
@@ -457,12 +636,12 @@ fn group_protocol_requires_current_version_negotiation() {
         gate_group_message(
             GroupClientMsg::Hello {
                 min_protocol_version: 1,
-                max_protocol_version: 6,
+                max_protocol_version: 7,
             },
             &mut negotiated
         ),
         GroupProtocolGate::Reply(GroupServerMsg::Compatible {
-            protocol_version: 6,
+            protocol_version: 7,
             ..
         })
     ));

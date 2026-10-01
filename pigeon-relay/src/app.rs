@@ -22,6 +22,7 @@ pub const SUBSCRIBER_CHANNEL_CAPACITY: usize = 256;
 pub struct AppState {
     pub(crate) mailbox: mailbox::Service,
     pub(crate) group: group::Service,
+    pub(crate) group_admission_difficulty: u8,
     pub(crate) coordinator: coordinator::Service,
     pub(crate) push: Arc<PushRegistry>,
     pub(crate) connection_ids: Arc<AtomicU64>,
@@ -43,6 +44,7 @@ pub fn build_state(config: RelayConfig) -> Result<AppState, DurableError> {
     Ok(AppState {
         mailbox: mailbox::Service::new(config.mailbox),
         group: group::Service::durable(config.group, group_journal, now())?,
+        group_admission_difficulty: config.group_admission_difficulty,
         coordinator: coordinator::Service::durable(
             config.coordinator,
             signer,
@@ -121,6 +123,7 @@ mod tests {
             },
             group: group::store::Config {
                 ttl_secs: 60,
+                lease_secs: 60,
                 max_groups: 8,
                 max_capabilities_per_group: 128,
                 max_entry_bytes: 256,
@@ -128,6 +131,7 @@ mod tests {
                 max_total_bytes: 1024,
                 max_fetch_batch_bytes: 512,
             },
+            group_admission_difficulty: 18,
             coordinator: coordinator::store::Config {
                 max_logs: 8,
                 max_candidates_per_log: 8,

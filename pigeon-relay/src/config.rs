@@ -18,6 +18,7 @@ pub struct RelayConfig {
     pub bind_addr: String,
     pub mailbox: MailboxConfig,
     pub group: GroupConfig,
+    pub group_admission_difficulty: u8,
     pub coordinator: CoordinatorConfig,
     pub apns_min_interval: Duration,
     pub coordinator_signing_seed: Option<[u8; 32]>,
@@ -101,6 +102,7 @@ impl RelayConfig {
         };
         let group = GroupConfig {
             ttl_secs: parse_u64(&mut lookup, "PIGEON_GROUP_TTL_SECS", DEFAULT_TTL_SECS)?,
+            lease_secs: parse_u64(&mut lookup, "PIGEON_GROUP_LEASE_SECS", DEFAULT_TTL_SECS)?,
             max_groups: parse_usize(&mut lookup, "PIGEON_GROUP_MAX_GROUPS", 10_000)?,
             max_capabilities_per_group: parse_usize(
                 &mut lookup,
@@ -120,6 +122,15 @@ impl RelayConfig {
                 4 * 1024 * 1024,
             )?,
         };
+        let group_admission_difficulty =
+            parse_u64(&mut lookup, "PIGEON_GROUP_ADMISSION_DIFFICULTY_BITS", 18)?;
+        if group_admission_difficulty > 28 {
+            return Err(ConfigError::new(
+                "PIGEON_GROUP_ADMISSION_DIFFICULTY_BITS",
+                "must be at most 28",
+            ));
+        }
+        let group_admission_difficulty = group_admission_difficulty as u8;
         validate_fetched_item_limit("PIGEON_GROUP_MAX_ENTRY_BYTES", group.max_entry_bytes)?;
         validate_not_larger(
             "PIGEON_GROUP_MAX_ENTRY_BYTES",
@@ -206,6 +217,7 @@ impl RelayConfig {
             bind_addr,
             mailbox,
             group,
+            group_admission_difficulty,
             coordinator,
             apns_min_interval,
             coordinator_signing_seed,
@@ -279,6 +291,8 @@ mod tests {
         assert_eq!(config.bind_addr, "0.0.0.0:8080");
         assert_eq!(config.mailbox.ttl_secs, 30 * 24 * 3600);
         assert_eq!(config.group.max_capabilities_per_group, 128);
+        assert_eq!(config.group.lease_secs, 30 * 24 * 3600);
+        assert_eq!(config.group_admission_difficulty, 18);
     }
 
     #[test]
@@ -297,6 +311,20 @@ mod tests {
         })
         .unwrap_err();
         assert_eq!(error.variable(), "PIGEON_GROUP_MAX_GROUPS");
+    }
+
+    #[test]
+    fn invalid_group_admission_and_lease_settings_are_rejected() {
+        for (variable, value) in [
+            ("PIGEON_GROUP_ADMISSION_DIFFICULTY_BITS", "0"),
+            ("PIGEON_GROUP_ADMISSION_DIFFICULTY_BITS", "29"),
+            ("PIGEON_GROUP_LEASE_SECS", "0"),
+        ] {
+            let error =
+                RelayConfig::from_lookup(|key| (key == variable).then(|| value.to_string()))
+                    .unwrap_err();
+            assert_eq!(error.variable(), variable);
+        }
     }
 
     #[test]

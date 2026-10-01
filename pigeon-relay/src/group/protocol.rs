@@ -7,14 +7,16 @@ use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::coordinator::protocol::{CandidateWire, ReceiptWire};
 use crate::group::store::{CapabilityRegistration, GroupCapability, GroupRegistration, StoreError};
 
-pub const GROUP_PROTOCOL_VERSION: u32 = 6;
+pub const GROUP_PROTOCOL_VERSION: u32 = 7;
 pub const MAX_GROUP_FRAME_BYTES: usize = 2 * 1024 * 1024;
 pub const GROUP_REGISTRATION_DOMAIN: &[u8] = b"pigeon.relay.group.registration.v2";
 pub const GROUP_CHALLENGE_DOMAIN: &[u8] = b"pigeon.relay.group.challenge.v2";
+pub const GROUP_ADMISSION_DOMAIN: &[u8] = b"pigeon.relay.group.admission.v1";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CapabilityWire {
@@ -38,6 +40,7 @@ pub enum GroupClientMsg {
         permanent_controller_public_key: String,
         capabilities: Vec<CapabilityWire>,
         signature: String,
+        admission_solution: Option<String>,
     },
     Authenticate {
         coordination_id: String,
@@ -93,6 +96,10 @@ pub enum GroupServerMsg {
     },
     Challenge {
         nonce: String,
+    },
+    RegistrationChallenge {
+        nonce: String,
+        difficulty: u8,
     },
     Registered,
     Appended {
@@ -236,6 +243,25 @@ pub fn registration_transcript(
         transcript.push(capability.can_control.into());
     }
     transcript
+}
+
+pub fn verify_admission_solution(
+    challenge: &[u8; 32],
+    registration_transcript: &[u8],
+    solution: &[u8; 8],
+    difficulty: u8,
+) -> bool {
+    let registration_hash = Sha256::digest(registration_transcript);
+    let mut hash = Sha256::new();
+    hash.update(GROUP_ADMISSION_DOMAIN);
+    hash.update(challenge);
+    hash.update(registration_hash);
+    hash.update(solution);
+    let digest = hash.finalize();
+    let full_bytes = usize::from(difficulty / 8);
+    let remaining_bits = difficulty % 8;
+    digest[..full_bytes].iter().all(|byte| *byte == 0)
+        && (remaining_bits == 0 || digest[full_bytes] >> (8 - remaining_bits) == 0)
 }
 
 pub fn challenge_transcript(capability: &GroupCapability, nonce: &[u8; 32]) -> Vec<u8> {

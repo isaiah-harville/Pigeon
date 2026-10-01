@@ -14,7 +14,10 @@ use serde_json::{json, Value};
 
 use crate::app::{self, AppState};
 use crate::config::RelayConfig;
-use crate::group::protocol::{challenge_transcript, GROUP_PROTOCOL_VERSION};
+use crate::group::protocol::{
+    challenge_transcript, registration_transcript, verify_admission_solution,
+    GROUP_PROTOCOL_VERSION,
+};
 use crate::group::store::{CapabilityRegistration, GroupRegistration};
 
 const GROUP_ID: [u8; 32] = [42; 32];
@@ -81,6 +84,68 @@ async fn start(state: AppState) -> (SocketAddr, tokio::task::JoinHandle<()>) {
         axum::serve(listener, app::router(state)).await.unwrap();
     });
     (address, task)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn new_registration_requires_bound_work_and_reused_solution_fails() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut settings = config(&directory);
+    settings.group_admission_difficulty = 8;
+    let state = app::build_state(settings).unwrap();
+    let keys = keys();
+    let capabilities = keys
+        .iter()
+        .enumerate()
+        .map(|(index, key)| capability(index, key))
+        .collect::<Vec<_>>();
+    let transcript = registration_transcript(
+        GROUP_ID,
+        0,
+        keys[0].verifying_key().to_bytes(),
+        &capabilities,
+    );
+    let wires = capabilities.iter().map(|entry| json!({
+        "capability_id": hex::encode(entry.capability_id), "public_key": hex::encode(entry.public_key),
+        "can_append": entry.can_append, "can_read": entry.can_read, "can_control": entry.can_control,
+    })).collect::<Vec<_>>();
+    let registration = json!({"type":"register", "coordination_id":hex::encode(GROUP_ID),
+        "authorization_generation":0, "permanent_controller_public_key":hex::encode(keys[0].verifying_key().to_bytes()),
+        "capabilities":wires, "signature":B64.encode(keys[0].sign(&transcript).to_bytes())});
+    let (address, server) = start(state.clone()).await;
+    let mut socket = Socket::connect(address);
+    socket.send(registration.clone());
+    let challenge = socket.receive();
+    assert_eq!(challenge["type"], "registration_challenge");
+    let nonce: [u8; 32] = B64
+        .decode(challenge["nonce"].as_str().unwrap())
+        .unwrap()
+        .try_into()
+        .unwrap();
+    let solution = (0_u64..)
+        .find(|value| verify_admission_solution(&nonce, &transcript, &value.to_be_bytes(), 8))
+        .unwrap()
+        .to_be_bytes();
+    let mut wrong = registration.clone();
+    wrong["admission_solution"] = json!(B64.encode([0_u8; 7]));
+    socket.send(wrong);
+    assert_eq!(socket.receive()["type"], "error");
+    let mut solved = registration;
+    solved["admission_solution"] = json!(B64.encode(solution));
+    socket.send(solved.clone());
+    assert_eq!(socket.receive()["type"], "registered");
+    assert!(state.group.store.lock().unwrap().contains_group(&GROUP_ID));
+    let mut another = solved;
+    another["coordination_id"] = json!(hex::encode([99_u8; 32]));
+    let another_transcript = registration_transcript(
+        [99_u8; 32],
+        0,
+        keys[0].verifying_key().to_bytes(),
+        &capabilities,
+    );
+    another["signature"] = json!(B64.encode(keys[0].sign(&another_transcript).to_bytes()));
+    socket.send(another);
+    assert_eq!(socket.receive()["type"], "error");
+    server.abort();
 }
 
 struct Socket(TcpStream);

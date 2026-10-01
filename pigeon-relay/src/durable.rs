@@ -30,7 +30,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 pub const GROUP_DATABASE: &str = "groups.sqlite3";
 pub const COORDINATOR_DATABASE: &str = "coordinator.sqlite3";
 
-const GROUP_SCHEMA_VERSION: i64 = 4;
+const GROUP_SCHEMA_VERSION: i64 = 5;
 const COORDINATOR_SCHEMA_VERSION: i64 = 1;
 const COORDINATOR_KEY: &str = "coordinator_public_key";
 
@@ -42,7 +42,9 @@ const GROUP_SCHEMA: &str = "
         next_sequence INTEGER NOT NULL,
         revoked_at INTEGER,
         registered_at INTEGER NOT NULL,
-        coordinator_active INTEGER NOT NULL
+        coordinator_active INTEGER NOT NULL,
+        last_activity_at INTEGER NOT NULL,
+        inactive INTEGER NOT NULL DEFAULT 0
     ) WITHOUT ROWID;
     CREATE TABLE capabilities (
         coordination_id BLOB NOT NULL
@@ -228,6 +230,7 @@ pub struct GroupRecord {
     pub next_sequence: u64,
     pub revoked_at: Option<u64>,
     pub registered_at: u64,
+    pub last_activity_at: u64,
     pub coordinator_active: bool,
     pub capabilities: Vec<CapabilityRecord>,
     pub entries: Vec<EntryRecord>,
@@ -241,6 +244,7 @@ pub struct GroupAuthorization<'a> {
     pub next_sequence: u64,
     pub revoked_at: Option<u64>,
     pub registered_at: u64,
+    pub last_activity_at: u64,
     pub coordinator_active: bool,
     pub capabilities: &'a [CapabilityRecord],
     /// Entries below this sequence were dropped from memory.
@@ -288,7 +292,18 @@ impl GroupJournal {
                     terminal INTEGER NOT NULL
                 ) WITHOUT ROWID;",
             )?;
-            transaction.pragma_update(None, "user_version", GROUP_SCHEMA_VERSION)?;
+            transaction.pragma_update(None, "user_version", 4)?;
+            transaction.commit()?;
+        }
+        let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if version == 4 {
+            let transaction = connection.transaction()?;
+            transaction.execute_batch(
+                "ALTER TABLE groups ADD COLUMN last_activity_at INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE groups ADD COLUMN inactive INTEGER NOT NULL DEFAULT 0;
+                 UPDATE groups SET last_activity_at = unixepoch();",
+            )?;
+            transaction.pragma_update(None, "user_version", 5)?;
             transaction.commit()?;
         }
         migrate(&mut connection, GROUP_SCHEMA, GROUP_SCHEMA_VERSION)?;
@@ -299,12 +314,10 @@ impl GroupJournal {
         let mut groups = Vec::new();
         let mut statement = self.connection.prepare(
             "SELECT coordination_id, permanent_controller_public_key, authorization_generation,
-                    next_sequence, revoked_at, registered_at, coordinator_active
+                    next_sequence, revoked_at, registered_at, coordinator_active, last_activity_at
              FROM groups
-             WHERE (revoked_at IS NULL OR revoked_at >= ?1)
-               AND NOT (revoked_at IS NULL AND next_sequence = 1
-                        AND authorization_generation = 0 AND coordinator_active = 0
-                        AND registered_at < ?1)
+             WHERE inactive = 0
+               AND (revoked_at IS NULL OR revoked_at >= ?1)
              ORDER BY coordination_id",
         )?;
         let mut rows = statement.query(params![to_sql(cutoff)])?;
@@ -317,41 +330,196 @@ impl GroupJournal {
                 revoked_at: row.get::<_, Option<i64>>(4)?.map(from_sql),
                 registered_at: from_sql(row.get(5)?),
                 coordinator_active: row.get(6)?,
+                last_activity_at: from_sql(row.get(7)?),
                 capabilities: Vec::new(),
                 entries: Vec::new(),
             });
         }
         for group in &mut groups {
-            let mut capabilities = self.connection.prepare_cached(
-                "SELECT capability_id, public_key, can_append, can_read, can_control, cursor
-                 FROM capabilities WHERE coordination_id = ?1",
-            )?;
-            let mut rows = capabilities.query(params![group.coordination_id.as_slice()])?;
-            while let Some(row) = rows.next()? {
-                group.capabilities.push(CapabilityRecord {
-                    capability_id: fixed(row.get(0)?, "capability id")?,
-                    public_key: fixed(row.get(1)?, "capability key")?,
-                    can_append: row.get(2)?,
-                    can_read: row.get(3)?,
-                    can_control: row.get(4)?,
-                    cursor: from_sql(row.get(5)?),
-                });
-            }
-            let mut entries = self.connection.prepare_cached(
-                "SELECT sequence, ciphertext, timestamp FROM entries
-                 WHERE coordination_id = ?1 AND timestamp >= ?2 ORDER BY sequence",
-            )?;
-            let mut rows =
-                entries.query(params![group.coordination_id.as_slice(), to_sql(cutoff)])?;
-            while let Some(row) = rows.next()? {
-                group.entries.push(EntryRecord {
-                    sequence: from_sql(row.get(0)?),
-                    ciphertext: row.get(1)?,
-                    timestamp: from_sql(row.get(2)?),
-                });
-            }
+            self.load_group_contents(group, cutoff)?;
         }
         Ok(groups)
+    }
+
+    fn load_group_contents(
+        &self,
+        group: &mut GroupRecord,
+        cutoff: u64,
+    ) -> Result<(), DurableError> {
+        let mut capabilities = self.connection.prepare_cached(
+            "SELECT capability_id, public_key, can_append, can_read, can_control, cursor
+                 FROM capabilities WHERE coordination_id = ?1",
+        )?;
+        let mut rows = capabilities.query(params![group.coordination_id.as_slice()])?;
+        while let Some(row) = rows.next()? {
+            group.capabilities.push(CapabilityRecord {
+                capability_id: fixed(row.get(0)?, "capability id")?,
+                public_key: fixed(row.get(1)?, "capability key")?,
+                can_append: row.get(2)?,
+                can_read: row.get(3)?,
+                can_control: row.get(4)?,
+                cursor: from_sql(row.get(5)?),
+            });
+        }
+        let mut entries = self.connection.prepare_cached(
+            "SELECT sequence, ciphertext, timestamp FROM entries
+                 WHERE coordination_id = ?1 AND timestamp >= ?2 ORDER BY sequence",
+        )?;
+        let mut rows = entries.query(params![group.coordination_id.as_slice(), to_sql(cutoff)])?;
+        while let Some(row) = rows.next()? {
+            group.entries.push(EntryRecord {
+                sequence: from_sql(row.get(0)?),
+                ciphertext: row.get(1)?,
+                timestamp: from_sql(row.get(2)?),
+            });
+        }
+        Ok(())
+    }
+
+    pub fn contains_group(&self, coordination_id: &[u8; 32]) -> Result<bool, DurableError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT 1 FROM groups WHERE coordination_id = ?1",
+                params![coordination_id.as_slice()],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    pub fn inactive_ciphertext_bytes(&self) -> Result<usize, DurableError> {
+        let bytes: i64 = self.connection.query_row(
+            "SELECT COALESCE(SUM(LENGTH(e.ciphertext)), 0) FROM entries e
+             JOIN groups g USING (coordination_id) WHERE g.inactive = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        usize::try_from(bytes)
+            .map_err(|_| DurableError::Corrupt("invalid inactive ciphertext bytes"))
+    }
+
+    pub fn inactive_capability(
+        &self,
+        coordination_id: &[u8; 32],
+        capability_id: &[u8; 32],
+    ) -> Result<Option<[u8; 32]>, DurableError> {
+        let key: Option<Vec<u8>> = self
+            .connection
+            .query_row(
+                "SELECT c.public_key FROM capabilities c JOIN groups g USING (coordination_id)
+             WHERE c.coordination_id = ?1 AND c.capability_id = ?2
+               AND g.inactive = 1 AND g.revoked_at IS NULL",
+                params![coordination_id.as_slice(), capability_id.as_slice()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        key.map(|bytes| fixed(bytes, "inactive capability key"))
+            .transpose()
+    }
+
+    pub fn inactive_group(
+        &self,
+        coordination_id: &[u8; 32],
+    ) -> Result<Option<GroupRecord>, DurableError> {
+        let mut group = self
+            .connection
+            .query_row(
+                "SELECT coordination_id, permanent_controller_public_key, authorization_generation,
+                    next_sequence, revoked_at, registered_at, coordinator_active, last_activity_at
+             FROM groups WHERE coordination_id = ?1 AND inactive = 1",
+                params![coordination_id.as_slice()],
+                |row| {
+                    Ok(GroupRecord {
+                        coordination_id: row
+                            .get::<_, Vec<u8>>(0)?
+                            .try_into()
+                            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                        permanent_controller_public_key: row
+                            .get::<_, Vec<u8>>(1)?
+                            .try_into()
+                            .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                        authorization_generation: from_sql(row.get(2)?),
+                        next_sequence: from_sql(row.get(3)?),
+                        revoked_at: row.get::<_, Option<i64>>(4)?.map(from_sql),
+                        registered_at: from_sql(row.get(5)?),
+                        coordinator_active: row.get(6)?,
+                        last_activity_at: from_sql(row.get(7)?),
+                        capabilities: Vec::new(),
+                        entries: Vec::new(),
+                    })
+                },
+            )
+            .optional()?;
+        if let Some(group) = group.as_mut() {
+            self.load_group_contents(group, u64::MAX)?;
+        }
+        Ok(group)
+    }
+
+    pub fn reactivate(
+        &mut self,
+        coordination_id: &[u8; 32],
+        now: u64,
+        cutoff: u64,
+    ) -> Result<GroupRecord, DurableError> {
+        let transaction = self.connection.transaction()?;
+        let changed = transaction.execute(
+            "UPDATE groups SET inactive = 0, last_activity_at = ?2
+             WHERE coordination_id = ?1 AND inactive = 1 AND revoked_at IS NULL",
+            params![coordination_id.as_slice(), to_sql(now)],
+        )?;
+        if changed != 1 {
+            return Err(DurableError::Corrupt("inactive group disappeared"));
+        }
+        transaction.commit()?;
+        let mut group = self.connection.query_row(
+            "SELECT coordination_id, permanent_controller_public_key, authorization_generation,
+                    next_sequence, revoked_at, registered_at, coordinator_active, last_activity_at
+             FROM groups WHERE coordination_id = ?1",
+            params![coordination_id.as_slice()],
+            |row| {
+                Ok(GroupRecord {
+                    coordination_id: row
+                        .get::<_, Vec<u8>>(0)?
+                        .try_into()
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                    permanent_controller_public_key: row
+                        .get::<_, Vec<u8>>(1)?
+                        .try_into()
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                    authorization_generation: from_sql(row.get(2)?),
+                    next_sequence: from_sql(row.get(3)?),
+                    revoked_at: row.get::<_, Option<i64>>(4)?.map(from_sql),
+                    registered_at: from_sql(row.get(5)?),
+                    coordinator_active: row.get(6)?,
+                    last_activity_at: from_sql(row.get(7)?),
+                    capabilities: Vec::new(),
+                    entries: Vec::new(),
+                })
+            },
+        )?;
+        self.load_group_contents(&mut group, cutoff)?;
+        Ok(group)
+    }
+
+    pub fn mark_inactive(&mut self, coordination_id: &[u8; 32]) -> Result<(), DurableError> {
+        let changed = self.connection.execute(
+            "UPDATE groups SET inactive = 1 WHERE coordination_id = ?1 AND inactive = 0",
+            params![coordination_id.as_slice()],
+        )?;
+        if changed != 1 {
+            return Err(DurableError::Corrupt("active group disappeared"));
+        }
+        Ok(())
+    }
+
+    pub fn touch(&mut self, coordination_id: &[u8; 32], now: u64) -> Result<(), DurableError> {
+        self.connection.execute(
+            "UPDATE groups SET last_activity_at = ?2 WHERE coordination_id = ?1",
+            params![coordination_id.as_slice(), to_sql(now)],
+        )?;
+        Ok(())
     }
 
     pub fn retired_controller(
@@ -384,15 +552,17 @@ impl GroupJournal {
         transaction.execute(
             "INSERT INTO groups (coordination_id, permanent_controller_public_key,
                                  authorization_generation, next_sequence, revoked_at,
-                                 registered_at, coordinator_active)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                                 registered_at, coordinator_active, last_activity_at, inactive)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)
              ON CONFLICT (coordination_id) DO UPDATE SET
                  permanent_controller_public_key = excluded.permanent_controller_public_key,
                  authorization_generation = excluded.authorization_generation,
                  next_sequence = excluded.next_sequence,
                  revoked_at = excluded.revoked_at,
                  registered_at = excluded.registered_at,
-                 coordinator_active = excluded.coordinator_active",
+                 coordinator_active = excluded.coordinator_active,
+                 last_activity_at = excluded.last_activity_at,
+                 inactive = 0",
             params![
                 coordination_id.as_slice(),
                 group.permanent_controller_public_key.as_slice(),
@@ -401,6 +571,7 @@ impl GroupJournal {
                 group.revoked_at.map(to_sql),
                 to_sql(group.registered_at),
                 group.coordinator_active,
+                to_sql(group.last_activity_at),
             ],
         )?;
         transaction.execute(
@@ -446,8 +617,8 @@ impl GroupJournal {
     ) -> Result<(), DurableError> {
         let transaction = self.connection.transaction()?;
         transaction.execute(
-            "UPDATE groups SET next_sequence = ?2 WHERE coordination_id = ?1",
-            params![coordination_id.as_slice(), to_sql(next_sequence)],
+            "UPDATE groups SET next_sequence = ?2, last_activity_at = ?3 WHERE coordination_id = ?1",
+            params![coordination_id.as_slice(), to_sql(next_sequence), to_sql(timestamp)],
         )?;
         transaction.execute(
             "INSERT INTO entries (coordination_id, sequence, ciphertext, timestamp)
@@ -476,20 +647,11 @@ impl GroupJournal {
              (coordination_id, permanent_controller_public_key, terminal)
              SELECT coordination_id, permanent_controller_public_key,
                     revoked_at IS NOT NULL FROM groups
-             WHERE (revoked_at IS NOT NULL AND revoked_at < ?1)
-                OR (revoked_at IS NULL AND next_sequence = 1
-                    AND authorization_generation = 0 AND coordinator_active = 0
-                    AND registered_at < ?1)",
+             WHERE revoked_at IS NOT NULL AND revoked_at < ?1",
             params![to_sql(cutoff)],
         )?;
         transaction.execute(
             "DELETE FROM groups WHERE revoked_at IS NOT NULL AND revoked_at < ?1",
-            params![to_sql(cutoff)],
-        )?;
-        transaction.execute(
-            "DELETE FROM groups WHERE revoked_at IS NULL AND next_sequence = 1
-             AND authorization_generation = 0 AND coordinator_active = 0
-             AND registered_at < ?1",
             params![to_sql(cutoff)],
         )?;
         transaction.commit()?;
@@ -723,7 +885,7 @@ mod tests {
         let path = directory.path().join(GROUP_DATABASE);
         let connection = Connection::open(&path).unwrap();
         let legacy_schema = GROUP_SCHEMA.replace(
-            ",\n        registered_at INTEGER NOT NULL,\n        coordinator_active INTEGER NOT NULL",
+            ",\n        registered_at INTEGER NOT NULL,\n        coordinator_active INTEGER NOT NULL,\n        last_activity_at INTEGER NOT NULL,\n        inactive INTEGER NOT NULL DEFAULT 0",
             "",
         );
         let legacy_schema = legacy_schema.replace(
@@ -743,14 +905,16 @@ mod tests {
 
         GroupJournal::open(directory.path()).unwrap();
         let connection = Connection::open(&path).unwrap();
-        let (registered_at, coordinator_active): (i64, bool) = connection
+        let (registered_at, coordinator_active, last_activity_at, inactive): (i64, bool, i64, bool) = connection
             .query_row(
-                "SELECT registered_at, coordinator_active FROM groups WHERE coordination_id = ?1",
+                "SELECT registered_at, coordinator_active, last_activity_at, inactive FROM groups WHERE coordination_id = ?1",
                 params![[9_u8; 32].as_slice()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .unwrap();
         assert!(registered_at > 0);
         assert!(coordinator_active);
+        assert!(last_activity_at > 0);
+        assert!(!inactive);
     }
 }

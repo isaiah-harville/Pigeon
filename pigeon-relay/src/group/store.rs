@@ -15,6 +15,7 @@ pub const CAPABILITY_KEY_BYTES: usize = 32;
 #[derive(Clone, Debug)]
 pub struct Config {
     pub ttl_secs: u64,
+    pub lease_secs: u64,
     pub max_groups: usize,
     pub max_capabilities_per_group: usize,
     pub max_entry_bytes: usize,
@@ -121,6 +122,7 @@ struct StoredGroup {
     next_sequence: u64,
     revoked_at: Option<u64>,
     registered_at: u64,
+    last_activity_at: u64,
     coordinator_active: bool,
 }
 
@@ -193,9 +195,14 @@ impl Store {
     /// Restores every group from `journal` and writes through all later
     /// mutations. Expiry and cursor garbage collection are re-applied, since the
     /// journal applies them lazily.
-    pub fn durable(config: Config, journal: GroupJournal, now: u64) -> Result<Self, DurableError> {
+    pub fn durable(
+        config: Config,
+        mut journal: GroupJournal,
+        now: u64,
+    ) -> Result<Self, DurableError> {
         let cutoff = now.saturating_sub(config.ttl_secs);
         let mut store = Self::bounded(config);
+        journal.expire(cutoff)?;
         let records = journal.load(cutoff)?;
         if records.len() > store.config.max_groups {
             return Err(DurableError::Corrupt(
@@ -243,6 +250,7 @@ impl Store {
                     next_sequence: record.next_sequence,
                     revoked_at: record.revoked_at,
                     registered_at: record.registered_at,
+                    last_activity_at: record.last_activity_at,
                     coordinator_active: record.coordinator_active,
                 },
             );
@@ -253,6 +261,14 @@ impl Store {
             .map(StoredGroup::collect_garbage)
             .sum::<usize>();
         store.total_bytes = store.total_bytes.saturating_sub(freed);
+        store.total_bytes = store
+            .total_bytes
+            .saturating_add(journal.inactive_ciphertext_bytes()?);
+        if store.total_bytes > store.config.max_total_bytes {
+            return Err(DurableError::Corrupt(
+                "group ciphertext bytes exceed configured limit",
+            ));
+        }
         store.journal = Some(journal);
         store.expire_at(now);
         Ok(store)
@@ -285,6 +301,7 @@ impl Store {
             next_sequence: group.next_sequence,
             revoked_at: group.revoked_at,
             registered_at: group.registered_at,
+            last_activity_at: group.last_activity_at,
             coordinator_active: group.coordinator_active,
             capabilities: &capabilities,
             first_live_sequence: group
@@ -366,6 +383,35 @@ impl Store {
             }
             return Err(StoreError::AlreadyRegistered);
         }
+        if self.contains_group(&registration.coordination_id) {
+            if let Some(journal) = self.journal.as_ref() {
+                let inactive = journal
+                    .inactive_group(&registration.coordination_id)
+                    .unwrap_or_else(|error| fail_stop(error));
+                if inactive.is_some_and(|record| {
+                    record.revoked_at.is_none()
+                        && record.permanent_controller_public_key
+                            == registration.permanent_controller_public_key
+                        && record.authorization_generation == registration.authorization_generation
+                        && record.capabilities.len() == registration.capabilities.len()
+                        && registration.capabilities.iter().all(|candidate| {
+                            record.capabilities.iter().any(|saved| {
+                                candidate.capability_id == saved.capability_id
+                                    && candidate.public_key == saved.public_key
+                                    && candidate.can_append == saved.can_append
+                                    && candidate.can_read == saved.can_read
+                                    && candidate.can_control == saved.can_control
+                            })
+                        })
+                }) {
+                    return Ok(RegisteredGroup {
+                        coordination_id: registration.coordination_id,
+                        capabilities: registration.capabilities,
+                    });
+                }
+            }
+            return Err(StoreError::AlreadyRegistered);
+        }
         let retired_controller = if let Some(journal) = self.journal.as_ref() {
             journal
                 .retired_controller(&registration.coordination_id)
@@ -409,6 +455,7 @@ impl Store {
                 next_sequence: 1,
                 revoked_at: None,
                 registered_at: now,
+                last_activity_at: now,
                 coordinator_active: false,
             },
         );
@@ -472,6 +519,7 @@ impl Store {
             }
         }
         self.total_bytes += ciphertext.len();
+        group.last_activity_at = now;
         group.entries.push_back(GroupEntry {
             sequence,
             ciphertext,
@@ -663,9 +711,123 @@ impl Store {
                 capability_id,
                 public_key: state.public_key,
             })
+            .or_else(|| {
+                self.journal.as_ref().and_then(|journal| {
+                    journal
+                        .inactive_capability(&coordination_id, &capability_id)
+                        .unwrap_or_else(|error| fail_stop(error))
+                        .map(|public_key| GroupCapability {
+                            coordination_id,
+                            capability_id,
+                            public_key,
+                        })
+                })
+            })
     }
 
     pub fn contains_group(&self, coordination_id: &[u8; GROUP_ID_BYTES]) -> bool {
+        self.groups.contains_key(coordination_id)
+            || self.journal.as_ref().is_some_and(|journal| {
+                journal
+                    .contains_group(coordination_id)
+                    .unwrap_or_else(|error| fail_stop(error))
+            })
+    }
+
+    pub fn activate(&mut self, capability: &GroupCapability, now: u64) -> Result<(), StoreError> {
+        self.expire_at(now);
+        if let Some(group) = self.groups.get(&capability.coordination_id) {
+            return if group
+                .capabilities
+                .get(&capability.capability_id)
+                .is_some_and(|state| state.public_key == capability.public_key)
+            {
+                Ok(())
+            } else {
+                Err(StoreError::Unauthorized)
+            };
+        }
+        if self.groups.len() >= self.config.max_groups {
+            return Err(StoreError::AtCapacity);
+        }
+        let journal = self.journal.as_mut().ok_or(StoreError::Unauthorized)?;
+        let key = journal
+            .inactive_capability(&capability.coordination_id, &capability.capability_id)
+            .unwrap_or_else(|error| fail_stop(error));
+        if key != Some(capability.public_key) {
+            return Err(StoreError::Unauthorized);
+        }
+        let record = journal
+            .reactivate(
+                &capability.coordination_id,
+                now,
+                now.saturating_sub(self.config.ttl_secs),
+            )
+            .unwrap_or_else(|error| fail_stop(error));
+        let record_bytes = record
+            .entries
+            .iter()
+            .map(|entry| entry.ciphertext.len())
+            .sum::<usize>();
+        validate_record(
+            &record,
+            &self.config,
+            self.total_bytes.saturating_sub(record_bytes),
+        )
+        .unwrap_or_else(|error| fail_stop(error));
+        self.groups.insert(
+            record.coordination_id,
+            StoredGroup {
+                capabilities: record
+                    .capabilities
+                    .into_iter()
+                    .map(|state| {
+                        (
+                            state.capability_id,
+                            CapabilityState {
+                                public_key: state.public_key,
+                                can_append: state.can_append,
+                                can_read: state.can_read,
+                                can_control: state.can_control,
+                                cursor: state.cursor,
+                            },
+                        )
+                    })
+                    .collect(),
+                permanent_controller_public_key: record.permanent_controller_public_key,
+                authorization_generation: record.authorization_generation,
+                entries: record
+                    .entries
+                    .into_iter()
+                    .map(|entry| GroupEntry {
+                        sequence: entry.sequence,
+                        ciphertext: entry.ciphertext,
+                        timestamp: entry.timestamp,
+                    })
+                    .collect(),
+                next_sequence: record.next_sequence,
+                revoked_at: record.revoked_at,
+                registered_at: record.registered_at,
+                last_activity_at: record.last_activity_at,
+                coordinator_active: record.coordinator_active,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn touch(&mut self, coordination_id: [u8; GROUP_ID_BYTES], now: u64) {
+        if let Some(group) = self.groups.get_mut(&coordination_id) {
+            group.last_activity_at = now;
+            if let Some(journal) = self.journal.as_mut() {
+                journal
+                    .touch(&coordination_id, now)
+                    .unwrap_or_else(|error| fail_stop(error));
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub fn groups_active_for_test(&self, coordination_id: &[u8; GROUP_ID_BYTES]) -> bool {
         self.groups.contains_key(coordination_id)
     }
 
@@ -750,7 +912,8 @@ impl Store {
                     .is_some_and(|at| at < cutoff)
                     .then_some(*id)
                     .or_else(|| {
-                        (group.revoked_at.is_none()
+                        (self.journal.is_none()
+                            && group.revoked_at.is_none()
                             && group.next_sequence == 1
                             && group.authorization_generation == 0
                             && !group.coordinator_active
@@ -777,6 +940,36 @@ impl Store {
                     .sum::<usize>();
                 self.total_bytes = self.total_bytes.saturating_sub(freed);
             }
+        }
+        let inactive = self
+            .groups
+            .iter()
+            .filter_map(|(id, group)| {
+                (group.revoked_at.is_none()
+                    && now.saturating_sub(group.last_activity_at) > self.config.lease_secs)
+                    .then_some(*id)
+            })
+            .collect::<Vec<_>>();
+        for id in inactive {
+            if let Some(journal) = self.journal.as_mut() {
+                journal
+                    .mark_inactive(&id)
+                    .unwrap_or_else(|error| fail_stop(error));
+                self.groups.remove(&id);
+            }
+        }
+        if let Some(journal) = self.journal.as_ref() {
+            let active_bytes = self
+                .groups
+                .values()
+                .flat_map(|group| &group.entries)
+                .map(|entry| entry.ciphertext.len())
+                .sum::<usize>();
+            self.total_bytes = active_bytes.saturating_add(
+                journal
+                    .inactive_ciphertext_bytes()
+                    .unwrap_or_else(|error| fail_stop(error)),
+            );
         }
     }
 

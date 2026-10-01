@@ -14,12 +14,13 @@ use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use rand::RngCore;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 
 use super::protocol::{
     decode_capability, decode_group_capability, decode_public_key, gate_group_message,
-    verify_challenge, verify_registration, GroupClientMsg, GroupEntryWire, GroupProtocolGate,
-    GroupServerMsg, MAX_GROUP_FRAME_BYTES,
+    registration_transcript, verify_admission_solution, verify_challenge, verify_registration,
+    GroupClientMsg, GroupEntryWire, GroupProtocolGate, GroupServerMsg, MAX_GROUP_FRAME_BYTES,
 };
 use super::store::GroupCapability;
 use super::{RegistrationAttempts, Service, Subscriber};
@@ -34,6 +35,7 @@ pub struct ConnectionState {
     coordinator: coordinator::Service,
     push: Arc<PushRegistry>,
     connection_ids: Arc<AtomicU64>,
+    admission_difficulty: u8,
 }
 
 impl FromRef<AppState> for ConnectionState {
@@ -43,6 +45,7 @@ impl FromRef<AppState> for ConnectionState {
             coordinator: state.coordinator.clone(),
             push: state.push.clone(),
             connection_ids: state.connection_ids.clone(),
+            admission_difficulty: state.group_admission_difficulty,
         }
     }
 }
@@ -73,6 +76,7 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
     let mut pending: Option<(GroupCapability, [u8; 32])> = None;
     let mut authenticated: Option<GroupCapability> = None;
     let mut registration_attempts = RegistrationAttempts::default();
+    let mut registration_challenge: Option<([u8; 32], [u8; 32], u64)> = None;
 
     while let Some(Ok(message)) = socket_rx.next().await {
         let Message::Text(text) = message else {
@@ -99,6 +103,7 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
                 permanent_controller_public_key,
                 capabilities,
                 signature,
+                admission_solution,
             } => {
                 if !registration_attempts.admit() {
                     reply(&tx, generic_error());
@@ -112,6 +117,56 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
                     &signature,
                 )
                 .and_then(|registration| {
+                    let now = now();
+                    let existing = state
+                        .service
+                        .store
+                        .lock()
+                        .unwrap()
+                        .contains_group(&registration.coordination_id);
+                    if !existing {
+                        let transcript = registration_transcript(
+                            registration.coordination_id,
+                            registration.authorization_generation,
+                            registration.permanent_controller_public_key,
+                            &registration.capabilities,
+                        );
+                        let digest: [u8; 32] = Sha256::digest(&transcript).into();
+                        let verified = admission_solution
+                            .as_deref()
+                            .and_then(|encoded| B64.decode(encoded).ok())
+                            .and_then(|bytes| <[u8; 8]>::try_from(bytes).ok())
+                            .is_some_and(|solution| {
+                                registration_challenge.take().is_some_and(
+                                    |(nonce, expected_digest, issued_at)| {
+                                        expected_digest == digest
+                                            && now.saturating_sub(issued_at) < 60
+                                            && verify_admission_solution(
+                                                &nonce,
+                                                &transcript,
+                                                &solution,
+                                                state.admission_difficulty,
+                                            )
+                                    },
+                                )
+                            });
+                        if !verified {
+                            if admission_solution.is_some() {
+                                return Err(super::store::StoreError::Unauthorized);
+                            }
+                            let mut nonce = [0_u8; 32];
+                            rand::thread_rng().fill_bytes(&mut nonce);
+                            registration_challenge = Some((nonce, digest, now));
+                            reply(
+                                &tx,
+                                GroupServerMsg::RegistrationChallenge {
+                                    nonce: B64.encode(nonce),
+                                    difficulty: state.admission_difficulty,
+                                },
+                            );
+                            return Ok(None);
+                        }
+                    }
                     let mut store = state.service.store.lock().unwrap();
                     if !store.contains_group(&registration.coordination_id)
                         && !state
@@ -119,20 +174,18 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
                             .registration_admission
                             .lock()
                             .unwrap()
-                            .admit(now())
+                            .admit(now)
                     {
                         return Err(super::store::StoreError::AtCapacity);
                     }
-                    store.register_at(registration, now())
+                    store.register_at(registration, now).map(Some)
                 });
-                reply(
-                    &tx,
-                    if result.is_ok() {
-                        GroupServerMsg::Registered
-                    } else {
-                        generic_error()
-                    },
-                );
+                match result {
+                    Ok(Some(_)) => reply(&tx, GroupServerMsg::Registered),
+                    Ok(None) => {}
+                    Err(super::store::StoreError::AtCapacity) => reply(&tx, capacity_error()),
+                    Err(_) => reply(&tx, generic_error()),
+                }
             }
             GroupClientMsg::Authenticate {
                 coordination_id,
@@ -170,6 +223,21 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
                 if !verify_challenge(&capability, &nonce, &signature) {
                     reply(&tx, generic_error());
                     continue;
+                }
+                {
+                    let mut store = state.service.store.lock().unwrap();
+                    if let Err(error) = store.activate(&capability, now()) {
+                        reply(
+                            &tx,
+                            if error == super::store::StoreError::AtCapacity {
+                                capacity_error()
+                            } else {
+                                generic_error()
+                            },
+                        );
+                        continue;
+                    }
+                    store.touch(capability.coordination_id, now());
                 }
                 remove_subscriber(&state, authenticated.as_ref(), connection_id);
                 if state.service.store.lock().unwrap().can_read(&capability) {
@@ -437,6 +505,12 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
             }
             GroupClientMsg::Hello { .. } => unreachable!("hello handled by protocol gate"),
         }
+        if let Some(capability) = authenticated.as_ref() {
+            let mut store = state.service.store.lock().unwrap();
+            if store.can_read(capability) || store.can_append(capability) {
+                store.touch(capability.coordination_id, now());
+            }
+        }
     }
     remove_subscriber(&state, authenticated.as_ref(), connection_id);
     writer.abort();
@@ -573,6 +647,12 @@ fn generic_error() -> GroupServerMsg {
     }
 }
 
+fn capacity_error() -> GroupServerMsg {
+    GroupServerMsg::Error {
+        message: "capacity".into(),
+    }
+}
+
 fn push_scope(coordination_id: [u8; 32], capability_key: [u8; 32]) -> String {
     let mut scope = String::with_capacity(6 + 128);
     scope.push_str("group:");
@@ -688,6 +768,7 @@ mod tests {
     fn revoked_socket_receives_no_wake_and_retained_reader_does() {
         let mut store = Store::bounded(Config {
             ttl_secs: 60,
+            lease_secs: 60,
             max_groups: 4,
             max_capabilities_per_group: 4,
             max_entry_bytes: 1024,
@@ -766,6 +847,7 @@ mod tests {
     fn group_fetch_returns_first_entry_when_raw_budget_is_smaller() {
         let mut store = Store::bounded(Config {
             ttl_secs: 60,
+            lease_secs: 60,
             max_groups: 4,
             max_capabilities_per_group: 4,
             max_entry_bytes: 1024,
@@ -799,6 +881,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let config = Config {
             ttl_secs: 60,
+            lease_secs: 60,
             max_groups: 4,
             max_capabilities_per_group: 4,
             max_entry_bytes: 1024,

@@ -81,8 +81,10 @@ volumes:
 | `PIGEON_RELAY_MAX_QUEUE`       | `1000`          | Max envelopes retained per mailbox.        |
 | `PIGEON_RELAY_MAX_MAILBOXES`   | `10000`         | Max mailboxes held at once.                |
 | `PIGEON_RELAY_MAX_TOTAL_BYTES` | `536870912`     | Hard ceiling on total stored ciphertext.   |
-| `PIGEON_GROUP_TTL_SECS` | `2592000` (30d) | Group ciphertext, unused registration, and dissolved-group read grace period. |
-| `PIGEON_GROUP_MAX_GROUPS` | `10000` | Maximum registered groups. |
+| `PIGEON_GROUP_TTL_SECS` | `2592000` (30d) | Group ciphertext and dissolved-group read grace period. |
+| `PIGEON_GROUP_LEASE_SECS` | `2592000` (30d) | Idle period before a group with no retained ciphertext releases its active slot. |
+| `PIGEON_GROUP_ADMISSION_DIFFICULTY_BITS` | `18` | Proof-of-work difficulty for anonymous new registrations (1–28 bits). Benchmark on supported phones before release. |
+| `PIGEON_GROUP_MAX_GROUPS` | `10000` | Maximum active groups; inactive authorization remains on disk. |
 | `PIGEON_GROUP_MAX_CAPABILITIES` | `128` | Maximum member capabilities per group. |
 | `PIGEON_GROUP_MAX_ENTRY_BYTES` | `1048576` | Maximum opaque group entry (at most 1 MiB). |
 | `PIGEON_GROUP_MAX_ENTRIES` | `10000` | Maximum retained entries per group. |
@@ -98,9 +100,12 @@ volumes:
 | `PIGEON_COORDINATOR_TTL_SECS` | `2592000` (30d) | Coordinator candidate lifetime. |
 | `PIGEON_COORDINATOR_SIGNING_SEED_HEX` | required | Stable 32-byte Ed25519 seed, hex encoded. |
 
-Lower TTLs and queue sizes if you want a relay that forgets faster; they trade
-deliverability for retention. Keep group and coordinator TTLs aligned so an
-offline member's authorization and terminal MLS commit expire together. Never
+Lower ciphertext TTLs and queue sizes trade deliverability for retention. An
+inactive lease releases an active slot but keeps authorization generation,
+capabilities, cursors, sequence, and coordinator receipt history. Current members
+can reactivate when capacity is available. Budget disk for that retained state;
+the active-group limit is not a disk limit. Keep group and coordinator TTLs aligned
+for terminal MLS commit delivery. Never
 rotate the coordinator seed for an existing deployment: clients authenticate
 that key as part of group policy, so rotation requires explicit in-app recovery.
 
