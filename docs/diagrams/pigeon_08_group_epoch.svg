@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" role="img" aria-labelledby="title desc">
   <title id="title">MLS membership epochs and history boundaries</title>
-  <desc id="desc">A three-member group advances from epoch seven to epoch eight when Bob joins. It advances again when Carol leaves, leaving the required minimum of Alice, Bob, and Dana. Bob cannot read earlier messages and Carol cannot read later messages.</desc>
+  <desc id="desc">A group advances from epoch seven to epoch eight when Bob joins. It advances again when Carol leaves. Bob cannot read earlier messages and Carol cannot read later messages.</desc>
   <defs>
     <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#071426"/><stop offset="1" stop-color="#102b4f"/></linearGradient>
     <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0 0 12 6 0 12z" fill="#7894b4"/></marker>

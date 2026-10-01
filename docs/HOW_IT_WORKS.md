@@ -291,7 +291,7 @@ the owner.
 
 Pigeon groups have these product rules:
 
-- 3–128 members, with mutable membership.
+- 1–128 members, with mutable membership.
 - A permanent owner who cannot be demoted or removed. Admins can add/remove
   members and promote/demote other admins; no admin can demote themself.
 - Members other than the owner can leave while at least three members remain.
@@ -406,7 +406,7 @@ deliberately dumb, **zero-knowledge** mailbox. What makes trusting it unnecessar
 
 What a relay *can* observe is **metadata** — that some ciphertext was deposited for
 some public key, its size, and timing. That's not nothing, which is why relays are
-**opt-in** and **federated**: anyone can run one, you choose which, and you can
+**on by default, user-controllable** and **federated**: anyone can run one, you choose which, and you can
 self-host. Reducing this metadata further (padding, sealed-sender addressing,
 optional Tor) is on the [Roadmap](ROADMAP.md).
 

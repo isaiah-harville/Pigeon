@@ -75,6 +75,13 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 group_id: group_id.as_bytes().to_vec(),
                 coordination_id: coordination_id.to_vec(),
             });
+        if create.member_identities.is_empty() {
+            let draft = candidate
+                .pending_group_creations
+                .pop()
+                .ok_or(Error::Serialization)?;
+            return self.finish_group_creation(command_id, draft, candidate, output);
+        }
         output.outbound.extend(
             create
                 .member_identities
@@ -198,6 +205,28 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         }
 
         let draft = candidate.pending_group_creations.remove(draft_index);
+        self.finish_group_creation(command_id, draft, candidate, output)
+    }
+
+    fn finish_group_creation(
+        &self,
+        command_id: &str,
+        draft: proto::PendingGroupCreation,
+        candidate: &mut proto::ClientCheckpoint,
+        output: &mut ClientOutput,
+    ) -> Result<(), Error> {
+        let group_id = GroupId::from_bytes(
+            draft
+                .group_id
+                .as_slice()
+                .try_into()
+                .map_err(|_| Error::InvalidKey)?,
+        );
+        let coordination_id: [u8; 32] = draft
+            .coordination_id
+            .as_slice()
+            .try_into()
+            .map_err(|_| Error::InvalidKey)?;
         let materials = draft
             .join_materials
             .iter()
@@ -269,21 +298,24 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 local_only: false,
             },
         });
-        output.outbound.push(OutboundItem {
-            inner: proto::OutboundItem {
-                item_id: format!("{command_id}:coordinate"),
-                kind: proto::OutboundKind::GroupCoordinator as i32,
-                relay_url: policy.relay_url().to_owned(),
-                destination: policy.coordination_id().to_vec(),
-                payload: proto::GroupCoordinatorSubmission {
-                    version: PROTOCOL_VERSION,
-                    claimed_base_epoch: 0,
-                    candidate: GroupMutationCandidate::new(Vec::new(), initial_commit)?.encode(),
-                }
-                .encode_to_vec(),
-                local_only: false,
-            },
-        });
+        if !initial_commit.is_empty() {
+            output.outbound.push(OutboundItem {
+                inner: proto::OutboundItem {
+                    item_id: format!("{command_id}:coordinate"),
+                    kind: proto::OutboundKind::GroupCoordinator as i32,
+                    relay_url: policy.relay_url().to_owned(),
+                    destination: policy.coordination_id().to_vec(),
+                    payload: proto::GroupCoordinatorSubmission {
+                        version: PROTOCOL_VERSION,
+                        claimed_base_epoch: 0,
+                        candidate: GroupMutationCandidate::new(Vec::new(), initial_commit)?
+                            .encode(),
+                    }
+                    .encode_to_vec(),
+                    local_only: false,
+                },
+            });
+        }
         output
             .outbound
             .extend(

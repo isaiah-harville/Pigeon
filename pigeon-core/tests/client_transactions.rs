@@ -1581,6 +1581,34 @@ fn output_is_released_only_after_the_checkpoint_advances() {
 }
 
 #[test]
+fn owner_only_group_is_created_and_durable_in_one_transaction() {
+    let mut client = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(1)).unwrap();
+    let command = ClientCommand::create_group(
+        "owner-only",
+        "Open Event",
+        vec![],
+        "https://relay.example",
+        TestIdentity::new(60).root_public(),
+        false,
+    )
+    .unwrap();
+    let output = client.execute(command).unwrap();
+    assert_eq!(output.checkpoint_generation, 1);
+    assert_eq!(output.outbound.len(), 1);
+    assert_eq!(
+        wire_proto::OutboundItem::decode(output.outbound[0].encode().as_slice())
+            .unwrap()
+            .kind,
+        wire_proto::OutboundKind::GroupRelayRegistration as i32
+    );
+    assert_eq!(output.events.len(), 1);
+    let checkpoint = client.store().load().unwrap().unwrap();
+    let state = wire_proto::ClientCheckpoint::decode(checkpoint.bytes.as_slice()).unwrap();
+    assert_eq!(state.groups.len(), 1);
+    assert!(state.pending_group_creations.is_empty());
+}
+
+#[test]
 fn final_join_material_atomically_creates_the_real_mls_group() {
     let owner = TestIdentity::new(1);
     let bob = TestIdentity::new(2);

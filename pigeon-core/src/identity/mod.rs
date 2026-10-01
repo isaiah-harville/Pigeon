@@ -11,7 +11,11 @@ mod pairwise;
 mod root;
 
 pub use boundary::{IdentityError, IdentityPurpose, SecureIdentity};
-pub use group::{GroupJoinMaterial, GroupJoinRequest, GroupMemberKeys};
+pub use group::{
+    GroupInviteInbox, GroupInviteIntent, GroupInviteMode, GroupInviteReply, GroupInviteReplyInbox,
+    GroupInviteReplyStatus, GroupInviteTicket, GroupJoinMaterial, GroupJoinRequest,
+    GroupMemberKeys,
+};
 pub(crate) use mls::{CIPHERSUITE, POLICY_EXTENSION_TYPE_ID, PlatformMlsSigner};
 pub use mls::{KeyPackagePool, MlsIdentityBinding, ReservedKeyPackage};
 pub use pairwise::{

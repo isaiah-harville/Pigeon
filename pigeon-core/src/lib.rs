@@ -62,8 +62,10 @@ pub use group::{
     validate_transition,
 };
 pub use identity::{
-    Account, GroupJoinMaterial, GroupJoinRequest, GroupMemberKeys, IdentityBundle, IdentityError,
-    IdentityKeypair, IdentityPurpose, Initiation, KeyPackagePool, MlsIdentityBinding, PrekeyBundle,
+    Account, GroupInviteInbox, GroupInviteIntent, GroupInviteMode, GroupInviteReply,
+    GroupInviteReplyInbox, GroupInviteReplyStatus, GroupInviteTicket, GroupJoinMaterial,
+    GroupJoinRequest, GroupMemberKeys, IdentityBundle, IdentityError, IdentityKeypair,
+    IdentityPurpose, Initiation, KeyPackagePool, MlsIdentityBinding, PrekeyBundle,
     ReservedKeyPackage, SecureIdentity, Session, decode_olm_message, encode_olm_message,
 };
 pub use storage::{

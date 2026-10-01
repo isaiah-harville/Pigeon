@@ -4,7 +4,7 @@
 //! command/output bytes. Identity keys, pairwise ratchets, and MLS state remain
 //! inside `pigeon-core`, which stays free of UniFFI coupling.
 
-use pigeon_core::{IdentityBundle, PrekeyBundle};
+use pigeon_core::{GroupInviteMode, GroupInviteTicket, IdentityBundle, PrekeyBundle};
 
 uniffi::setup_scaffolding!();
 
@@ -101,6 +101,65 @@ pub struct PrekeyBundleView {
     pub curve_identity_key: Vec<u8>,
     pub prekey: Vec<u8>,
     pub one_time: bool,
+}
+
+/// Public, validated fields of a shareable invite. The bearer secret remains
+/// in the original ticket bytes; callers must keep those bytes in a URL fragment.
+#[derive(uniffi::Record)]
+pub struct GroupInviteTicketView {
+    pub group_id: Vec<u8>,
+    pub coordination_id: Vec<u8>,
+    pub coordinator_public_key: Vec<u8>,
+    pub relay_url: String,
+    pub inbox_address: Vec<u8>,
+    pub public_mode: bool,
+    pub expires_at_ms: i64,
+}
+
+#[uniffi::export]
+pub fn parse_group_invite_ticket(
+    encoded: Vec<u8>,
+    now_ms: i64,
+) -> Result<GroupInviteTicketView, PigeonError> {
+    let ticket = GroupInviteTicket::decode(&encoded)?;
+    ticket.validate(now_ms)?;
+    Ok(GroupInviteTicketView {
+        group_id: ticket.group_id().as_bytes().to_vec(),
+        coordination_id: ticket.coordination_id().to_vec(),
+        coordinator_public_key: ticket.coordinator_public_key().to_vec(),
+        relay_url: ticket.relay_url().to_owned(),
+        inbox_address: ticket.inbox_address().to_vec(),
+        public_mode: ticket.mode() == GroupInviteMode::Public,
+        expires_at_ms: ticket.expires_at_ms(),
+    })
+}
+
+#[cfg(test)]
+mod invite_ticket_tests {
+    use super::*;
+    use pigeon_core::{GroupId, GroupInviteTicket};
+
+    #[test]
+    fn ffi_parser_exposes_only_valid_public_fields() {
+        let ticket = GroupInviteTicket::new(
+            GroupId::from_bytes([1; 32]),
+            [2; 32],
+            [3; 32],
+            "wss://relay.example/group".to_owned(),
+            [4; 32],
+            [5; 32],
+            [6; 32],
+            GroupInviteMode::Private,
+            1_800_000_000_000,
+        )
+        .unwrap();
+        let encoded = ticket.encode();
+        let parsed = parse_group_invite_ticket(encoded.clone(), 1_700_000_000_000).unwrap();
+        assert_eq!(parsed.group_id, vec![1; 32]);
+        assert_eq!(parsed.inbox_address, vec![4; 32]);
+        assert!(!parsed.public_mode);
+        assert!(parse_group_invite_ticket(encoded, 1_800_000_000_000).is_err());
+    }
 }
 
 /// Decodes and verifies an identity binding before returning public fields.

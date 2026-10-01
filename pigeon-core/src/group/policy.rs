@@ -16,7 +16,7 @@ use crate::wire::{
 
 const PROTOCOL_VERSION: u32 = 1;
 const POLICY_VERSION: u32 = 2;
-const MIN_GROUP_MEMBERS: usize = 3;
+const MIN_GROUP_MEMBERS: usize = 1;
 
 pub(crate) enum RelayCapabilityDelta {
     Grant,

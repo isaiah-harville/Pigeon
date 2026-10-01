@@ -71,10 +71,11 @@ struct CreateGroupView: View {
     Section("People") {
       if eligibleContacts.isEmpty {
         ContentUnavailableView(
-          "No eligible contacts",
+          "No contacts selected",
           systemImage: "person.2.slash",
           description: Text(
-            "Group members must be accepted contacts with a current Pigeon QR card and relay."))
+            "Create the group now and share an invite link when it is ready, "
+              + "or add accepted contacts with a current Pigeon card."))
       } else {
         ForEach(eligibleContacts) { contact in contactButton(contact) }
       }
@@ -120,6 +121,12 @@ struct CreateGroupView: View {
       )
       .font(.footnote)
       .foregroundStyle(.secondary)
+      Text(
+        "Creation saves the group on this device first. "
+          + "The group list shows registration progress until the relay confirms it."
+      )
+      .font(.footnote)
+      .foregroundStyle(.secondary)
     }
   }
 
@@ -143,7 +150,7 @@ struct CreateGroupView: View {
   }
 
   private var canCreate: Bool {
-    selectedMemberIDs.count >= 2 && selectedRelay != nil
+    selectedRelay != nil
       && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
   }
 

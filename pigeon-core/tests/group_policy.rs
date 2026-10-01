@@ -117,8 +117,8 @@ fn policy_role_matrix_is_fail_closed() {
                 actor: root(3),
                 committer: root(2),
             })
-            .is_err(),
-        "a three-person group cannot shrink below three"
+            .is_ok(),
+        "a member can leave while the owner remains"
     );
     assert!(
         policy

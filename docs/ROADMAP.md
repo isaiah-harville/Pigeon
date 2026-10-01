@@ -122,7 +122,7 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 
 - **Group chats (1.4.0)** — OpenMLS-based group encryption and authenticated
   mutable policy live in `pigeon-core`; the selected relay hosts the opaque group
-  mailbox and signed commit coordinator. Groups support 3–128 members, a
+  mailbox and signed commit coordinator. Groups support 1–128 members, a
   permanent owner, delegated admins, post-join history, owner-controlled name,
   owner-controlled explicit mesh opt-in, member leave, and permanent dissolve.
   The implementation includes adversarial state-machine tests, authenticated

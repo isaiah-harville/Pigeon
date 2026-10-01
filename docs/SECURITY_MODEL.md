@@ -291,7 +291,8 @@ checkpoint commits. The app then persists replayable events in its encrypted
 history before acknowledging them to the core. This ordering prevents a crash
 from reusing an MLS state or losing the sender's local message projection.
 
-Membership is mutable and capped at 128, with a minimum of three. The immutable
+Membership is mutable and capped at 128. An owner can create a group alone and
+add members later. The immutable
 owner identity is always an admin and cannot be removed or demoted. Authenticated
 policy commits enforce admin membership changes, owner-only name/relay/mesh
 changes, member leave, and owner dissolve. Dissolution is terminal: after the
@@ -376,7 +377,7 @@ once.
   prekey path has its own replay/exhaustion considerations, handled inside Olm's
   one-time-key accounting (see §5.7).
 
-### 6.1 Relay transport (remote delivery) — opt-in
+### 6.1 Relay transport (remote delivery) — on by default, user-controllable
 
 ![Federated relay flow](diagrams/pigeon_04_relay.svg)
 
@@ -395,7 +396,7 @@ Pigeon keeps the trust cost minimal:
   ratchet ciphertext — **it cannot read messages**, and confidentiality,
   authentication, integrity, forward secrecy, and the safety-number trust check
   are all unchanged and enforced end-to-end below it.
-- It is **opt-in** and **self-hostable** (run your own; a homelab/Kubernetes or
+- It is **on by default, user-controllable**, and **self-hostable** (run your own; a homelab/Kubernetes or
   small VPS deployment is sufficient). The design is **federated** — each user
   advertises the relay(s) they can be reached at in their ContactCard, and a
   sender deposits only on *that recipient's* relays. Independent relays, chosen

@@ -220,6 +220,20 @@ impl GroupEngine {
             .build(provider, &signer, binding.credential_with_key())
             .map_err(|_| Error::Mls("create group"))?;
 
+        if key_packages.is_empty() {
+            verify_group_policy(&group, &policy)?;
+            return Ok((
+                Self {
+                    group_id: config.group_id,
+                    policy,
+                    epoch: group.epoch().as_u64(),
+                    pending: None,
+                },
+                Vec::new(),
+                Vec::new(),
+            ));
+        }
+
         let bundle = group
             .commit_builder()
             .propose_adds(key_packages)

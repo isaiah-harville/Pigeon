@@ -337,8 +337,7 @@ fn ordinary_member_leave_requires_their_signed_proposal_and_another_committer() 
     assert!(
         carol_group
             .propose_leave(&carol, &mut carol_storage)
-            .is_err(),
-        "a three-member group cannot shrink"
+            .is_ok()
     );
 
     let dave_material = join_material(&dave, &alice, group_id, coordination_id, &mut dave_storage);
@@ -587,4 +586,37 @@ fn group_creation_accepts_the_three_and_128_member_boundaries() {
         assert_eq!(group.epoch(), 1);
         assert!(!welcome.is_empty());
     }
+}
+
+#[test]
+fn owner_can_create_group_before_any_invitees_join() {
+    let owner = TestIdentity::new(200);
+    let joiner = TestIdentity::new(201);
+    let mut storage = TransactionalOpenMlsStorage::new();
+    let mut joiner_storage = TransactionalOpenMlsStorage::new();
+    let group_id = GroupId::from_bytes([51; 32]);
+    let (mut group, welcome) = GroupEngine::create(
+        &owner,
+        &mut storage,
+        creation(group_id, [52; 32], "Open Event"),
+        Vec::new(),
+    )
+    .unwrap();
+    assert_eq!(group.policy().members(), &[owner.root_public()]);
+    assert_eq!(group.epoch(), 0);
+    assert!(welcome.is_empty());
+    let material = join_material(&joiner, &owner, group_id, [52; 32], &mut joiner_storage);
+    let addition = group
+        .stage_candidate(
+            &owner,
+            &mut storage,
+            GroupAction::Add {
+                actor: owner.root_public(),
+                member_keys: Box::new(material.member_keys()),
+            },
+            Some(material),
+        )
+        .unwrap();
+    assert_eq!(addition.next_policy().members().len(), 2);
+    assert!(!addition.welcome().unwrap().is_empty());
 }
