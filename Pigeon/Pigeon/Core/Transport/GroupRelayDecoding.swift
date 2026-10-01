@@ -9,6 +9,11 @@ extension GroupRelayProtocol {
     case "incompatible": return compatibility(object, compatible: false)
     case "challenge":
       return fixedData(object["nonce"], base64: true).map(ServerFrame.challenge) ?? .ignored
+    case "registration_challenge":
+      guard let nonce = fixedData(object["nonce"], base64: true),
+        let difficulty = int(object["difficulty"]), difficulty >= 0, difficulty <= 32
+      else { return .ignored }
+      return .registrationChallenge(nonce: nonce, difficulty: difficulty)
     case "registered": return .registered
     case "appended": return uint64(object["sequence"]).map(ServerFrame.appended) ?? .ignored
     case "entries": return entries(object["entries"])

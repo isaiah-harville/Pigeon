@@ -85,6 +85,8 @@ final class SessionManager {
   /// Authenticated group projection rebuilt from the Rust checkpoint. It is
   /// never persisted separately, so it cannot drift across a crash boundary.
   var groups: [PigeonGroupState] = []
+  var pendingGroupRegistrationIDs: Set<Data> = []
+  var groupRelayCapacityLimited: Set<Data> = []
   var groupConversations: [Data: GroupConversation] = [:]
   var coreSnapshotGeneration: UInt64 = 0
   /// Group relay effects already copied onto the best-effort local mesh during

@@ -26,6 +26,7 @@ extension GroupRelayProtocol {
     case compatible(protocolVersion: Int, relayVersion: String?)
     case incompatible(protocolVersion: Int, relayVersion: String?)
     case challenge(Data)
+    case registrationChallenge(nonce: Data, difficulty: Int)
     case registered
     case appended(sequence: UInt64)
     case entries([Entry])

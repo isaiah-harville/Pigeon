@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import PigeonFFI
 import XCTest
@@ -17,10 +18,10 @@ final class GroupRelayProtocolTests: XCTestCase {
     XCTAssertNil(GroupRelayTransport.endpoint(for: URL(string: "file:///tmp/relay")))
   }
 
-  func testClientFramesMatchRelayVersionSixWireFormat() throws {
+  func testClientFramesMatchRelayVersionSevenWireFormat() throws {
     XCTAssertEqual(
       try object(GroupRelayProtocol.hello()),
-      ["type": "hello", "min_protocol_version": 6, "max_protocol_version": 6])
+      ["type": "hello", "min_protocol_version": 7, "max_protocol_version": 7])
 
     let registration = PigeonGroupRelayRegistration(
       coordinationID: coordinationID,
@@ -37,6 +38,21 @@ final class GroupRelayProtocolTests: XCTestCase {
     XCTAssertEqual(register["coordination_id"] as? String, coordinationID.hexEncoded)
     XCTAssertEqual(register["signature"] as? String, registration.signature.base64EncodedString())
     XCTAssertEqual(register["authorization_generation"] as? UInt64, 3)
+    XCTAssertNil(register["admission_solution"])
+    let challenge = Data(repeating: 9, count: 32)
+    let transcript = try GroupRegistrationAdmission.transcript(registration)
+    let solution = try GroupRegistrationAdmission.solve(
+      transcript: transcript, challenge: challenge, difficulty: 8)
+    XCTAssertEqual(solution.count, 8)
+    var proof = Data("pigeon.relay.group.admission.v1".utf8)
+    proof.append(challenge)
+    proof.append(contentsOf: SHA256.hash(data: transcript))
+    proof.append(solution)
+    XCTAssertEqual(Array(SHA256.hash(data: proof))[0], 0)
+    XCTAssertEqual(
+      try object(GroupRelayProtocol.register(registration, admissionSolution: solution))[
+        "admission_solution"] as? String,
+      solution.base64EncodedString())
 
     XCTAssertEqual(
       try object(
@@ -127,6 +143,13 @@ final class GroupRelayProtocolTests: XCTestCase {
     XCTAssertEqual(
       GroupRelayProtocol.classify(["type": "challenge", "nonce": "AQI="]),
       .ignored)
+    XCTAssertEqual(
+      GroupRelayProtocol.classify([
+        "type": "registration_challenge",
+        "nonce": Data(repeating: 2, count: 32).base64EncodedString(),
+        "difficulty": 18,
+      ]),
+      .registrationChallenge(nonce: Data(repeating: 2, count: 32), difficulty: 18))
     XCTAssertEqual(GroupRelayProtocol.classify(["type": "future"]), .ignored)
     XCTAssertEqual(
       GroupRelayProtocol.classify([

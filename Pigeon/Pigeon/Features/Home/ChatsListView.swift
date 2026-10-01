@@ -51,6 +51,23 @@ struct ChatsListView: View {
     }
     .navigationTitle("Pigeon")
     .navigationBarTitleDisplayMode(.inline)
+    .safeAreaInset(edge: .top) {
+      if !session.isPersistenceHealthy {
+        VStack(alignment: .leading, spacing: 4) {
+          Label("Storage error", systemImage: "externaldrive.badge.exclamationmark")
+            .font(.headline)
+          Text(
+            "Messaging is paused to protect your encryption state. "
+              + "Close and reopen Pigeon after checking available storage."
+          )
+          .font(.subheadline)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(.red.opacity(0.15))
+        .accessibilityAddTraits(.isStaticText)
+      }
+    }
     .refreshable { await session.refreshChats() }
     .toolbar { toolbarContent }
     .navigationDestination(item: $openedChatID) { id in
@@ -274,6 +291,13 @@ private struct GroupRow: View {
         HStack(spacing: 5) {
           Image(systemName: "lock.shield.fill").font(.caption2).foregroundStyle(.green)
           Text(preview).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+        }
+        if session.groupRelayCapacityLimited.contains(group.groupID) {
+          Text("Relay full · retrying")
+            .font(.caption).foregroundStyle(.orange)
+        } else if session.pendingGroupRegistrationIDs.contains(group.groupID) {
+          Text("Registering with relay")
+            .font(.caption).foregroundStyle(.secondary)
         }
       }
     }

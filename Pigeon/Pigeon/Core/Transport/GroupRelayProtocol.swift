@@ -2,7 +2,7 @@ import Foundation
 import PigeonFFI
 
 enum GroupRelayProtocol {
-  nonisolated static let version = 6
+  nonisolated static let version = 7
   nonisolated private static let identifierBytes = 32
 
   nonisolated static func hello() throws -> Data {
@@ -14,14 +14,25 @@ enum GroupRelayProtocol {
   }
 
   nonisolated static func register(_ registration: PigeonGroupRelayRegistration) throws -> Data {
-    try encode([
+    try register(registration, admissionSolution: nil)
+  }
+
+  nonisolated static func register(
+    _ registration: PigeonGroupRelayRegistration, admissionSolution: Data?
+  ) throws -> Data {
+    var object: [String: Any] = [
       "type": "register",
       "coordination_id": registration.coordinationID.hexEncoded,
       "authorization_generation": registration.authorizationGeneration,
       "permanent_controller_public_key": registration.permanentControllerPublicKey.hexEncoded,
       "capabilities": registration.capabilities.map(capabilityObject),
       "signature": registration.signature.base64EncodedString(),
-    ])
+    ]
+    if let admissionSolution {
+      guard admissionSolution.count == 8 else { throw RelayError.protocolError }
+      object["admission_solution"] = admissionSolution.base64EncodedString()
+    }
+    return try encode(object)
   }
 
   nonisolated static func authenticate(coordinationID: Data, capabilityID: Data) throws -> Data {

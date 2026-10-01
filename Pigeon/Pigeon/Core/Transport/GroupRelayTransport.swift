@@ -1,6 +1,9 @@
 import Foundation
 import PigeonFFI
 
+// Socket lifecycle and ordered group effects share state in this file.
+// swiftlint:disable file_length
+
 /// Maintains one authenticated opaque WebSocket per active group. All
 /// cryptographic operations are delegated to `pigeon-core`; this layer only
 /// moves typed ciphertext effects and advances a relay cursor after durable
@@ -19,6 +22,8 @@ final class GroupRelayTransport {
   var onCoordinatorCandidate: CoordinatorConsumer?
   var onEffectDelivered: ((String) -> Bool)?
   var onAuthenticated: ((_ groupID: Data, _ capabilityID: Data) -> Bool)?
+  var onCapacity: ((Data) -> Void)?
+  var onCapacityAvailable: ((Data) -> Void)?
 
   private let signer: ChallengeSigner
   private let session: URLSession
@@ -161,12 +166,10 @@ extension GroupRelayTransport {
     let registration = connection.takeRegistration()
     if let registration {
       connection.awaiting = .effect(registration)
-      try await GroupRelaySocket.send(GroupRelayProtocol.action(registration.action), over: socket)
-      guard case .registered = try await GroupRelaySocket.receive(over: socket) else {
-        throw RelayError.handshake
-      }
+      try await register(registration, for: connection, over: socket)
     }
     try await authenticate(connection, over: socket)
+    onCapacityAvailable?(connection.group.groupID)
     connection.ready = true
     connection.fetchedAfterConnect = false
     if let registration {
@@ -182,6 +185,43 @@ extension GroupRelayTransport {
     }
   }
 
+  private func register(
+    _ effect: GroupRelayEffect, for connection: Connection, over socket: URLSessionWebSocketTask
+  ) async throws {
+    try await GroupRelaySocket.send(GroupRelayProtocol.action(effect.action), over: socket)
+    let response = try await GroupRelaySocket.receive(over: socket)
+    switch response {
+    case .registered:
+      return
+    case .registrationChallenge(let nonce, let difficulty):
+      guard case .registration(let value) = effect.action else {
+        throw RelayError.protocolError
+      }
+      let transcript = try GroupRegistrationAdmission.transcript(value)
+      let solver = Task.detached(priority: .utility) {
+        try GroupRegistrationAdmission.solve(
+          transcript: transcript, challenge: nonce, difficulty: difficulty)
+      }
+      let solution = try await withTaskCancellationHandler {
+        try await solver.value
+      } onCancel: {
+        solver.cancel()
+      }
+      try await GroupRelaySocket.send(
+        GroupRelayProtocol.register(value, admissionSolution: solution), over: socket)
+      let completed = try await GroupRelaySocket.receive(over: socket)
+      guard case .registered = completed else {
+        if case .error("capacity") = completed { onCapacity?(connection.group.groupID) }
+        throw RelayError.handshake
+      }
+    case .error("capacity"):
+      onCapacity?(connection.group.groupID)
+      throw RelayError.handshake
+    default:
+      throw RelayError.handshake
+    }
+  }
+
   private func authenticate(
     _ connection: Connection,
     over socket: URLSessionWebSocketTask
@@ -191,7 +231,11 @@ extension GroupRelayTransport {
         coordinationID: connection.group.coordinationID,
         capabilityID: connection.group.capabilityID),
       over: socket)
-    guard case .challenge(let nonce) = try await GroupRelaySocket.receive(over: socket) else {
+    let response = try await GroupRelaySocket.receive(over: socket)
+    guard case .challenge(let nonce) = response else {
+      if case .error("capacity") = response {
+        onCapacity?(connection.group.groupID)
+      }
       throw RelayError.handshake
     }
     let signature = try signer(connection.group.groupID, nonce)
@@ -231,7 +275,8 @@ extension GroupRelayTransport {
       throw RelayError.protocolError
     case .ignored:
       throw RelayError.protocolError
-    case .compatible, .incompatible, .challenge, .registered, .coordinatorKey:
+    case .compatible, .incompatible, .challenge, .registrationChallenge, .registered,
+      .coordinatorKey:
       break
     }
     sendNext(connection)

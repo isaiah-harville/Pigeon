@@ -187,6 +187,7 @@ extension SessionManager {
     transport.onAuthenticated = { [weak self] groupID, capabilityID in
       self?.confirmGroupRelayAuthorization(groupID: groupID, capabilityID: capabilityID) ?? false
     }
+    bindGroupRelayCapacityCallbacks(to: transport)
     return transport
   }
 
@@ -195,6 +196,7 @@ extension SessionManager {
   func applyCoreSnapshot(_ snapshot: PigeonCoreSnapshot) {
     guard snapshot.checkpointGeneration >= coreSnapshotGeneration else { return }
     groups = snapshot.groups
+    pendingGroupRegistrationIDs = pendingGroupRegistrations(in: snapshot)
     let sendersWithPendingEvents = Set(
       snapshot.pendingEvents.compactMap { event -> Data? in
         guard case .directApplicationReceived(let direct) = event.body else { return nil }
