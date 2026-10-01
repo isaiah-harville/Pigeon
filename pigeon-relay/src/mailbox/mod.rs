@@ -57,16 +57,29 @@ pub fn publish(
     tx: &mpsc::Sender<ServerMsg>,
     recipient: String,
     ciphertext: String,
+    request_id: Option<String>,
 ) {
+    if request_id
+        .as_ref()
+        .is_some_and(|id| id.is_empty() || id.len() > 128 || !id.is_ascii())
+    {
+        let _ = tx.try_send(ServerMsg::Error {
+            message: "invalid request id".into(),
+            request_id: None,
+        });
+        return;
+    }
     if !is_valid_address(&recipient) {
         let _ = tx.try_send(ServerMsg::Error {
             message: "invalid recipient".into(),
+            request_id,
         });
         return;
     }
     if ciphertext.is_empty() || ciphertext.len() > MAX_CIPHERTEXT_LEN {
         let _ = tx.try_send(ServerMsg::Error {
             message: "invalid ciphertext".into(),
+            request_id,
         });
         return;
     }
@@ -89,6 +102,7 @@ pub fn publish(
         drop(store);
         let _ = tx.try_send(ServerMsg::Error {
             message: "relay at capacity".into(),
+            request_id,
         });
         return;
     }
@@ -116,7 +130,7 @@ pub fn publish(
     // the connection task so it never blocks the deposit.
     push::notify_deposit(push_registry.clone(), recipient);
 
-    let _ = tx.try_send(ServerMsg::Published { id });
+    let _ = tx.try_send(ServerMsg::Published { id, request_id });
 }
 
 /// Binds an APNs device token to the connection's authenticated mailbox. Rejects
@@ -131,24 +145,28 @@ pub fn register_push(
     let Some(mailbox) = authed_mailbox else {
         let _ = tx.try_send(ServerMsg::Error {
             message: "not authenticated".into(),
+            request_id: None,
         });
         return;
     };
     if !push_registry.enabled() {
         let _ = tx.try_send(ServerMsg::Error {
             message: "push not supported".into(),
+            request_id: None,
         });
         return;
     }
     if !push::is_valid_token(&token) {
         let _ = tx.try_send(ServerMsg::Error {
             message: "invalid token".into(),
+            request_id: None,
         });
         return;
     }
     if !push_registry.register(mailbox, token) {
         let _ = tx.try_send(ServerMsg::Error {
             message: "push registry full".into(),
+            request_id: None,
         });
         return;
     }

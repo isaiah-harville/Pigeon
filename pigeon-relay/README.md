@@ -42,8 +42,10 @@ manifest, shell history, or logs.
 | `PIGEON_RELAY_MAX_QUEUE`        | `1000`           | Max envelopes retained per mailbox.            |
 | `PIGEON_RELAY_MAX_MAILBOXES`    | `10000`          | Max mailboxes held at once.                    |
 | `PIGEON_RELAY_MAX_TOTAL_BYTES`  | `536870912`      | Hard ceiling on total stored ciphertext.       |
-| `PIGEON_GROUP_TTL_SECS`         | `2592000` (30d)  | Entry, unused registration, and dissolution grace lifetime. |
-| `PIGEON_GROUP_MAX_GROUPS`       | `10000`          | Maximum registered groups.                     |
+| `PIGEON_GROUP_TTL_SECS`         | `2592000` (30d)  | Entry and dissolution grace lifetime. |
+| `PIGEON_GROUP_LEASE_SECS`       | `2592000` (30d)  | Idle time before a group leaves active capacity; unexpired entries remain durable. |
+| `PIGEON_GROUP_ADMISSION_DIFFICULTY_BITS` | `18` | Leading SHA-256 zero bits required to register a new group (1–28). Benchmark on supported phones before release. |
+| `PIGEON_GROUP_MAX_GROUPS`       | `10000`          | Maximum active groups; inactive authorization remains on disk. |
 | `PIGEON_GROUP_MAX_CAPABILITIES` | `128`            | Maximum capabilities in one group.             |
 | `PIGEON_GROUP_MAX_ENTRY_BYTES`  | `1048576`        | Maximum opaque group entry (at most 1 MiB).   |
 | `PIGEON_GROUP_MAX_ENTRIES`      | `10000`          | Maximum entries retained per group.            |
@@ -139,8 +141,8 @@ Health: `GET /healthz` → `ok`.
 Every WebSocket must negotiate the relay protocol before any mailbox operation:
 
 ```json
-{ "type": "hello", "min_protocol_version": 1, "max_protocol_version": 1 }
-← { "type": "compatible", "protocol_version": 1 }
+{ "type": "hello", "min_protocol_version": 2, "max_protocol_version": 2 }
+← { "type": "compatible", "protocol_version": 2 }
 ```
 
 The relay selects the highest overlapping version. A disjoint range receives an
@@ -150,8 +152,8 @@ connection cannot publish, subscribe, authenticate, or acknowledge messages.
 **Deposit (sender, no auth — sender is anonymous to the relay):**
 
 ```json
-{ "type": "publish", "recipient": "<hex pubkey>", "ciphertext": "<base64>" }
-→ { "type": "published", "id": "<id>" }
+{ "type": "publish", "recipient": "<hex pubkey>", "ciphertext": "<base64>", "request_id": "<sender nonce>" }
+→ { "type": "published", "id": "<id>", "request_id": "<sender nonce>" }
 ```
 
 **Read your mailbox (recipient, must prove key ownership):**
@@ -183,7 +185,7 @@ The challenge–response means the relay only ever learns *public* keys (which a
 the addresses anyway), and only the holder of a mailbox's private key can drain
 it. Delivery is at-least-once; Pigeon clients deduplicate at the mesh layer.
 
-Group connections separately negotiate protocol version 6 and authenticate a
+Group connections separately negotiate protocol version 7 and authenticate a
 group-scoped capability challenge. A canonical registration atomically replaces
 the complete capability set, which revokes removed members without exposing the
 roster's root identities. The coordinator orders opaque candidates and signs an
@@ -193,6 +195,19 @@ transition, but it can observe group-level metadata and can delay or deny
 progress. Each capability may submit at most
 `PIGEON_COORDINATOR_MAX_PER_CAPABILITY_PER_EPOCH` candidates per epoch, so one
 member cannot exhaust the epoch's shared candidate budget.
+
+New anonymous registrations receive a 32-byte base64 `registration_challenge`
+with a difficulty in bits. The client returns a base64 eight-byte
+`admission_solution` on the same signed `register` frame within 60 seconds.
+The work input is SHA-256 of the admission domain, challenge nonce, SHA-256 of
+the canonical registration transcript, and solution bytes. A relay may reject
+registration or reactivation with `error { "message": "capacity" }`; clients
+can retry later. A group whose lease ends retains its capability keys,
+authorization generation, cursors, and next sequence on disk. A current member
+can reactivate it by completing the normal capability challenge. Historical
+authorization consumes disk; operators must set a disk budget and maintenance
+policy. Proof of work raises the cost of mass registration but does not stop a
+well-funded attacker.
 
 When the owner dissolves a group, the owner's controller sends `revoke_group`
 after the terminal commit is appended. The relay then installs a draining

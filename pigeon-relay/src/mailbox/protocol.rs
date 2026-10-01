@@ -7,8 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_MIN_VERSION: u32 = 1;
-pub const PROTOCOL_MAX_VERSION: u32 = 1;
+pub const PROTOCOL_MIN_VERSION: u32 = 2;
+pub const PROTOCOL_MAX_VERSION: u32 = 2;
 pub const RELAY_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Selects the newest protocol both peers support. Invalid or disjoint ranges
@@ -59,10 +59,12 @@ pub fn gate_protocol_message(message: ClientMsg, negotiated: &mut bool) -> Proto
         }
         ClientMsg::Hello { .. } => ProtocolGate::Reply(ServerMsg::Error {
             message: "protocol already negotiated".into(),
+            request_id: None,
         }),
         other if *negotiated => ProtocolGate::Proceed(other),
         _ => ProtocolGate::Reply(ServerMsg::Error {
             message: "protocol negotiation required".into(),
+            request_id: None,
         }),
     }
 }
@@ -82,6 +84,7 @@ pub enum ClientMsg {
     Publish {
         recipient: String,
         ciphertext: String,
+        request_id: Option<String>,
     },
     /// Begin reading the mailbox for `mailbox` (hex Ed25519 public key). The
     /// relay replies with a `challenge` the client must sign to prove ownership.
@@ -126,9 +129,17 @@ pub enum ServerMsg {
         ts: u64,
     },
     /// Confirms a `publish` was stored.
-    Published { id: String },
+    Published {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
+    },
     /// Generic success.
     Ok { detail: String },
     /// Generic failure (never includes addresses or content).
-    Error { message: String },
+    Error {
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
+    },
 }

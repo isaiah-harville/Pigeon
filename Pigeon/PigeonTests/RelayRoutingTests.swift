@@ -17,18 +17,18 @@ final class RelayRoutingTests: XCTestCase {
   private func url(_ s: String) -> URL { URL(string: s)! }
 
   func testCompatibilitySelectsHighestOverlappingVersion() {
-    XCTAssertEqual(RelayTransport.selectProtocol(serverMinimum: 1, serverMaximum: 3), 1)
+    XCTAssertEqual(RelayTransport.selectProtocol(serverMinimum: 1, serverMaximum: 3), 2)
   }
 
   func testCompatibilityRejectsDisjointOrInvalidRanges() {
-    XCTAssertNil(RelayTransport.selectProtocol(serverMinimum: 2, serverMaximum: 3))
+    XCTAssertNil(RelayTransport.selectProtocol(serverMinimum: 3, serverMaximum: 4))
     XCTAssertNil(RelayTransport.selectProtocol(serverMinimum: 1, serverMaximum: 0))
   }
 
   func testRelayInfoParsesCompatibleVersionMetadata() {
     let info = RelayTransport.relayInfo(from: [
       "type": "compatible",
-      "protocol_version": 1,
+      "protocol_version": 2,
       "relay_version": "0.2.0",
       "min_protocol_version": 1,
       "max_protocol_version": 2,
@@ -38,7 +38,7 @@ final class RelayRoutingTests: XCTestCase {
       info,
       .init(
         relayVersion: "0.2.0", minimumProtocolVersion: 1, maximumProtocolVersion: 2,
-        selectedProtocolVersion: 1, compatibility: .compatible))
+        selectedProtocolVersion: 2, compatibility: .compatible))
   }
 
   func testRelayInfoDirectsUpdateTowardOlderSide() {
@@ -51,7 +51,7 @@ final class RelayRoutingTests: XCTestCase {
     XCTAssertEqual(
       RelayTransport.relayInfo(from: [
         "type": "incompatible", "relay_version": "0.3.0",
-        "min_protocol_version": 2, "max_protocol_version": 3,
+        "min_protocol_version": 3, "max_protocol_version": 4,
       ])?.compatibility,
       .updateApp)
   }
@@ -91,10 +91,10 @@ final class RelayRoutingTests: XCTestCase {
 
   func testOlderCompatibleRelayWithoutReleaseMetadataRemainsUsable() {
     XCTAssertEqual(
-      RelayTransport.relayInfo(from: ["type": "compatible", "protocol_version": 1]),
+      RelayTransport.relayInfo(from: ["type": "compatible", "protocol_version": 2]),
       .init(
         relayVersion: nil, minimumProtocolVersion: nil, maximumProtocolVersion: nil,
-        selectedProtocolVersion: 1, compatibility: .compatible))
+        selectedProtocolVersion: 2, compatibility: .compatible))
   }
 
   func testAnonymousProbeUsesTextHelloFrameAcceptedByRelay() throws {
@@ -103,8 +103,8 @@ final class RelayRoutingTests: XCTestCase {
       let object = try XCTUnwrap(
         JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
       XCTAssertEqual(object["type"] as? String, "hello")
-      XCTAssertEqual(object["min_protocol_version"] as? Int, 1)
-      XCTAssertEqual(object["max_protocol_version"] as? Int, 1)
+      XCTAssertEqual(object["min_protocol_version"] as? Int, 2)
+      XCTAssertEqual(object["max_protocol_version"] as? Int, 2)
     case .data:
       XCTFail("The relay ignores binary WebSocket frames")
     @unknown default:
@@ -215,8 +215,18 @@ final class RelayRoutingTests: XCTestCase {
 
   func testClassifyErrorAndUnknownTypes() {
     XCTAssertEqual(
-      RelayTransport.classifyInbound(["type": "error", "message": "boom"]), .error("boom"))
-    XCTAssertEqual(RelayTransport.classifyInbound(["type": "error"]), .error("error"))
+      RelayTransport.classifyInbound(["type": "error", "message": "boom"]),
+      .error(message: "boom", requestID: nil))
+    XCTAssertEqual(
+      RelayTransport.classifyInbound(["type": "error"]),
+      .error(message: "error", requestID: nil))
+    XCTAssertEqual(
+      RelayTransport.classifyInbound([
+        "type": "published", "id": "server-id", "request_id": "request-1-1",
+      ]),
+      .published(requestID: "request-1-1"))
+    XCTAssertEqual(
+      RelayTransport.classifyInbound(["type": "published", "id": "server-id"]), .ignored)
     XCTAssertEqual(RelayTransport.classifyInbound(["type": "wat"]), .ignored)
     XCTAssertEqual(RelayTransport.classifyInbound([:]), .ignored)
   }
@@ -231,7 +241,7 @@ final class RelayRoutingTests: XCTestCase {
   // MARK: - Send-side store-and-forward queue
 
   private func deposit(_ to: UInt8, _ body: UInt8) -> RelayTransport.DepositQueue.Deposit {
-    .init(recipient: Data([to]), message: Data([body]))
+    .init(requestID: "request-\(to)-\(body)", recipient: Data([to]), message: Data([body]))
   }
 
   func testFlushRedeliversQueuedDepositWhenRelayBecomesReady() {
@@ -247,7 +257,9 @@ final class RelayRoutingTests: XCTestCase {
       return true
     }  // a relay is ready now
     XCTAssertEqual(sent, [deposit(1, 42)])
-    XCTAssertTrue(queue.isEmpty, "a delivered deposit must not be retained")
+    XCTAssertEqual(queue.count, 1, "a socket write is not a relay receipt")
+    XCTAssertTrue(queue.acknowledge(requestID: "request-1-42"))
+    XCTAssertTrue(queue.isEmpty)
   }
 
   func testFlushRetainsDepositsThatStillFindNoReadyRelay() {
@@ -258,11 +270,15 @@ final class RelayRoutingTests: XCTestCase {
     XCTAssertEqual(queue.deposits, [deposit(1, 1), deposit(2, 2)])
   }
 
-  func testFlushKeepsOnlyTheUndeliverableDeposits() {
+  func testFlushRetainsEveryDepositUntilItsMatchingReceipt() {
     var queue = RelayTransport.DepositQueue(bound: 8)
     queue.enqueue(deposit(1, 1))  // reachable
     queue.enqueue(deposit(2, 2))  // unreachable
     queue.flush { $0.recipient == Data([1]) }
+    XCTAssertEqual(queue.deposits, [deposit(1, 1), deposit(2, 2)])
+    XCTAssertFalse(queue.acknowledge(requestID: "wrong-id"))
+    XCTAssertEqual(queue.deposits.count, 2)
+    XCTAssertTrue(queue.acknowledge(requestID: "request-1-1"))
     XCTAssertEqual(queue.deposits, [deposit(2, 2)])
   }
 

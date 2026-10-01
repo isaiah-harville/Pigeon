@@ -65,6 +65,7 @@ fn publish(state: &TestState, tx: &mpsc::Sender<ServerMsg>, recipient: String, c
         tx,
         recipient,
         ciphertext,
+        None,
     );
 }
 
@@ -124,33 +125,92 @@ fn protocol_negotiation_selects_the_highest_overlap() {
     );
     assert_eq!(
         select_protocol(PROTOCOL_MIN_VERSION, PROTOCOL_MIN_VERSION),
-        Some(1)
+        Some(2)
     );
 }
 
 #[test]
 fn protocol_negotiation_rejects_disjoint_and_invalid_ranges() {
-    assert_eq!(select_protocol(2, 3), None);
+    assert_eq!(select_protocol(1, 1), None);
     assert_eq!(select_protocol(1, 0), None);
 }
 
 #[test]
 fn hello_and_compatible_frames_use_the_documented_json_shape() {
     let hello: ClientMsg = serde_json::from_str(
-        r#"{"type":"hello","min_protocol_version":1,"max_protocol_version":1}"#,
+        r#"{"type":"hello","min_protocol_version":2,"max_protocol_version":2}"#,
     )
     .unwrap();
     assert!(matches!(hello, ClientMsg::Hello { .. }));
     assert_eq!(
         serde_json::to_string(&ServerMsg::Compatible {
-            protocol_version: 1,
+            protocol_version: 2,
             relay_version: "0.2.0".into(),
-            min_protocol_version: 1,
-            max_protocol_version: 1,
+            min_protocol_version: 2,
+            max_protocol_version: 2,
         })
         .unwrap(),
-        r#"{"type":"compatible","protocol_version":1,"relay_version":"0.2.0","min_protocol_version":1,"max_protocol_version":1}"#
+        r#"{"type":"compatible","protocol_version":2,"relay_version":"0.2.0","min_protocol_version":2,"max_protocol_version":2}"#
     );
+}
+
+#[test]
+fn publish_receipt_echoes_request_id_after_storage() {
+    let state = state(60, 10);
+    let (tx, mut rx) = mpsc::channel(4);
+    mailbox_publish(
+        &state.mailbox,
+        &state.message_ids,
+        &state.push,
+        &tx,
+        "aa".repeat(32),
+        "ciphertext".into(),
+        Some("request-42".into()),
+    );
+    assert!(
+        matches!(rx.try_recv().unwrap(), ServerMsg::Published { request_id: Some(value), .. } if value == "request-42")
+    );
+}
+
+#[test]
+fn publish_error_echoes_valid_request_id_without_storing() {
+    let state = state(60, 10);
+    let (tx, mut rx) = mpsc::channel(4);
+    mailbox_publish(
+        &state.mailbox,
+        &state.message_ids,
+        &state.push,
+        &tx,
+        "bad".into(),
+        "ciphertext".into(),
+        Some("request-43".into()),
+    );
+    assert!(
+        matches!(rx.try_recv().unwrap(), ServerMsg::Error { request_id: Some(value), .. } if value == "request-43")
+    );
+    mailbox_publish(
+        &state.mailbox,
+        &state.message_ids,
+        &state.push,
+        &tx,
+        "aa".repeat(32),
+        "ciphertext".into(),
+        Some("x".repeat(129)),
+    );
+    assert!(matches!(
+        rx.try_recv().unwrap(),
+        ServerMsg::Error {
+            request_id: None,
+            ..
+        }
+    ));
+    assert!(state
+        .mailbox
+        .store
+        .lock()
+        .unwrap()
+        .get(&"aa".repeat(32))
+        .is_none());
 }
 
 #[test]
@@ -180,7 +240,7 @@ fn mailbox_operations_are_rejected_until_protocol_negotiation_succeeds() {
     assert!(!negotiated);
 
     let incompatible: ClientMsg = serde_json::from_str(
-        r#"{"type":"hello","min_protocol_version":2,"max_protocol_version":3}"#,
+        r#"{"type":"hello","min_protocol_version":1,"max_protocol_version":1}"#,
     )
     .unwrap();
     assert!(matches!(
@@ -194,13 +254,13 @@ fn mailbox_operations_are_rejected_until_protocol_negotiation_succeeds() {
 fn compatible_hello_unlocks_mailbox_operations() {
     let mut negotiated = false;
     let hello: ClientMsg = serde_json::from_str(
-        r#"{"type":"hello","min_protocol_version":1,"max_protocol_version":1}"#,
+        r#"{"type":"hello","min_protocol_version":2,"max_protocol_version":2}"#,
     )
     .unwrap();
     assert!(matches!(
         gate_protocol_message(hello, &mut negotiated),
         ProtocolGate::Reply(ServerMsg::Compatible {
-            protocol_version: 1,
+            protocol_version: 2,
             ..
         })
     ));
@@ -323,7 +383,7 @@ fn ack_deletes_only_the_named_envelope() {
     publish(&st, &ptx, addr(1), "b25l".into());
     publish(&st, &ptx, addr(1), "dHdv".into());
     let id = match prx.try_recv().unwrap() {
-        ServerMsg::Published { id } => id,
+        ServerMsg::Published { id, .. } => id,
         _ => panic!("expected a Published reply"),
     };
     ack(&st, &addr(1), &id);
@@ -401,7 +461,7 @@ fn register_push_rejected_when_no_gateway() {
     let (tx, mut rx) = channel();
     register_push(&st, &tx, Some(&addr(1)), "aabbccdd".into());
     match rx.try_recv().unwrap() {
-        ServerMsg::Error { message } => assert_eq!(message, "push not supported"),
+        ServerMsg::Error { message, .. } => assert_eq!(message, "push not supported"),
         other => panic!("expected an Error reply, got {other:?}"),
     }
 }

@@ -46,6 +46,7 @@ extension SessionManager {
 
   /// Relay (internet) link state for the UI; `.disabled` when none configured.
   var relayLinkState: RelayTransport.LinkState { relay?.linkState ?? .disabled }
+  var relayUnconfirmedDepositCount: Int { relay?.unconfirmedDepositCount ?? 0 }
 
   /// Hosts of our own relays we can currently receive on, for the chat header.
   var relayHosts: [String] { relay?.onlineRelayHosts ?? [] }
@@ -209,7 +210,7 @@ extension SessionManager {
     else { return nil }
     let relayURLs = self.relayURLs
     let payload = ContactCard.relayPayload(relayURLs)
-    let signature = (try? identity.sign(payload)) ?? Data()
+    guard let signature = try? identity.sign(payload) else { return nil }
     return ContactCard(
       name: myName,
       bundle: prekeyBundle.identityBundle,

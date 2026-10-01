@@ -86,6 +86,7 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
         let Ok(cmsg) = serde_json::from_str::<ClientMsg>(&text) else {
             let _ = tx.try_send(ServerMsg::Error {
                 message: "malformed message".into(),
+                request_id: None,
             });
             continue;
         };
@@ -102,6 +103,7 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
             ClientMsg::Publish {
                 recipient,
                 ciphertext,
+                request_id,
             } => {
                 publish(
                     &state.service,
@@ -110,12 +112,14 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
                     &tx,
                     recipient,
                     ciphertext,
+                    request_id,
                 );
             }
             ClientMsg::Subscribe { mailbox } => {
                 if !is_valid_address(&mailbox) {
                     let _ = tx.try_send(ServerMsg::Error {
                         message: "invalid mailbox".into(),
+                        request_id: None,
                     });
                     continue;
                 }
@@ -130,6 +134,7 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
                 let Some((mailbox, nonce)) = pending_challenge.take() else {
                     let _ = tx.try_send(ServerMsg::Error {
                         message: "subscribe first".into(),
+                        request_id: None,
                     });
                     continue;
                 };
@@ -154,6 +159,7 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
                 } else {
                     let _ = tx.try_send(ServerMsg::Error {
                         message: "authentication failed".into(),
+                        request_id: None,
                     });
                 }
             }
@@ -163,6 +169,7 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
                 } else {
                     let _ = tx.try_send(ServerMsg::Error {
                         message: "not authenticated".into(),
+                        request_id: None,
                     });
                 }
             }
@@ -178,6 +185,7 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
                 } else {
                     let _ = tx.try_send(ServerMsg::Error {
                         message: "not authenticated".into(),
+                        request_id: None,
                     });
                 }
             }

@@ -106,8 +106,8 @@ final class RelayTransport: Transport {
   private let urlSession = URLSession(configuration: .default)
   private var connections: [URL: Connection] = [:]
 
-  /// Outbound deposits that found no *ready* relay when first attempted, held for
-  /// re-send the instant a usable relay link comes up).
+  /// Outbound deposits without a positive relay receipt, held for re-send when
+  /// a usable relay link comes up.
   /// Without this an envelope generated while our publish-only
   /// socket to the recipient's relay isn't ready yet — notably a delivery ack a
   /// freshly relaunched device emits before its links are up — is dropped and
@@ -117,6 +117,8 @@ final class RelayTransport: Transport {
   /// UUID/`SeenCache` dedup keeps any resulting duplicate harmless. Bounded so a
   /// peer that stays unreachable can't grow it without limit.
   private var pendingDeposits = DepositQueue(bound: 256)
+  private(set) var unconfirmedDepositCount = 0
+  @ObservationIgnored private var depositRetryTask: Task<Void, Never>?
 
   /// Watches the OS network path so relays reconnect the instant connectivity
   /// returns (Wi-Fi ↔ cellular, airplane mode off), rather than waiting out the
@@ -161,7 +163,9 @@ final class RelayTransport: Transport {
       refreshLinkState()
       return
     }
-    let contactRelays = recipients().flatMap { relaysForRecipient($0) }
+    // Disabling every receiving relay is the user's global serverless choice.
+    // Do not keep publish-only sockets to contacts' relays in that state.
+    let contactRelays = myRelays.isEmpty ? [] : recipients().flatMap { relaysForRecipient($0) }
     let wanted = Self.wantedConnections(myRelays: myRelays, contactRelays: contactRelays)
     let previousIncompatible = incompatibleRelayURLs
     incompatibleRelayURLs = Self.retainedIncompatibleRelays(
@@ -294,8 +298,21 @@ extension RelayTransport {
       switch Self.classifyInbound(message) {
       case .envelope(let envelope):
         consume(envelope, from: url, over: socket)
-      case .error:
+      case .published(let requestID):
+        if pendingDeposits.acknowledge(requestID: requestID) {
+          unconfirmedDepositCount = pendingDeposits.count
+          if pendingDeposits.isEmpty {
+            depositRetryTask?.cancel()
+            depositRetryTask = nil
+          }
+        }
+      case .error(_, let requestID):
         note(.relayError)
+        if let requestID,
+          pendingDeposits.deposits.contains(where: { $0.requestID == requestID })
+        {
+          scheduleDepositRetry()
+        }
       case .ignored:
         break
       }
@@ -435,7 +452,7 @@ extension RelayTransport {
   /// reflects reaching the *recipient's* mailbox rather than merely our own
   /// relay being online. Empty `recipientRelays` ⇒ unreachable over the relay.
   func canReach(recipientRelays: [URL]) -> Bool {
-    recipientRelays.contains { readyRelayURLs.contains($0) }
+    !myRelays.isEmpty && recipientRelays.contains { readyRelayURLs.contains($0) }
   }
 
   /// Reconnects our own (authenticated) relays so their mailbox queues are
@@ -559,25 +576,25 @@ extension RelayTransport {
 extension RelayTransport {
 
   func broadcast(_ message: Data, to recipient: Data?) {
-    guard isEnabled else { return }
+    guard isEnabled, !myRelays.isEmpty else { return }
     // Only directly-addressed messages go over the relay; flood packets don't.
     guard let recipient else { return }
-    // No ready relay for this recipient yet: hold the deposit and retry on the
-    // next connectivity event rather than dropping it.
-    guard attemptDeposit(message, to: recipient) else {
-      enqueueDeposit(message, to: recipient)
-      return
-    }
+    let deposit = DepositQueue.Deposit(
+      requestID: UUID().uuidString, recipient: recipient, message: message)
+    pendingDeposits.enqueue(deposit)
+    unconfirmedDepositCount = pendingDeposits.count
+    _ = attemptDeposit(deposit)
+    scheduleDepositRetry()
   }
 
   /// Tries to deposit `message` to a recipient's reachable relays right now.
-  /// Returns `true` if it was published to at least one ready relay, `false` if
-  /// none were ready (so the caller can queue it for later).
+  /// Returns whether at least one socket was ready. This does not confirm a
+  /// deposit; its request remains queued until a `published` receipt arrives.
   @discardableResult
-  private func attemptDeposit(_ message: Data, to recipient: Data) -> Bool {
-    let preferred = preferredRelayForRecipient(recipient)
+  private func attemptDeposit(_ deposit: DepositQueue.Deposit) -> Bool {
+    let preferred = preferredRelayForRecipient(deposit.recipient)
     let targets = Self.deliveryTargets(
-      preferred: preferred, advertised: relaysForRecipient(recipient))
+      preferred: preferred, advertised: relaysForRecipient(deposit.recipient))
     let ready = targets.filter { connections[$0]?.ready == true && connections[$0]?.socket != nil }
     guard !ready.isEmpty else { return false }
 
@@ -590,29 +607,38 @@ extension RelayTransport {
       chosen = ready
     }
 
-    let ciphertext = message.base64EncodedString()
-    let recipientHex = Self.hex(recipient)
+    let ciphertext = deposit.message.base64EncodedString()
+    let recipientHex = Self.hex(deposit.recipient)
     var published = false
     for url in chosen {
       guard let socket = connections[url]?.socket else { continue }
-      send(socket, ["type": "publish", "recipient": recipientHex, "ciphertext": ciphertext])
+      send(
+        socket,
+        [
+          "type": "publish", "recipient": recipientHex,
+          "ciphertext": ciphertext, "request_id": deposit.requestID,
+        ])
       published = true
     }
     return published
   }
 
-  /// Holds a deposit that found no ready relay, dropping the oldest once the
-  /// bound is reached so an unreachable recipient can't grow the queue without
-  /// limit. Re-driven by `flushPendingDeposits` on the next connectivity event.
-  private func enqueueDeposit(_ message: Data, to recipient: Data) {
-    pendingDeposits.enqueue(.init(recipient: recipient, message: message))
-  }
-
-  /// Re-attempts every queued deposit, keeping the ones that still find no ready
-  /// relay. Called from `serve` when a relay link comes up, so acks and control
+  /// Re-attempts every unconfirmed deposit. Called when a relay link comes up,
+  /// so acks and control
   /// envelopes deposited while offline are delivered the moment a usable link
   /// appears — mirroring the session layer's `pending`-message re-drive.
   func flushPendingDeposits() {
-    pendingDeposits.flush { attemptDeposit($0.message, to: $0.recipient) }
+    pendingDeposits.flush { attemptDeposit($0) }
+    if !pendingDeposits.isEmpty { scheduleDepositRetry() }
+  }
+
+  private func scheduleDepositRetry() {
+    guard depositRetryTask == nil else { return }
+    depositRetryTask = Task { [weak self] in
+      try? await Task.sleep(for: .seconds(30))
+      guard !Task.isCancelled else { return }
+      self?.depositRetryTask = nil
+      self?.flushPendingDeposits()
+    }
   }
 }
