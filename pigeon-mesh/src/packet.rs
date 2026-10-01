@@ -3,7 +3,8 @@
 //!
 //! This is the layer that fixes duplicate delivery: the same logical message
 //! may reach a device over several BLE paths (and several relay hops), but it
-//! carries one packet id, so a seen-cache delivers it exactly once.
+//! carries one packet id, so a seen-cache suppresses repeat delivery after the
+//! local consumer has durably classified it.
 
 use std::collections::{HashSet, VecDeque};
 
@@ -101,6 +102,7 @@ pub struct SeenCache {
     capacity: usize,
     order: VecDeque<Vec<u8>>,
     members: HashSet<Vec<u8>>,
+    retryable: HashSet<Vec<u8>>,
 }
 
 impl SeenCache {
@@ -109,6 +111,7 @@ impl SeenCache {
             capacity: capacity.max(1),
             order: VecDeque::new(),
             members: HashSet::new(),
+            retryable: HashSet::new(),
         }
     }
 
@@ -122,6 +125,7 @@ impl SeenCache {
         if self.order.len() > self.capacity {
             if let Some(evicted) = self.order.pop_front() {
                 self.members.remove(&evicted);
+                self.retryable.remove(&evicted);
             }
         }
         true
@@ -130,12 +134,24 @@ impl SeenCache {
     pub fn contains(&self, id: &[u8]) -> bool {
         self.members.contains(id)
     }
+
+    fn set_retryable(&mut self, id: &[u8], retryable: bool) {
+        if retryable && self.members.contains(id) {
+            self.retryable.insert(id.to_vec());
+        } else {
+            self.retryable.remove(id);
+        }
+    }
+
+    fn is_retryable(&self, id: &[u8]) -> bool {
+        self.retryable.contains(id)
+    }
 }
 
 /// The outcome of ingesting a packet.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Reception {
-    /// Payload to hand to the local app, or `None` if this was a duplicate.
+    /// Payload to hand to the local app, including a retryable duplicate.
     pub deliver: Option<Vec<u8>>,
     /// Packet to rebroadcast to other peers, or `None` if not relayed.
     pub relay: Option<MeshPacket>,
@@ -174,11 +190,15 @@ impl MeshRouter {
         packet
     }
 
-    /// Processes an inbound packet. Duplicates yield no delivery and no relay.
+    /// Processes an inbound packet. Retryable duplicates deliver locally without
+    /// flooding again; consumed duplicates yield neither delivery nor relay.
     pub fn ingest(&mut self, packet: MeshPacket) -> Reception {
         if !self.seen.insert(&packet.packet_id) {
             return Reception {
-                deliver: None,
+                deliver: self
+                    .seen
+                    .is_retryable(&packet.packet_id)
+                    .then_some(packet.payload),
                 relay: None,
             };
         }
@@ -187,6 +207,12 @@ impl MeshRouter {
             deliver: Some(packet.payload),
             relay,
         }
+    }
+
+    /// Records whether local delivery needs another attempt. This changes only
+    /// local delivery: a packet is never flooded again while it remains seen.
+    pub fn set_delivery_retryable(&mut self, packet_id: &[u8], retryable: bool) {
+        self.seen.set_retryable(packet_id, retryable);
     }
 }
 
@@ -279,6 +305,37 @@ mod tests {
         let second = router.ingest(p);
         assert!(second.deliver.is_none());
         assert!(second.relay.is_none());
+    }
+
+    #[test]
+    fn retryable_delivery_reaches_consumer_again_without_reflooding() {
+        let mut router = MeshRouter::new(8, 2);
+        let p = packet(8, b"persist me");
+        let first = router.ingest(p.clone());
+        assert_eq!(first.deliver.as_deref(), Some(&b"persist me"[..]));
+        assert!(first.relay.is_some());
+
+        router.set_delivery_retryable(&p.packet_id, true);
+        let retry = router.ingest(p.clone());
+        assert_eq!(retry.deliver.as_deref(), Some(&b"persist me"[..]));
+        assert!(retry.relay.is_none());
+
+        router.set_delivery_retryable(&p.packet_id, false);
+        let consumed = router.ingest(p);
+        assert!(consumed.deliver.is_none());
+        assert!(consumed.relay.is_none());
+    }
+
+    #[test]
+    fn retryable_state_is_evicted_with_seen_packet() {
+        let mut router = MeshRouter::new(8, 1);
+        let first = packet(8, b"first");
+        router.ingest(first.clone());
+        router.set_delivery_retryable(&first.packet_id, true);
+        router.ingest(packet(8, b"second"));
+        let redelivery = router.ingest(first);
+        assert!(redelivery.deliver.is_some());
+        assert!(redelivery.relay.is_some());
     }
 
     #[test]

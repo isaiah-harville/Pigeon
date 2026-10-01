@@ -4,15 +4,14 @@
 //
 //  Sits above the raw Bluetooth transport and applies the mesh envelope:
 //  outbound messages get a unique packet id; inbound packets are deduplicated
-//  (fixing the multi-path duplicate delivery) and relayed onward toward peers
-//  out of direct range.
+//  after durable consumption and relayed onward toward peers out of direct range.
 //
 
 import Foundation
 import PigeonFFI
 
-/// The app-facing messaging surface: send a message to the mesh, receive each
-/// message exactly once. Wraps any `Transport` and a `MeshRouter`, so the mesh
+/// The app-facing messaging surface: send and receive messages over the mesh.
+/// Wraps any `Transport` and a `MeshRouter`, so the mesh
 /// runs unchanged over BLE, relay, or future transports.
 @MainActor
 @Observable
@@ -21,7 +20,7 @@ final class MeshService {
   private let transport: any Transport
   private let router = MeshRouter()
 
-  /// Delivered once per unique message that reaches this device, along with the
+  /// Delivered until the consumer reports durable consumption, along with the
   /// transport it arrived on (so the UI can show how a message travelled).
   var onMessage: ((Data, TransportChannel) -> TransportMessageDisposition)?
 
@@ -80,6 +79,9 @@ final class MeshService {
     let disposition: TransportMessageDisposition
     if let payload = reception.deliver {
       disposition = onMessage?(payload, channel) ?? .retryAfterRestart
+      router.setDeliveryRetryable(
+        packetId: packet.packetId,
+        retryable: disposition == .retryAfterRestart)
     } else {
       disposition = .consumed
     }

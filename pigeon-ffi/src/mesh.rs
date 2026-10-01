@@ -280,7 +280,7 @@ impl MeshRouter {
             .into()
     }
 
-    /// Processes an inbound packet; duplicates yield neither delivery nor relay.
+    /// Processes an inbound packet; retryable duplicates deliver locally only.
     pub fn ingest(&self, packet: MeshPacket) -> Reception {
         let r = self
             .inner
@@ -291,6 +291,14 @@ impl MeshRouter {
             deliver: r.deliver,
             relay: r.relay.map(Into::into),
         }
+    }
+
+    /// Reports whether the local consumer needs redelivery before it can ack.
+    pub fn set_delivery_retryable(&self, packet_id: Vec<u8>, retryable: bool) {
+        self.inner
+            .lock()
+            .expect("mesh router poisoned")
+            .set_delivery_retryable(&packet_id, retryable);
     }
 }
 
@@ -410,5 +418,28 @@ mod tests {
         assert_eq!(decoded.sender, vec![0x51; 32]);
         assert_eq!(decoded.recipient, vec![0x62; 32]);
         assert_eq!(decoded.payload, b"opaque MLS ciphertext");
+    }
+
+    #[test]
+    fn router_preserves_retryable_delivery_across_ffi() {
+        let router = MeshRouter::with_config(3, 8);
+        let inbound = MeshPacket {
+            packet_id: mesh_packet_random_id(),
+            ttl: 3,
+            payload: b"inbound".to_vec(),
+        };
+        let first = router.ingest(inbound.clone());
+        assert_eq!(first.deliver.as_deref(), Some(&b"inbound"[..]));
+        assert!(first.relay.is_some());
+
+        router.set_delivery_retryable(inbound.packet_id.clone(), true);
+        let retry = router.ingest(inbound.clone());
+        assert_eq!(retry.deliver.as_deref(), Some(&b"inbound"[..]));
+        assert!(retry.relay.is_none());
+
+        router.set_delivery_retryable(inbound.packet_id.clone(), false);
+        let consumed = router.ingest(inbound);
+        assert!(consumed.deliver.is_none());
+        assert!(consumed.relay.is_none());
     }
 }
