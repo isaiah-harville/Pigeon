@@ -38,6 +38,8 @@ struct OnboardingNameView: View {
         .padding(.horizontal, 40)
         .textInputAutocapitalization(.words)
 
+      relayDisclosure
+
       Button {
         session.setMyName(trimmed)
       } label: {
@@ -48,6 +50,18 @@ struct OnboardingNameView: View {
       .padding(.horizontal, 40)
       Spacer()
     }
+  }
+
+  private var relayDisclosure: some View {
+    Text(
+      "Pigeon connects to its recommended relay and enables content-free push by default. "
+        + "The relay can see your IP address and connection times; Apple handles push delivery. "
+        + "No account is required. You can disable either option in Relays."
+    )
+    .font(.footnote)
+    .foregroundStyle(.secondary)
+    .multilineTextAlignment(.center)
+    .padding(.horizontal)
   }
 
   private var explanation: String {

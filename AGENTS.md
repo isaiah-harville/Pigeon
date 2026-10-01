@@ -208,9 +208,11 @@ approval.
 
 ## Remote Delivery (decided)
 
-An **opt-in, federated, zero-knowledge relay** is an approved part of the
-architecture for reaching peers out of local range (decision recorded
-2026-06-16). It is a blind ciphertext mailbox: clients address delivery to a
+The **federated, zero-knowledge relay** is enabled on a fresh install, as are
+content-free push wake-ups. Users can disable either in settings. The relay is
+an approved part of the architecture for reaching peers out of local range
+(decision recorded 2026-06-16). It is a blind ciphertext mailbox: clients
+address delivery to a
 recipient's advertised relay(s); the relay never sees plaintext and is never
 trusted for confidentiality, authentication, or integrity. The relay server
 lives in this repo (`pigeon-relay/`), ships as a Docker image, and is federated from the

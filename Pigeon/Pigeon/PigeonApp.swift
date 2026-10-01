@@ -18,7 +18,7 @@ struct PigeonApp: App {
   @Environment(\.scenePhase) private var scenePhase
 
   #if os(iOS)
-    // Receives the APNs device token (opt-in push wake-ups) and forwards it to
+    // Receives the APNs device token (push wake-ups are enabled by default) and forwards it to
     // `RemoteNotificationManager`; SwiftUI has no hook for these UIKit callbacks.
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
   #endif

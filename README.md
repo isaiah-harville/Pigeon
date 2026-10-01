@@ -38,7 +38,8 @@ concurrently):
 - **Relay** — for peers who are out of local range and on
   different networks (e.g. cellular). A self-hostable, zero-knowledge mailbox
   forwards ciphertext addressed by public key. It **cannot read messages**, but
-  it does see connection metadata (who connects, when). Opt-in; see the security
+  it does see connection metadata (who connects, when). On by default and
+  user-controllable; see the security
   model for the trade-off.
 
 > Relays are an intentional federated transport option for remote delivery, not
