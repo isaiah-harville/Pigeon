@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use crate::coordinator::store::Config as CoordinatorConfig;
 use crate::group::store::Config as GroupConfig;
+use crate::invite::Config as InviteConfig;
 use crate::mailbox::store::Config as MailboxConfig;
 
 const DEFAULT_TTL_SECS: u64 = 30 * 24 * 3600;
@@ -16,9 +17,11 @@ const MAX_FETCHED_ITEM_BYTES: usize = 1024 * 1024;
 #[derive(Clone)]
 pub struct RelayConfig {
     pub bind_addr: String,
+    pub max_connections: usize,
     pub mailbox: MailboxConfig,
     pub group: GroupConfig,
     pub group_admission_difficulty: u8,
+    pub invite: InviteConfig,
     pub coordinator: CoordinatorConfig,
     pub apns_min_interval: Duration,
     pub coordinator_signing_seed: Option<[u8; 32]>,
@@ -30,8 +33,10 @@ impl fmt::Debug for RelayConfig {
         formatter
             .debug_struct("RelayConfig")
             .field("bind_addr", &self.bind_addr)
+            .field("max_connections", &self.max_connections)
             .field("mailbox", &self.mailbox)
             .field("group", &self.group)
+            .field("invite", &self.invite)
             .field("coordinator", &self.coordinator)
             .field("apns_min_interval", &self.apns_min_interval)
             .field("state_dir", &self.state_dir)
@@ -89,6 +94,7 @@ impl RelayConfig {
         if bind_addr.trim().is_empty() {
             return Err(ConfigError::new("PIGEON_RELAY_ADDR", "must not be empty"));
         }
+        let max_connections = parse_usize(&mut lookup, "PIGEON_RELAY_MAX_CONNECTIONS", 1024)?;
 
         let mailbox = MailboxConfig {
             ttl_secs: parse_u64(&mut lookup, "PIGEON_RELAY_TTL_SECS", DEFAULT_TTL_SECS)?,
@@ -131,6 +137,45 @@ impl RelayConfig {
             ));
         }
         let group_admission_difficulty = group_admission_difficulty as u8;
+        let invite = InviteConfig {
+            ttl_secs: parse_u64(&mut lookup, "PIGEON_INVITE_TTL_SECS", 7 * 24 * 3600)?,
+            max_mailboxes: parse_usize(&mut lookup, "PIGEON_INVITE_MAX_MAILBOXES", 10_000)?,
+            max_entries_per_mailbox: parse_usize(&mut lookup, "PIGEON_INVITE_MAX_ENTRIES", 128)?,
+            max_entry_bytes: parse_usize(&mut lookup, "PIGEON_INVITE_MAX_ENTRY_BYTES", 16 * 1024)?,
+            max_total_bytes: parse_usize(
+                &mut lookup,
+                "PIGEON_INVITE_MAX_TOTAL_BYTES",
+                64 * 1024 * 1024,
+            )?,
+            max_deposits_per_minute: parse_usize(
+                &mut lookup,
+                "PIGEON_INVITE_MAX_DEPOSITS_PER_MINUTE",
+                120,
+            )?,
+        };
+        if invite.ttl_secs > 365 * 24 * 3600 {
+            return Err(ConfigError::new(
+                "PIGEON_INVITE_TTL_SECS",
+                "must be at most one year",
+            ));
+        }
+        if invite.max_entry_bytes > 256 * 1024 {
+            return Err(ConfigError::new(
+                "PIGEON_INVITE_MAX_ENTRY_BYTES",
+                "must be at most 256 KiB",
+            ));
+        }
+        validate_not_larger(
+            "PIGEON_INVITE_MAX_ENTRY_BYTES",
+            invite.max_entry_bytes,
+            invite.max_total_bytes,
+        )?;
+        if invite.max_entries_per_mailbox > 128 {
+            return Err(ConfigError::new(
+                "PIGEON_INVITE_MAX_ENTRIES",
+                "must be at most 128",
+            ));
+        }
         validate_fetched_item_limit("PIGEON_GROUP_MAX_ENTRY_BYTES", group.max_entry_bytes)?;
         validate_not_larger(
             "PIGEON_GROUP_MAX_ENTRY_BYTES",
@@ -215,9 +260,11 @@ impl RelayConfig {
 
         Ok(Self {
             bind_addr,
+            max_connections,
             mailbox,
             group,
             group_admission_difficulty,
+            invite,
             coordinator,
             apns_min_interval,
             coordinator_signing_seed,
@@ -319,6 +366,20 @@ mod tests {
             ("PIGEON_GROUP_ADMISSION_DIFFICULTY_BITS", "0"),
             ("PIGEON_GROUP_ADMISSION_DIFFICULTY_BITS", "29"),
             ("PIGEON_GROUP_LEASE_SECS", "0"),
+        ] {
+            let error =
+                RelayConfig::from_lookup(|key| (key == variable).then(|| value.to_string()))
+                    .unwrap_err();
+            assert_eq!(error.variable(), variable);
+        }
+    }
+
+    #[test]
+    fn invite_and_socket_bounds_reject_undeliverable_or_unbounded_settings() {
+        for (variable, value) in [
+            ("PIGEON_RELAY_MAX_CONNECTIONS", "0"),
+            ("PIGEON_INVITE_TTL_SECS", "31536001"),
+            ("PIGEON_INVITE_MAX_ENTRY_BYTES", "262145"),
         ] {
             let error =
                 RelayConfig::from_lookup(|key| (key == variable).then(|| value.to_string()))

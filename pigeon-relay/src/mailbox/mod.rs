@@ -49,6 +49,7 @@ impl Service {
 
 /// Raw length of an Ed25519 signature, in bytes.
 const SIG_LEN: usize = 64;
+const MAX_SUBSCRIBERS_PER_MAILBOX: usize = 2;
 
 pub fn publish(
     service: &Service,
@@ -135,11 +136,12 @@ pub fn publish(
 
 /// Binds an APNs device token to the connection's authenticated mailbox. Rejects
 /// unauthenticated connections (so only the mailbox's key holder can attach a
-/// token) and relays that have no push gateway configured.
+/// token), invite inboxes, and relays that have no push gateway configured.
 pub fn register_push(
     push_registry: &PushRegistry,
     tx: &mpsc::Sender<ServerMsg>,
     authed_mailbox: Option<&str>,
+    invite_mailbox: bool,
     token: String,
 ) {
     let Some(mailbox) = authed_mailbox else {
@@ -149,6 +151,13 @@ pub fn register_push(
         });
         return;
     };
+    if invite_mailbox {
+        let _ = tx.try_send(ServerMsg::Error {
+            message: "invite push not supported".into(),
+            request_id: None,
+        });
+        return;
+    }
     if !push_registry.enabled() {
         let _ = tx.try_send(ServerMsg::Error {
             message: "push not supported".into(),
@@ -188,13 +197,16 @@ pub fn switch_subscription(
     mailbox: &str,
     conn_id: u64,
     tx: mpsc::Sender<ServerMsg>,
-) {
+) -> bool {
+    if !register_subscriber(service, mailbox, conn_id, tx) {
+        return false;
+    }
     if let Some(previous) = previous {
         if previous != mailbox {
             remove_subscriber(service, previous, conn_id);
         }
     }
-    register_subscriber(service, mailbox, conn_id, tx);
+    true
 }
 
 pub fn register_subscriber(
@@ -202,11 +214,15 @@ pub fn register_subscriber(
     mailbox: &str,
     conn_id: u64,
     tx: mpsc::Sender<ServerMsg>,
-) {
+) -> bool {
     let mut store = service.store.lock().unwrap();
     let subscribers = store.subscribers_mut(mailbox);
-    subscribers.retain(|s| s.conn_id != conn_id);
+    subscribers.retain(|s| s.conn_id != conn_id && !s.tx.is_closed());
+    if subscribers.len() >= MAX_SUBSCRIBERS_PER_MAILBOX {
+        return false;
+    }
     subscribers.push(Subscriber { conn_id, tx });
+    true
 }
 
 pub fn flush_queue(service: &Service, mailbox: &str, tx: &mpsc::Sender<ServerMsg>) {

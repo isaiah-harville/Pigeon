@@ -398,7 +398,7 @@ impl GroupInviteTicket {
             || self.inbox_fallback_prekey == [0; 32]
             || self.bearer_secret == [0; 32]
             || self.relay_url.len() > MAX_RELAY_URL_BYTES
-            || !self.relay_url.starts_with("wss://")
+            || !(self.relay_url.starts_with("wss://") || self.relay_url.starts_with("https://"))
             || self.relay_url.contains(['#', '?', '@'])
         {
             return Err(Error::MalformedBundle);

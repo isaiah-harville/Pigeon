@@ -265,9 +265,8 @@ impl GroupInviteReplyInbox {
         &mut self,
         ticket: &GroupInviteTicket,
         ciphertext: &[u8],
-        now_ms: i64,
+        _now_ms: i64,
     ) -> Result<GroupInviteReply, Error> {
-        ticket.validate(now_ms)?;
         if self.consumed || self.ticket_digest != ticket.digest() {
             return Err(Error::InvalidSignature);
         }

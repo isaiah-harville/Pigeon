@@ -166,6 +166,7 @@ struct Pending {
 pub struct Reassembler {
     max_message_bytes: usize,
     max_concurrent_messages: usize,
+    max_buffered_bytes: usize,
     pending: HashMap<u16, Pending>,
     sequence_counter: u64,
 }
@@ -181,6 +182,11 @@ impl Reassembler {
         Self {
             max_message_bytes,
             max_concurrent_messages,
+            // The per-message and count limits alone permit 16 MiB per BLE
+            // source. A device can track several sources at once.
+            max_buffered_bytes: max_message_bytes
+                .saturating_mul(max_concurrent_messages)
+                .min(4 * 1024 * 1024),
             pending: HashMap::new(),
             sequence_counter: 0,
         }
@@ -244,6 +250,11 @@ impl Reassembler {
         self.pending.len()
     }
 
+    /// Total fragment payload bytes retained for incomplete messages.
+    pub fn pending_bytes(&self) -> usize {
+        self.pending.values().map(|entry| entry.byte_count).sum()
+    }
+
     fn ingest_single_fragment(
         &mut self,
         fragment: Fragment,
@@ -257,15 +268,17 @@ impl Reassembler {
 
     /// Drops the oldest incomplete message(s) once too many accumulate.
     fn evict_if_needed(&mut self) {
-        if self.pending.len() <= self.max_concurrent_messages {
-            return;
-        }
-        if let Some(oldest) = self
-            .pending
-            .iter()
-            .min_by_key(|(_, p)| p.sequence)
-            .map(|(&id, _)| id)
+        while self.pending.len() > self.max_concurrent_messages
+            || self.pending_bytes() > self.max_buffered_bytes
         {
+            let Some(oldest) = self
+                .pending
+                .iter()
+                .min_by_key(|(_, p)| p.sequence)
+                .map(|(&id, _)| id)
+            else {
+                break;
+            };
             self.pending.remove(&oldest);
         }
     }
@@ -419,6 +432,26 @@ mod tests {
             let _ = reassembler.ingest(Fragment::new(id, 0, 2, vec![0x01]));
         }
         assert!(reassembler.pending_count() <= 4);
+    }
+
+    #[test]
+    fn aggregate_pending_bytes_bounded_across_messages() {
+        let mut reassembler = Reassembler::default();
+        for id in 0..24 {
+            reassembler
+                .ingest(Fragment::new(id, 0, 2, vec![0xAB; 240 * 1024]))
+                .unwrap();
+        }
+        assert!(reassembler.pending_bytes() <= 4 * 1024 * 1024);
+        assert!(reassembler.pending_count() < 24);
+        // The newest fragment is retained and can still complete.
+        assert_eq!(
+            reassembler
+                .ingest(Fragment::new(23, 1, 2, vec![0xCD]))
+                .unwrap()
+                .map(|message| message.len()),
+            Some(240 * 1024 + 1)
+        );
     }
 
     #[test]

@@ -39,6 +39,56 @@ pub(crate) fn validate_client_command(command: &proto::ClientCommand) -> Result<
     }
 
     match command.body.as_ref().ok_or(Error::MalformedBundle)? {
+        proto::client_command::Body::CreateGroupInvite(value) => {
+            check_exact_group_id(&value.group_id)?;
+            if !matches!(
+                proto::GroupInviteMode::try_from(value.mode),
+                Ok(proto::GroupInviteMode::Public | proto::GroupInviteMode::Private)
+            ) || value.now_ms < 0
+                || value.expires_at_ms <= value.now_ms
+            {
+                return Err(Error::MalformedBundle);
+            }
+        }
+        proto::client_command::Body::RevokeGroupInvite(value) => {
+            check_exact_group_id(&value.inbox_address)?
+        }
+        proto::client_command::Body::StartGroupInviteJoin(value) => {
+            check_bytes(value.ticket.len(), 4096, "invite ticket bytes")?;
+            if value.now_ms < 0 {
+                return Err(Error::MalformedBundle);
+            }
+        }
+        proto::client_command::Body::ApplyGroupInviteInboxEnvelope(value) => {
+            check_exact_group_id(&value.inbox_address)?;
+            check_bytes(value.ciphertext.len(), 16 * 1024, "invite ciphertext bytes")?;
+            if value.now_ms < 0 {
+                return Err(Error::MalformedBundle);
+            }
+        }
+        proto::client_command::Body::DecideGroupInviteRequest(value) => {
+            check_exact_group_id(&value.inbox_address)?;
+            check_exact_group_id(&value.request_id)?;
+            if value.now_ms < 0 {
+                return Err(Error::MalformedBundle);
+            }
+        }
+        proto::client_command::Body::ApplyGroupInviteReply(value) => {
+            check_exact_group_id(&value.reply_address)?;
+            check_bytes(
+                value.ciphertext.len(),
+                16 * 1024,
+                "invite reply ciphertext bytes",
+            )?;
+            if value.now_ms < 0 {
+                return Err(Error::MalformedBundle);
+            }
+        }
+        proto::client_command::Body::RefreshGroupInvites(value) => {
+            if value.now_ms <= 0 {
+                return Err(Error::MalformedBundle);
+            }
+        }
         proto::client_command::Body::CreateGroup(create) => {
             check_bytes(create.name.len(), MAX_GROUP_NAME_BYTES, "group name")?;
             check_count(
@@ -71,6 +121,9 @@ pub(crate) fn validate_client_command(command: &proto::ClientCommand) -> Result<
             )?;
         }
         proto::client_command::Body::ApplyInbound(inbound) => {
+            if inbound.now_ms < 0 {
+                return Err(Error::MalformedBundle);
+            }
             check_bytes(
                 inbound.payload.len(),
                 MAX_MLS_OBJECT_BYTES,

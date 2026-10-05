@@ -160,6 +160,28 @@ pub(super) fn decode_checkpoint(
                 || pending.message_id.len() != 16
         })
         || state.pending_group_leaves.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state.group_invites.len() > 16
+        || state.group_invite_joins.len() > 64
+        || state.group_invites.iter().any(|invite| {
+            invite.ticket.is_empty()
+                || invite.ticket.len() > 4096
+                || invite.inbox_state.is_empty()
+                || invite.inbox_state.len() > 256 * 1024
+                || invite.requests.len() > 128
+                || invite.requests.iter().any(|request| {
+                    request.intent.is_empty()
+                        || request.intent.len() > 512
+                        || proto::GroupInviteProgress::try_from(request.progress).is_err()
+                })
+        })
+        || state.group_invite_joins.iter().any(|join| {
+            join.ticket.is_empty()
+                || join.ticket.len() > 4096
+                || join.request_id.len() != 32
+                || join.reply_inbox_state.is_empty()
+                || join.reply_inbox_state.len() > 64 * 1024
+                || proto::GroupInviteProgress::try_from(join.progress).is_err()
+        })
         || state
             .pending_group_leaves
             .iter()

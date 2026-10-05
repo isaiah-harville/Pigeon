@@ -14,6 +14,7 @@ mod config;
 mod coordinator;
 mod durable;
 mod group;
+mod invite;
 mod mailbox;
 mod push;
 

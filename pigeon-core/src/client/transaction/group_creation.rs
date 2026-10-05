@@ -360,6 +360,14 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         candidate.openmls_checkpoint = mls_storage.export_checkpoint()?;
         let policy = engine.policy();
         candidate.groups.push(stored_group(&engine));
+        for join in &mut candidate.group_invite_joins {
+            if join.progress == proto::GroupInviteProgress::Approved as i32
+                && crate::identity::GroupInviteTicket::decode(&join.ticket)
+                    .is_ok_and(|ticket| ticket.group_id() == engine.group_id())
+            {
+                join.progress = proto::GroupInviteProgress::Joined as i32;
+            }
+        }
         output.events.push(AppEvent {
             inner: proto::AppEvent {
                 version: PROTOCOL_VERSION,

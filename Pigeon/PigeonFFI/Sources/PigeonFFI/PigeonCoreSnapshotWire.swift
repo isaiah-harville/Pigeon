@@ -9,6 +9,7 @@ public struct PigeonCoreOutput: Equatable, Sendable {
   public let events: [PigeonCoreEvent]
   public let outbound: [PigeonCoreOutboundItem]
   public let groupMessageOutcome: PigeonGroupMessageOutcome
+  public let inviteEnvelopeOutcome: PigeonGroupInviteEnvelopeOutcome
 }
 
 extension PigeonCoreSnapshot {
@@ -19,7 +20,9 @@ extension PigeonCoreSnapshot {
       pendingOutbound: proto.pendingOutbound.map(PigeonCoreOutboundItem.init(proto:)),
       pendingEvents: proto.pendingEvents.map(PigeonCoreEvent.init(proto:)),
       pairwisePrekeyBundle: proto.pairwisePrekeyBundle,
-      pairwiseContacts: proto.pairwiseContacts.map(PigeonPairwiseContactState.init(proto:)))
+      pairwiseContacts: proto.pairwiseContacts.map(PigeonPairwiseContactState.init(proto:)),
+      groupInvites: proto.groupInvites.map(PigeonGroupInviteState.init(proto:)),
+      groupInviteJoins: proto.groupInviteJoins.map(PigeonGroupInviteJoinState.init(proto:)))
   }
 }
 

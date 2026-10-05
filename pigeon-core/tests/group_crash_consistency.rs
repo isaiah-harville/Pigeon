@@ -436,6 +436,8 @@ fn relay_and_mesh_copies_emit_one_received_event_and_one_acknowledgement() {
         pending_group_recoveries: Vec::new(),
         pending_group_acknowledgements: Vec::new(),
         pending_group_leaves: Vec::new(),
+        group_invites: Vec::new(),
+        group_invite_joins: Vec::new(),
     };
     let bytes = bob_checkpoint.encode_to_vec();
     let bob_store = SwitchableStore::with_checkpoint(SealedCheckpoint {

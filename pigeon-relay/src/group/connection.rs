@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{FromRef, State};
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
@@ -16,6 +17,8 @@ use rand::RngCore;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
+use tokio::sync::Semaphore;
+use tokio::time::{timeout_at, Duration, Instant};
 
 use super::protocol::{
     decode_capability, decode_group_capability, decode_public_key, gate_group_message,
@@ -36,6 +39,7 @@ pub struct ConnectionState {
     push: Arc<PushRegistry>,
     connection_ids: Arc<AtomicU64>,
     admission_difficulty: u8,
+    socket_slots: Arc<Semaphore>,
 }
 
 impl FromRef<AppState> for ConnectionState {
@@ -46,6 +50,7 @@ impl FromRef<AppState> for ConnectionState {
             push: state.push.clone(),
             connection_ids: state.connection_ids.clone(),
             admission_difficulty: state.group_admission_difficulty,
+            socket_slots: state.socket_slots.clone(),
         }
     }
 }
@@ -54,8 +59,15 @@ pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<ConnectionState>,
 ) -> impl IntoResponse {
+    let Ok(slot) = state.socket_slots.clone().try_acquire_owned() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
     ws.max_message_size(MAX_GROUP_FRAME_BYTES)
-        .on_upgrade(move |socket| handle_socket(socket, state))
+        .on_upgrade(move |socket| async move {
+            let _slot = slot;
+            handle_socket(socket, state).await;
+        })
+        .into_response()
 }
 
 async fn handle_socket(socket: WebSocket, state: ConnectionState) {
@@ -77,8 +89,20 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
     let mut authenticated: Option<GroupCapability> = None;
     let mut registration_attempts = RegistrationAttempts::default();
     let mut registration_challenge: Option<([u8; 32], [u8; 32], u64)> = None;
+    let handshake_deadline = Instant::now() + Duration::from_secs(60);
 
-    while let Some(Ok(message)) = socket_rx.next().await {
+    loop {
+        let next = if authenticated.is_some() {
+            socket_rx.next().await
+        } else {
+            match timeout_at(handshake_deadline, socket_rx.next()).await {
+                Ok(message) => message,
+                Err(_) => break,
+            }
+        };
+        let Some(Ok(message)) = next else {
+            break;
+        };
         let Message::Text(text) = message else {
             if matches!(message, Message::Close(_)) {
                 break;

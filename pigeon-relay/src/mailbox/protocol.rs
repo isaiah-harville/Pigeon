@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 pub const PROTOCOL_MIN_VERSION: u32 = 2;
-pub const PROTOCOL_MAX_VERSION: u32 = 2;
+pub const PROTOCOL_MAX_VERSION: u32 = 3;
 pub const RELAY_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Selects the newest protocol both peers support. Invalid or disjoint ranges
@@ -86,9 +86,17 @@ pub enum ClientMsg {
         ciphertext: String,
         request_id: Option<String>,
     },
+    /// Durable encrypted request to a shareable invite inbox (protocol v3).
+    InvitePublish {
+        recipient: String,
+        ciphertext: String,
+        request_id: Option<String>,
+    },
     /// Begin reading the mailbox for `mailbox` (hex Ed25519 public key). The
     /// relay replies with a `challenge` the client must sign to prove ownership.
     Subscribe { mailbox: String },
+    /// Authenticate and read a durable invite inbox (protocol v3).
+    InviteSubscribe { mailbox: String },
     /// Prove ownership of the just-subscribed mailbox by signing the challenge
     /// nonce with the mailbox's Ed25519 private key (signature base64).
     Auth { signature: String },

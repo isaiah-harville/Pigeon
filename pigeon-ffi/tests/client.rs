@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-use ed25519_dalek::{Signer, SigningKey};
-use pigeon_core::{wire_proto, ClientCommand};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use pigeon_core::{wire_proto, ClientCommand, GroupInviteTicket};
 use pigeon_ffi::{
     Checkpoint, CheckpointStore, FfiClient, IdentityPurposeKind, IdentityPurposeRequest,
     PlatformError, PlatformIdentity,
@@ -144,5 +144,65 @@ fn relay_challenge_signing_rejects_malformed_identifiers_at_the_ffi_boundary() {
         .is_err());
     assert!(client
         .sign_group_relay_challenge(vec![1; 32], vec![2; 31])
+        .is_err());
+}
+
+#[test]
+fn invite_mailbox_challenge_uses_the_checkpointed_ephemeral_key() {
+    let store = Arc::new(TestStore::default());
+    let client = FfiClient::new(Arc::new(TestIdentity::new()), store.clone()).unwrap();
+    let create = ClientCommand::create_group(
+        "owner-only",
+        "Birds",
+        vec![],
+        "wss://relay.example",
+        SigningKey::from_bytes(&[10; 32]).verifying_key().to_bytes(),
+        false,
+    )
+    .unwrap();
+    client.execute(create.encode()).unwrap();
+    let group_id = wire_proto::ClientSnapshot::decode(client.snapshot().unwrap().as_slice())
+        .unwrap()
+        .groups[0]
+        .group_id
+        .clone();
+    let command = wire_proto::ClientCommand {
+        version: 1,
+        command_id: "invite".into(),
+        body: Some(wire_proto::client_command::Body::CreateGroupInvite(
+            wire_proto::CreateGroupInvite {
+                group_id,
+                mode: wire_proto::GroupInviteMode::Private as i32,
+                expires_at_ms: 1_800_000_000_000 + 7 * 24 * 60 * 60 * 1000,
+                now_ms: 1_800_000_000_000,
+            },
+        )),
+    };
+    client.execute(command.encode_to_vec()).unwrap();
+    let snapshot =
+        wire_proto::ClientSnapshot::decode(client.snapshot().unwrap().as_slice()).unwrap();
+    let ticket = GroupInviteTicket::decode(&snapshot.group_invites[0].ticket).unwrap();
+    let address = ticket.inbox_address();
+    let nonce = [42; 32];
+    let signature = client
+        .sign_group_invite_mailbox_challenge(address.to_vec(), nonce.to_vec())
+        .unwrap();
+    VerifyingKey::from_bytes(&address)
+        .unwrap()
+        .verify(&nonce, &Signature::from_slice(&signature).unwrap())
+        .unwrap();
+
+    let restored = FfiClient::new(Arc::new(TestIdentity::new()), store).unwrap();
+    assert_eq!(
+        restored
+            .sign_group_invite_mailbox_challenge(address.to_vec(), nonce.to_vec())
+            .unwrap(),
+        signature
+    );
+    assert!(restored
+        .sign_group_invite_mailbox_challenge(vec![1; 31], nonce.to_vec())
+        .is_err());
+    assert!(restored
+        .sign_group_invite_mailbox_challenge(address.to_vec(), vec![1; 31])
         .is_err());
 }

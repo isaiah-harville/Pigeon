@@ -11,7 +11,26 @@ extension SessionManager {
   var banner: InAppBanner? { presenter.banner }
   var isAppActive: Bool { presenter.isAppActive }
 
-  func setAppActive(_ active: Bool) { presenter.setAppActive(active) }
+  func setAppActive(_ active: Bool) {
+    presenter.setAppActive(active)
+    if active {
+      if isUnlocked {
+        do {
+          try refreshGroupInvites()
+        } catch {
+          isPersistenceHealthy = false
+          note(.persistenceFailed)
+        }
+      }
+    }
+    if active, let snapshot = try? coreClient?.stateSnapshot() {
+      // Resume from durable inbox cursors after iOS may have suspended sockets.
+      groupInviteRelay.disconnect()
+      reconfigureGroupInviteRelay(snapshot: snapshot)
+    } else if !active {
+      groupInviteRelay.disconnect()
+    }
+  }
   func dismissBanner() { presenter.dismissBanner() }
 
   var blockedContactIDs: Set<Data> { Set(blockedContacts.map(\.id)) }
@@ -67,7 +86,14 @@ extension SessionManager {
   func setConnectivityEnabled(_ enabled: Bool) {
     ConnectivitySettings.setEnabled(enabled)
     mesh.setConnectivityEnabled(enabled)
-    if enabled { flushOnConnectivity() }
+    if enabled {
+      flushOnConnectivity()
+      if let snapshot = try? coreClient?.stateSnapshot() {
+        reconfigureGroupInviteRelay(snapshot: snapshot)
+      }
+    } else {
+      groupInviteRelay.disconnect()
+    }
   }
 
   /// Stops every live link, deletes the complete encrypted store family, then
@@ -80,6 +106,7 @@ extension SessionManager {
     guard isUnlocked else { throw CleanSlateError.wipeFailed }
     await relay?.unregisterPushForCleanSlate()
     mesh.setConnectivityEnabled(false)
+    groupInviteRelay.disconnect()
     do {
       try CleanSlateExecutor.run(
         wipe: { persistence.wipeAll() },

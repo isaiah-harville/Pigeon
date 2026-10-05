@@ -37,7 +37,8 @@ manifest, shell history, or logs.
 | Variable                        | Default          | Meaning                                        |
 | ------------------------------- | ---------------- | ---------------------------------------------- |
 | `PIGEON_RELAY_ADDR`             | `0.0.0.0:8080`   | Listen address.                                |
-| `PIGEON_RELAY_STATE_DIR`        | `/var/lib/pigeon-relay` | Durable group/coordinator SQLite directory. |
+| `PIGEON_RELAY_STATE_DIR`        | `/var/lib/pigeon-relay` | Durable group/coordinator/invite SQLite directory. |
+| `PIGEON_RELAY_MAX_CONNECTIONS` | `1024` | Maximum concurrent WebSocket connections across both endpoints. |
 | `PIGEON_RELAY_TTL_SECS`         | `2592000` (30d)  | How long an undelivered envelope is kept.      |
 | `PIGEON_RELAY_MAX_QUEUE`        | `1000`           | Max envelopes retained per mailbox.            |
 | `PIGEON_RELAY_MAX_MAILBOXES`    | `10000`          | Max mailboxes held at once.                    |
@@ -51,6 +52,12 @@ manifest, shell history, or logs.
 | `PIGEON_GROUP_MAX_ENTRIES`      | `10000`          | Maximum entries retained per group.            |
 | `PIGEON_GROUP_MAX_TOTAL_BYTES`  | `536870912`      | Hard ceiling for all group ciphertext.         |
 | `PIGEON_GROUP_MAX_FETCH_BYTES`  | `4194304`        | Maximum group fetch response.                  |
+| `PIGEON_INVITE_TTL_SECS` | `604800` (7d) | Retention for opaque invite requests and replies, at most one year. |
+| `PIGEON_INVITE_MAX_MAILBOXES` | `10000` | Maximum invite inboxes with retained ciphertext. |
+| `PIGEON_INVITE_MAX_ENTRIES` | `128` | Maximum retained envelopes per invite inbox. |
+| `PIGEON_INVITE_MAX_ENTRY_BYTES` | `16384` | Maximum invite ciphertext; at most 256 KiB. |
+| `PIGEON_INVITE_MAX_TOTAL_BYTES` | `67108864` | Hard ceiling for invite ciphertext. |
+| `PIGEON_INVITE_MAX_DEPOSITS_PER_MINUTE` | `120` | Per-inbox and relay-wide deposit limit. |
 | `PIGEON_COORDINATOR_MAX_PER_EPOCH` | `256`         | Candidate attempts retained per epoch.         |
 | `PIGEON_COORDINATOR_MAX_PER_CAPABILITY_PER_EPOCH` | `8` | Candidate attempts per member capability per epoch; at most `MAX_PER_EPOCH`. |
 | `PIGEON_COORDINATOR_MAX_LOGS` | `10000` | Maximum logs with retained candidates; receipt heads remain durable. |
@@ -70,7 +77,7 @@ pressure instead of evicting everyone else's mail.
 
 Pairwise mailboxes are **in-memory and ephemeral** by design; senders retransmit
 until acknowledgement. Group registrations, opaque group entries, capability
-cursors/tombstones, and coordinator receipt chains are committed to SQLite under
+cursors/tombstones, coordinator receipt chains, and opaque invite envelopes are committed to SQLite under
 `PIGEON_RELAY_STATE_DIR` before the relay acknowledges them. Mount that directory
 on persistent storage and back it up together with the coordinator seed. Clients
 authenticate the coordinator public key, and startup fails if the configured seed
@@ -131,8 +138,10 @@ mailbox from the same relays. Anyone can run one; users choose which to trust. N
 
 ## Protocol
 
-Pairwise WebSocket traffic uses `GET /ws`; group messaging and coordination use
-`GET /group/ws`. Both protocols use bounded JSON frames. Addresses, group
+Pairwise and invite WebSocket traffic uses `GET /ws`; group messaging and coordination use
+`GET /group/ws`. Both protocols use bounded JSON frames. Connections share a
+global capacity limit and must authenticate within 60 seconds if they remain open.
+Addresses, group
 coordination IDs, capability IDs, cursors, sizes, timing, and client IPs are
 relay-visible metadata. Message and MLS candidate bodies remain opaque.
 
@@ -148,6 +157,17 @@ Every WebSocket must negotiate the relay protocol before any mailbox operation:
 The relay selects the highest overlapping version. A disjoint range receives an
 `incompatible` response containing the relay's minimum and maximum, and the
 connection cannot publish, subscribe, authenticate, or acknowledge messages.
+
+Shareable invite inboxes require pairwise protocol version 3. An anonymous sender
+uses `invite_publish` with a pseudonymous Ed25519 `recipient`, opaque
+`ciphertext`, and optional `request_id`; a `published` receipt follows a durable
+SQLite commit. A reader uses `invite_subscribe`, then signs the normal challenge
+with that inbox key and sends `auth`. It receives retained and live `envelope`
+frames and deletes each only with `ack`. These inboxes have separate TTL, entry,
+byte, and deposit limits; the relay cannot read or approve a group join. Invite
+inboxes do not accept APNs token registration or trigger push wake-ups, avoiding
+a relay-side link from a public invite address to a device token. Join requests
+wait until an admin reconnects to the invite inbox.
 
 **Deposit (sender, no auth — sender is anonymous to the relay):**
 

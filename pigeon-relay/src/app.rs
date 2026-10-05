@@ -9,12 +9,13 @@ use std::time::Duration;
 
 use axum::routing::get;
 use axum::Router;
+use tokio::sync::Semaphore;
 
 use crate::clock::now;
 use crate::config::RelayConfig;
 use crate::durable::{self, CoordinatorJournal, DurableError, GroupJournal};
 use crate::push::{ApnsGateway, PushRegistry};
-use crate::{coordinator, group, mailbox};
+use crate::{coordinator, group, invite, mailbox};
 
 pub const SUBSCRIBER_CHANNEL_CAPACITY: usize = 256;
 
@@ -23,9 +24,11 @@ pub struct AppState {
     pub(crate) mailbox: mailbox::Service,
     pub(crate) group: group::Service,
     pub(crate) group_admission_difficulty: u8,
+    pub(crate) invite: invite::Service,
     pub(crate) coordinator: coordinator::Service,
     pub(crate) push: Arc<PushRegistry>,
     pub(crate) connection_ids: Arc<AtomicU64>,
+    pub(crate) socket_slots: Arc<Semaphore>,
 }
 
 pub fn build_state(config: RelayConfig) -> Result<AppState, DurableError> {
@@ -45,6 +48,7 @@ pub fn build_state(config: RelayConfig) -> Result<AppState, DurableError> {
         mailbox: mailbox::Service::new(config.mailbox),
         group: group::Service::durable(config.group, group_journal, now())?,
         group_admission_difficulty: config.group_admission_difficulty,
+        invite: invite::Service::open(&config.state_dir, config.invite, now())?,
         coordinator: coordinator::Service::durable(
             config.coordinator,
             signer,
@@ -53,6 +57,7 @@ pub fn build_state(config: RelayConfig) -> Result<AppState, DurableError> {
         )?,
         push: Arc::new(PushRegistry::new(gateway, config.apns_min_interval)),
         connection_ids: Arc::new(AtomicU64::new(1)),
+        socket_slots: Arc::new(Semaphore::new(config.max_connections)),
     })
 }
 
@@ -78,6 +83,7 @@ pub async fn expiry_loop(state: AppState) {
             .mailbox
             .expire(current_time.saturating_sub(state.mailbox.config.ttl_secs));
         state.group.expire(current_time);
+        state.invite.expire(current_time);
         state.coordinator.expire(current_time);
     }
 }
@@ -115,6 +121,7 @@ mod tests {
     fn test_config() -> RelayConfig {
         RelayConfig {
             bind_addr: "127.0.0.1:0".into(),
+            max_connections: 2,
             mailbox: mailbox::store::Config {
                 ttl_secs: 60,
                 max_queue: 8,
@@ -132,6 +139,14 @@ mod tests {
                 max_fetch_batch_bytes: 512,
             },
             group_admission_difficulty: 18,
+            invite: invite::Config {
+                ttl_secs: 60,
+                max_mailboxes: 8,
+                max_entries_per_mailbox: 8,
+                max_entry_bytes: 256,
+                max_total_bytes: 1024,
+                max_deposits_per_minute: 60,
+            },
             coordinator: coordinator::store::Config {
                 max_logs: 8,
                 max_candidates_per_log: 8,
@@ -146,6 +161,18 @@ mod tests {
             coordinator_signing_seed: Some([7; 32]),
             state_dir: tempfile::tempdir().unwrap().keep(),
         }
+    }
+
+    #[test]
+    fn socket_capacity_is_bounded_and_released_on_disconnect() {
+        let config = test_config();
+        let state = build_state(config).unwrap();
+        let first = state.socket_slots.clone().try_acquire_owned().unwrap();
+        let second = state.socket_slots.clone().try_acquire_owned().unwrap();
+        assert!(state.socket_slots.clone().try_acquire_owned().is_err());
+        drop(first);
+        assert!(state.socket_slots.clone().try_acquire_owned().is_ok());
+        drop(second);
     }
 
     #[tokio::test]

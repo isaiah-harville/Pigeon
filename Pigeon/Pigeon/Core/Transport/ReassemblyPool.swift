@@ -5,7 +5,8 @@
 //  Per-source fragment reassemblers for the BLE transport, with a bound on how
 //  many sources are tracked at once.
 //
-//  Each `Reassembler` is itself bounded (64 in-flight messages, 256 KiB each),
+//  Each `Reassembler` is itself bounded (64 in-flight messages, 256 KiB each,
+//  and 4 MiB aggregate fragment payload),
 //  but the number of *sources* was not: a peer that churns identifiers — or
 //  centrals that write to us and never unsubscribe — could otherwise accumulate
 //  reassemblers without limit. Extracted from PeerTransport so the bound is one

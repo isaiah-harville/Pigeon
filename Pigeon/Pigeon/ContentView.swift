@@ -15,15 +15,22 @@ struct ContentView: View {
   /// A contact link tapped elsewhere on the device, owned by the scene so it
   /// survives a launch that hasn't loaded identity yet.
   @Binding var pendingContactCode: String?
+  @Binding var pendingGroupInviteCode: String?
   @State private var showContactImport = false
+  @State private var showGroupInvite = false
 
   var body: some View {
     content
       .preferredColorScheme(appearance.colorScheme)
-      .overlay(alignment: .top) {
-        if let banner = session.banner {
-          bannerView(banner)
-            .transition(.move(edge: .top).combined(with: .opacity))
+      .safeAreaInset(edge: .top) {
+        VStack(spacing: 0) {
+          if !session.isPersistenceHealthy {
+            storageErrorView
+          }
+          if let banner = session.banner {
+            bannerView(banner)
+              .transition(.move(edge: .top).combined(with: .opacity))
+          }
         }
       }
       .animation(.spring(duration: 0.3), value: session.banner)
@@ -31,11 +38,20 @@ struct ContentView: View {
       .onChange(of: pendingContactCode) { presentContactImportIfReady() }
       .onChange(of: session.isUnlocked) { presentContactImportIfReady() }
       .onChange(of: session.myName) { presentContactImportIfReady() }
+      .onChange(of: pendingGroupInviteCode) { presentGroupInviteIfReady() }
+      .onChange(of: session.isUnlocked) { presentGroupInviteIfReady() }
+      .onChange(of: session.myName) { presentGroupInviteIfReady() }
       .sheet(isPresented: $showContactImport, onDismiss: clearPendingContactCode) {
         // Keyed on the code so a second link arriving while the sheet is open
         // rebuilds the view; `initialCode` is only read when it's constructed.
         AddContactView(initialCode: pendingContactCode ?? "")
           .id(pendingContactCode)
+      }
+      .sheet(isPresented: $showGroupInvite, onDismiss: clearPendingGroupInviteCode) {
+        JoinGroupView(initialCode: pendingGroupInviteCode ?? "") { link in
+          (try? session.requestGroupInviteJoin(link)) != nil
+        }
+        .id(pendingGroupInviteCode)
       }
   }
 
@@ -67,6 +83,22 @@ struct ContentView: View {
     .onTapGesture { session.dismissBanner() }
   }
 
+  private var storageErrorView: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Label("Storage error", systemImage: "externaldrive.badge.exclamationmark")
+        .font(.headline)
+      Text(
+        "Messaging is paused to protect your encryption state. "
+          + "Close and reopen Pigeon after checking available storage."
+      )
+      .font(.subheadline)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding()
+    .background(.red.opacity(0.15))
+    .accessibilityAddTraits(.isStaticText)
+  }
+
   private var appearance: AppAppearance {
     AppAppearance(rawValue: appearanceValue) ?? .system
   }
@@ -81,6 +113,15 @@ struct ContentView: View {
 
   private func clearPendingContactCode() {
     pendingContactCode = nil
+  }
+
+  private func presentGroupInviteIfReady() {
+    guard pendingGroupInviteCode != nil, session.isUnlocked, !session.myName.isEmpty else { return }
+    showGroupInvite = true
+  }
+
+  private func clearPendingGroupInviteCode() {
+    pendingGroupInviteCode = nil
   }
 }
 

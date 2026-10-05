@@ -1,5 +1,6 @@
 mod checkpoint;
 mod group_creation;
+mod group_invite;
 mod group_messaging;
 mod group_policy;
 mod group_recovery;
@@ -9,7 +10,9 @@ use checkpoint::{decode_checkpoint, encode_checkpoint};
 use sha2::{Digest, Sha256};
 
 use crate::Error;
-use crate::client::{ClientCommand, ClientOutput, ClientSnapshot, GroupMessageOutcome};
+use crate::client::{
+    ClientCommand, ClientOutput, ClientSnapshot, GroupInviteEnvelopeOutcome, GroupMessageOutcome,
+};
 use crate::group::{PigeonGroupPolicy, group_relay_challenge_transcript, relay_capability_id};
 use crate::identity::PlatformAccount;
 use crate::identity::{IdentityPurpose, SecureIdentity};
@@ -52,6 +55,8 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 pending_group_recoveries: Vec::new(),
                 pending_group_acknowledgements: Vec::new(),
                 pending_group_leaves: Vec::new(),
+                group_invites: Vec::new(),
+                group_invite_joins: Vec::new(),
             },
         };
         Ok(Self {
@@ -74,6 +79,65 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         let mut candidate = self.state.clone();
         let mut output = ClientOutput::empty(candidate.generation + 1);
         match command.inner.body.as_ref().ok_or(Error::MalformedBundle)? {
+            proto::client_command::Body::CreateGroupInvite(value) => {
+                self.stage_create_group_invite(value, &mut candidate)?
+            }
+            proto::client_command::Body::RevokeGroupInvite(value) => {
+                self.stage_revoke_group_invite(value, &mut candidate)?
+            }
+            proto::client_command::Body::StartGroupInviteJoin(value) => self
+                .stage_start_group_invite_join(
+                    &command.inner.command_id,
+                    value,
+                    &mut candidate,
+                    &mut output,
+                )?,
+            proto::client_command::Body::ApplyGroupInviteInboxEnvelope(value) => {
+                let pristine = candidate.clone();
+                match self.stage_apply_group_invite_inbox_envelope(
+                    &command.inner.command_id,
+                    value,
+                    &mut candidate,
+                    &mut output,
+                ) {
+                    Ok(()) => output.invite_envelope_outcome = GroupInviteEnvelopeOutcome::Accepted,
+                    Err(error) if is_rejected_invite_envelope(&error) => {
+                        candidate = pristine;
+                        output = ClientOutput::empty(candidate.generation + 1);
+                        output.invite_envelope_outcome = GroupInviteEnvelopeOutcome::Rejected;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            proto::client_command::Body::DecideGroupInviteRequest(value) => self
+                .stage_decide_group_invite_request(
+                    &command.inner.command_id,
+                    value,
+                    &mut candidate,
+                    &mut output,
+                )?,
+            proto::client_command::Body::ApplyGroupInviteReply(value) => {
+                let pristine = candidate.clone();
+                match self.stage_apply_group_invite_reply(
+                    &command.inner.command_id,
+                    value,
+                    &mut candidate,
+                    &mut output,
+                ) {
+                    Ok(()) => output.invite_envelope_outcome = GroupInviteEnvelopeOutcome::Accepted,
+                    Err(error) if is_rejected_invite_envelope(&error) => {
+                        candidate = pristine;
+                        output = ClientOutput::empty(candidate.generation + 1);
+                        output.invite_envelope_outcome = GroupInviteEnvelopeOutcome::Rejected;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            proto::client_command::Body::RefreshGroupInvites(value) => {
+                if !self.stage_refresh_group_invites(value.now_ms, &mut candidate)? {
+                    return Ok(ClientOutput::empty(self.state.generation));
+                }
+            }
             proto::client_command::Body::CreateGroup(create) => {
                 self.stage_create_group(
                     &command.inner.command_id,
@@ -284,6 +348,19 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             }
         }
 
+        if let Some(proto::client_command::Body::ApplyInbound(inbound)) =
+            command.inner.body.as_ref()
+            && inbound.kind == proto::OutboundKind::GroupCoordinator as i32
+            && inbound.now_ms > 0
+        {
+            self.stage_flush_public_group_invites(
+                &command.inner.command_id,
+                inbound.now_ms,
+                &mut candidate,
+                &mut output,
+            )?;
+        }
+
         self.stage_flush_full_acknowledgement_batches(
             &command.inner.command_id,
             &mut candidate,
@@ -436,6 +513,8 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 pending_events: self.state.pending_events.clone(),
                 pairwise_prekey_bundle,
                 pairwise_contacts,
+                group_invites: self.group_invite_snapshot()?,
+                group_invite_joins: self.group_invite_join_snapshot()?,
             },
         })
     }
@@ -547,6 +626,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                                 .map_err(|_| Error::MalformedBundle)?,
                             payload: control.payload,
                             request_id: inbound.request_id.clone(),
+                            now_ms: inbound.now_ms,
                         };
                         match proto::OutboundKind::try_from(inner.kind)
                             .map_err(|_| Error::MalformedBundle)?
@@ -685,6 +765,21 @@ fn is_rejected_sequenced_input(error: &Error) -> bool {
             | Error::GroupPolicy(_)
             | Error::Mls(_)
             | Error::Decryption(_)
+    )
+}
+
+fn is_rejected_invite_envelope(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::InvalidKey
+            | Error::InvalidSignature
+            | Error::MalformedBundle
+            | Error::Serialization
+            | Error::ResourceLimit(_)
+            | Error::UnsupportedVersion { .. }
+            | Error::Decryption(_)
+            | Error::NotAPreKeyMessage
+            | Error::SessionCreation(_)
     )
 }
 

@@ -19,7 +19,7 @@ extension SessionManager {
     meshEnabled: Bool
   ) async throws -> PigeonCoreOutput {
     guard Self.isValidGroupName(name) else { throw GroupCreationError.invalidName }
-    guard (2..<Self.maximumGroupMembers).contains(memberIDs.count),
+    guard memberIDs.count < Self.maximumGroupMembers,
       !memberIDs.contains(myID)
     else { throw GroupCreationError.invalidRoster }
     guard let scheme = relayURL.scheme?.lowercased(),
@@ -196,6 +196,8 @@ extension SessionManager {
   func applyCoreSnapshot(_ snapshot: PigeonCoreSnapshot) {
     guard snapshot.checkpointGeneration >= coreSnapshotGeneration else { return }
     groups = snapshot.groups
+    groupInvites = snapshot.groupInvites
+    groupInviteJoins = snapshot.groupInviteJoins
     pendingGroupRegistrationIDs = pendingGroupRegistrations(in: snapshot)
     let sendersWithPendingEvents = Set(
       snapshot.pendingEvents.compactMap { event -> Data? in
@@ -238,6 +240,7 @@ extension SessionManager {
     try absorbCoreEvents(snapshot.pendingEvents)
     let refreshed = try coreClient.stateSnapshot()
     groupRelay.reconfigure(snapshot: refreshed)
+    reconfigureGroupInviteRelay(snapshot: refreshed)
     fanOutGroupMesh(snapshot: refreshed)
     fanOutPairwiseMesh(snapshot: refreshed)
     if relay != nil {
@@ -322,7 +325,8 @@ extension SessionManager {
       let inbound = try PigeonApplyInbound.coordinatorCandidate(
         receipt: receipt,
         candidate: candidate,
-        requestID: requestID)
+        requestID: requestID,
+        nowMilliseconds: Int64(Date().timeIntervalSince1970 * 1_000))
       try executeCore(
         PigeonCoreCommand(
           id: "group-coordinator:\(requestID)",

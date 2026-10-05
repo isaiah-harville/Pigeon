@@ -198,6 +198,21 @@ impl FfiClient {
             .sign_group_relay_challenge(group_id, nonce)?
             .to_vec())
     }
+
+    /// Signs a nonce with the short-lived invite or reply mailbox key held in
+    /// the sealed client checkpoint. The key never crosses the FFI boundary.
+    pub fn sign_group_invite_mailbox_challenge(
+        &self,
+        address: Vec<u8>,
+        nonce: Vec<u8>,
+    ) -> Result<Vec<u8>, PigeonError> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| PigeonError::Persistence)?
+            .sign_group_invite_mailbox_challenge(&address, &nonce)?
+            .to_vec())
+    }
 }
 
 fn purpose_request(purpose: IdentityPurpose) -> IdentityPurposeRequest {

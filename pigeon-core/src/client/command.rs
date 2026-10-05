@@ -442,6 +442,7 @@ impl ClientCommand {
                     kind: kind as i32,
                     payload,
                     request_id: request_id.into(),
+                    now_ms: 0,
                 },
             )),
         };
@@ -674,6 +675,7 @@ impl ClientCommand {
                     kind: kind as i32,
                     payload,
                     request_id: command_id,
+                    now_ms: 0,
                 },
             )),
         };

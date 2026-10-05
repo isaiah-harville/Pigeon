@@ -11,6 +11,7 @@ public enum PigeonCoreWireError: Error, Equatable, Sendable {
   case notRelayAction(PigeonCoreOutboundKind)
   case malformedRelayAction
   case invalidGroupMessageOutcome(Int)
+  case invalidGroupInviteEnvelopeOutcome(Int)
 }
 
 extension FfiClient {
@@ -31,6 +32,10 @@ extension FfiClient {
   public func relayChallengeSignature(groupID: Data, nonce: Data) throws -> Data {
     try signGroupRelayChallenge(groupId: groupID, nonce: nonce)
   }
+
+  public func inviteMailboxChallengeSignature(address: Data, nonce: Data) throws -> Data {
+    try signGroupInviteMailboxChallenge(address: address, nonce: nonce)
+  }
 }
 
 extension PigeonCoreOutput {
@@ -43,6 +48,13 @@ extension PigeonCoreOutput {
     case .accepted: groupMessageOutcome = .accepted
     case .rejected: groupMessageOutcome = .rejected
     case .UNRECOGNIZED(let value): throw PigeonCoreWireError.invalidGroupMessageOutcome(value)
+    }
+    switch proto.inviteEnvelopeOutcome {
+    case .unspecified: inviteEnvelopeOutcome = .unspecified
+    case .accepted: inviteEnvelopeOutcome = .accepted
+    case .rejected: inviteEnvelopeOutcome = .rejected
+    case .UNRECOGNIZED(let value):
+      throw PigeonCoreWireError.invalidGroupInviteEnvelopeOutcome(value)
     }
   }
 }
@@ -280,6 +292,9 @@ extension PigeonCoreOutboundKind {
     case .groupRelayRegistration: self = .groupRelayRegistration
     case .groupRelayControl: self = .groupRelayControl
     case .groupLeaveProposal: self = .groupLeaveProposal
+    case .groupInviteRequest: self = .groupInviteRequest
+    case .groupInviteReply: self = .groupInviteReply
+    case .groupInviteMaterial: self = .groupInviteMaterial
     case .UNRECOGNIZED(let raw): self = .unknown(raw)
     }
   }
@@ -297,6 +312,9 @@ extension PigeonCoreOutboundKind {
     case .groupRelayRegistration: return .groupRelayRegistration
     case .groupRelayControl: return .groupRelayControl
     case .groupLeaveProposal: return .groupLeaveProposal
+    case .groupInviteRequest: return .groupInviteRequest
+    case .groupInviteReply: return .groupInviteReply
+    case .groupInviteMaterial: return .groupInviteMaterial
     case .unknown(let raw): throw PigeonCoreWireError.invalidOutboundKind(raw)
     }
   }

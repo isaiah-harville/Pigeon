@@ -176,7 +176,8 @@ extension PigeonApplyInbound {
   public static func coordinatorCandidate(
     receipt: PigeonCoordinatorReceipt,
     candidate: Data,
-    requestID: String
+    requestID: String,
+    nowMilliseconds: Int64 = 0
   ) throws -> Self {
     guard receipt.coordinationID.count == 32,
       receipt.priorReceiptHash.count == 32,
@@ -200,6 +201,7 @@ extension PigeonApplyInbound {
     return try Self(
       kind: .groupCoordinator,
       payload: wireCandidate.serializedData(),
-      requestID: requestID)
+      requestID: requestID,
+      nowMilliseconds: nowMilliseconds)
   }
 }

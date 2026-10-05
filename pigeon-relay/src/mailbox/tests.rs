@@ -75,7 +75,7 @@ fn register_push(
     mailbox: Option<&str>,
     token: String,
 ) {
-    mailbox_register_push(&state.push, tx, mailbox, token);
+    mailbox_register_push(&state.push, tx, mailbox, false, token);
 }
 
 fn register_subscriber(
@@ -464,6 +464,41 @@ fn register_push_rejected_when_no_gateway() {
         ServerMsg::Error { message, .. } => assert_eq!(message, "push not supported"),
         other => panic!("expected an Error reply, got {other:?}"),
     }
+}
+
+#[test]
+fn invite_mailbox_cannot_register_a_device_token() {
+    let st = state(3600, 100);
+    let (tx, mut rx) = channel();
+    mailbox_register_push(&st.push, &tx, Some(&addr(1)), true, "aabbccdd".into());
+    match rx.try_recv().unwrap() {
+        ServerMsg::Error { message, .. } => assert_eq!(message, "invite push not supported"),
+        other => panic!("expected an Error reply, got {other:?}"),
+    }
+}
+
+#[test]
+fn pairwise_mailbox_limits_concurrent_backlog_readers() {
+    let st = state(3600, 100);
+    let address = addr(1);
+    let (first, _first_rx) = channel();
+    let (second, _second_rx) = channel();
+    let (third, _third_rx) = channel();
+    assert!(mailbox_register_subscriber(&st.mailbox, &address, 1, first));
+    assert!(mailbox_register_subscriber(
+        &st.mailbox,
+        &address,
+        2,
+        second
+    ));
+    assert!(!mailbox_register_subscriber(
+        &st.mailbox,
+        &address,
+        3,
+        third.clone()
+    ));
+    mailbox_remove_subscriber(&st.mailbox, &address, 1);
+    assert!(mailbox_register_subscriber(&st.mailbox, &address, 3, third));
 }
 
 #[test]

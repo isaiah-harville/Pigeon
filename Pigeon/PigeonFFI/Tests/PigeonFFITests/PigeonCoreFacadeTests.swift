@@ -107,6 +107,47 @@ final class PigeonCoreFacadeTests: XCTestCase {
     XCTAssertTrue(flush.groupID.isEmpty)
   }
 
+  func testInviteCommandsAndSnapshotMapAcrossProtobuf() throws {
+    let groupID = Data(repeating: 1, count: 32)
+    let create = try PigeonCoreCommand(
+      id: "invite",
+      body: .createGroupInvite(
+        PigeonCreateGroupInvite(
+          groupID: groupID, publicMode: false,
+          expiresAtMilliseconds: 200, nowMilliseconds: 100))
+    )
+    .proto()
+    XCTAssertEqual(create.createGroupInvite.groupID, groupID)
+    XCTAssertEqual(create.createGroupInvite.mode, .private)
+
+    let request = try PigeonCoreCommand(
+      id: "receive",
+      body: .applyGroupInviteInboxEnvelope(
+        PigeonApplyGroupInviteInboxEnvelope(
+          inboxAddress: groupID, ciphertext: Data([2]), nowMilliseconds: 100))
+    )
+    .proto()
+    XCTAssertEqual(request.applyGroupInviteInboxEnvelope.inboxAddress, groupID)
+    XCTAssertEqual(request.applyGroupInviteInboxEnvelope.ciphertext, Data([2]))
+
+    var proto = Pigeon_Wire_V1_ClientSnapshot()
+    var invite = Pigeon_Wire_V1_GroupInviteState()
+    invite.ticket = Data([3])
+    var pending = Pigeon_Wire_V1_GroupInviteRequestState()
+    pending.requestID = Data([4])
+    pending.requesterIdentity = Data([5])
+    pending.progress = .pending
+    invite.requests = [pending]
+    proto.groupInvites = [invite]
+    let snapshot = try PigeonCoreSnapshot(proto: proto)
+    XCTAssertEqual(snapshot.groupInvites[0].ticket, Data([3]))
+    XCTAssertEqual(snapshot.groupInvites[0].requests[0].progress, .pending)
+
+    var output = Pigeon_Wire_V1_ClientOutput()
+    output.inviteEnvelopeOutcome = .rejected
+    XCTAssertEqual(try PigeonCoreOutput(proto: output).inviteEnvelopeOutcome, .rejected)
+  }
+
   func testFacadeMapsEveryEventAndPreservesUnknownEnums() throws {
     var output = Pigeon_Wire_V1_ClientOutput()
     output.checkpointGeneration = 12

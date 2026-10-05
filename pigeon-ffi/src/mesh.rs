@@ -345,7 +345,8 @@ pub struct Reassembler {
 
 #[uniffi::export]
 impl Reassembler {
-    /// A reassembler with the default bounds (256 KiB / 64 concurrent messages).
+    /// A reassembler with the default bounds (256 KiB per message, 64
+    /// concurrent messages, and 4 MiB buffered fragment payload total).
     #[uniffi::constructor]
     pub fn new() -> Arc<Self> {
         Arc::new(Self {

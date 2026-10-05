@@ -30,6 +30,14 @@ pub struct ClientOutput {
     pub events: Vec<AppEvent>,
     pub outbound: Vec<OutboundItem>,
     pub group_message_outcome: GroupMessageOutcome,
+    pub invite_envelope_outcome: GroupInviteEnvelopeOutcome,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GroupInviteEnvelopeOutcome {
+    Unspecified,
+    Accepted,
+    Rejected,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -57,6 +65,7 @@ impl ClientOutput {
             events: Vec::new(),
             outbound: Vec::new(),
             group_message_outcome: GroupMessageOutcome::Unspecified,
+            invite_envelope_outcome: GroupInviteEnvelopeOutcome::Unspecified,
         }
     }
 
@@ -77,6 +86,13 @@ impl ClientOutput {
                 GroupMessageOutcome::Unspecified => proto::GroupMessageOutcome::Unspecified,
                 GroupMessageOutcome::Accepted => proto::GroupMessageOutcome::Accepted,
                 GroupMessageOutcome::Rejected => proto::GroupMessageOutcome::Rejected,
+            } as i32,
+            invite_envelope_outcome: match self.invite_envelope_outcome {
+                GroupInviteEnvelopeOutcome::Unspecified => {
+                    proto::GroupInviteEnvelopeOutcome::Unspecified
+                }
+                GroupInviteEnvelopeOutcome::Accepted => proto::GroupInviteEnvelopeOutcome::Accepted,
+                GroupInviteEnvelopeOutcome::Rejected => proto::GroupInviteEnvelopeOutcome::Rejected,
             } as i32,
         }
         .encode_to_vec()

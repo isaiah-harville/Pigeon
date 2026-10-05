@@ -5,7 +5,7 @@ extension PigeonCoreCommand {
     var command = Pigeon_Wire_V1_ClientCommand()
     command.version = 1
     command.commandID = id
-    if try encodeGroupBody(into: &command) {
+    if try encodeInviteBody(into: &command) || encodeGroupBody(into: &command) {
       return command
     }
     guard try encodePairwiseBody(into: &command) else {
@@ -48,6 +48,21 @@ extension PigeonCoreCommand {
       command.flushGroupAcknowledgements = flush
     default:
       return false
+    }
+    return true
+  }
+
+  private func encodeInviteBody(into command: inout Pigeon_Wire_V1_ClientCommand) -> Bool {
+    switch body {
+    case .createGroupInvite(let value): command.createGroupInvite = value.proto()
+    case .revokeGroupInvite(let value): command.revokeGroupInvite = value.proto()
+    case .startGroupInviteJoin(let value): command.startGroupInviteJoin = value.proto()
+    case .applyGroupInviteInboxEnvelope(let value):
+      command.applyGroupInviteInboxEnvelope = value.proto()
+    case .decideGroupInviteRequest(let value): command.decideGroupInviteRequest = value.proto()
+    case .applyGroupInviteReply(let value): command.applyGroupInviteReply = value.proto()
+    case .refreshGroupInvites(let value): command.refreshGroupInvites = value.proto()
+    default: return false
     }
     return true
   }
@@ -111,6 +126,7 @@ extension PigeonApplyInbound {
     body.kind = try kind.proto()
     body.payload = payload
     body.requestID = requestID
+    body.nowMs = nowMilliseconds
     return body
   }
 }

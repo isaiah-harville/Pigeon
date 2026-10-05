@@ -181,6 +181,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     kind: proto::OutboundKind::Unspecified as i32,
                     payload: payload.clone(),
                     request_id: inbound.request_id.clone(),
+                    now_ms: inbound.now_ms,
                 };
                 match kind {
                     RecoveryControlKind::Proposal => {

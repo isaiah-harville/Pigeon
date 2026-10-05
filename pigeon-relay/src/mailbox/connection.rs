@@ -11,16 +11,20 @@ use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{FromRef, State};
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use rand::RngCore;
 use tokio::sync::mpsc;
+use tokio::sync::Semaphore;
+use tokio::time::{timeout_at, Duration, Instant};
 
 use super::protocol::{gate_protocol_message, ClientMsg, ProtocolGate, ServerMsg};
 use super::store::is_valid_address;
 use crate::app::{AppState, SUBSCRIBER_CHANNEL_CAPACITY};
+use crate::invite;
 use crate::mailbox::{
     ack, flush_queue, publish, register_push, remove_subscriber, switch_subscription,
     verify_ownership, Service,
@@ -32,6 +36,8 @@ pub struct ConnectionState {
     service: Service,
     push: Arc<PushRegistry>,
     message_ids: Arc<AtomicU64>,
+    invite: invite::Service,
+    socket_slots: Arc<Semaphore>,
 }
 
 impl FromRef<AppState> for ConnectionState {
@@ -40,6 +46,8 @@ impl FromRef<AppState> for ConnectionState {
             service: state.mailbox.clone(),
             push: state.push.clone(),
             message_ids: state.connection_ids.clone(),
+            invite: state.invite.clone(),
+            socket_slots: state.socket_slots.clone(),
         }
     }
 }
@@ -48,7 +56,15 @@ pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<ConnectionState>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+    let Ok(slot) = state.socket_slots.clone().try_acquire_owned() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    ws.max_message_size(512 * 1024)
+        .on_upgrade(move |socket| async move {
+            let _slot = slot;
+            handle_socket(socket, state).await;
+        })
+        .into_response()
 }
 
 async fn handle_socket(socket: WebSocket, state: ConnectionState) {
@@ -72,11 +88,25 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
     });
 
     // Per-connection auth state.
-    let mut pending_challenge: Option<(String, Vec<u8>)> = None; // (mailbox, nonce)
+    let mut pending_challenge: Option<(String, Vec<u8>, bool)> = None; // (mailbox, nonce, invite)
     let mut authed_mailbox: Option<String> = None;
+    let mut authed_invite = false;
     let mut negotiated = false;
+    let mut selected_version = 0;
+    let handshake_deadline = Instant::now() + Duration::from_secs(60);
 
-    while let Some(Ok(msg)) = ws_rx.next().await {
+    loop {
+        let next = if authed_mailbox.is_some() {
+            ws_rx.next().await
+        } else {
+            match timeout_at(handshake_deadline, ws_rx.next()).await {
+                Ok(message) => message,
+                Err(_) => break,
+            }
+        };
+        let Some(Ok(msg)) = next else {
+            break;
+        };
         let text = match msg {
             Message::Text(t) => t,
             Message::Close(_) => break,
@@ -93,12 +123,19 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
 
         let cmsg = match gate_protocol_message(cmsg, &mut negotiated) {
             ProtocolGate::Reply(response) => {
+                if let ServerMsg::Compatible {
+                    protocol_version, ..
+                } = &response
+                {
+                    selected_version = *protocol_version;
+                }
                 let _ = tx.try_send(response);
                 continue;
             }
             ProtocolGate::Proceed(message) => message,
         };
 
+        let is_invite_subscribe = matches!(&cmsg, ClientMsg::InviteSubscribe { .. });
         match cmsg {
             ClientMsg::Publish {
                 recipient,
@@ -115,7 +152,68 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
                     request_id,
                 );
             }
-            ClientMsg::Subscribe { mailbox } => {
+            ClientMsg::InvitePublish {
+                recipient,
+                ciphertext,
+                request_id,
+            } => {
+                if selected_version < 3 {
+                    let _ = tx.try_send(ServerMsg::Error {
+                        message: "protocol version 3 required".into(),
+                        request_id,
+                    });
+                    continue;
+                }
+                if request_id
+                    .as_ref()
+                    .is_some_and(|id| id.is_empty() || id.len() > 128 || !id.is_ascii())
+                {
+                    let _ = tx.try_send(ServerMsg::Error {
+                        message: "invalid request id".into(),
+                        request_id: None,
+                    });
+                    continue;
+                }
+                let Some(mailbox) = hex::decode(&recipient)
+                    .ok()
+                    .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+                else {
+                    let _ = tx.try_send(ServerMsg::Error {
+                        message: "invalid recipient".into(),
+                        request_id,
+                    });
+                    continue;
+                };
+                let result = state
+                    .invite
+                    .deposit(mailbox, ciphertext, crate::clock::now());
+                match result {
+                    Ok(id) => {
+                        let _ = tx.try_send(ServerMsg::Published { id, request_id });
+                    }
+                    Err(invite::StoreError::AtCapacity) => {
+                        let _ = tx.try_send(ServerMsg::Error {
+                            message: "relay at capacity".into(),
+                            request_id,
+                        });
+                    }
+                    Err(invite::StoreError::InvalidCiphertext) => {
+                        let _ = tx.try_send(ServerMsg::Error {
+                            message: "invalid ciphertext".into(),
+                            request_id,
+                        });
+                    }
+                }
+            }
+            ClientMsg::Subscribe { mailbox } | ClientMsg::InviteSubscribe { mailbox } => {
+                let is_invite = is_invite_subscribe;
+                if is_invite && selected_version < 3 {
+                    let _ = tx.try_send(ServerMsg::Error {
+                        message: "protocol version 3 required".into(),
+                        request_id: None,
+                    });
+                    continue;
+                }
                 if !is_valid_address(&mailbox) {
                     let _ = tx.try_send(ServerMsg::Error {
                         message: "invalid mailbox".into(),
@@ -128,10 +226,10 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
                 let _ = tx.try_send(ServerMsg::Challenge {
                     nonce: B64.encode(&nonce),
                 });
-                pending_challenge = Some((mailbox, nonce));
+                pending_challenge = Some((mailbox, nonce, is_invite));
             }
             ClientMsg::Auth { signature } => {
-                let Some((mailbox, nonce)) = pending_challenge.take() else {
+                let Some((mailbox, nonce, is_invite)) = pending_challenge.take() else {
                     let _ = tx.try_send(ServerMsg::Error {
                         message: "subscribe first".into(),
                         request_id: None,
@@ -144,18 +242,44 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
                     // dedup at the mesh layer). Re-authenticating to a different
                     // mailbox drops the previous registration, which the
                     // disconnect path (last mailbox only) would otherwise strand.
-                    switch_subscription(
-                        &state.service,
-                        authed_mailbox.as_deref(),
-                        &mailbox,
-                        conn_id,
-                        tx.clone(),
-                    );
+                    if is_invite {
+                        let address: [u8; 32] = hex::decode(&mailbox).unwrap().try_into().unwrap();
+                        if !state.invite.subscribe(address, conn_id, tx.clone()) {
+                            let _ = tx.try_send(ServerMsg::Error {
+                                message: "invite subscriber capacity".into(),
+                                request_id: None,
+                            });
+                            continue;
+                        }
+                    }
+                    if let Some(previous) = authed_mailbox.as_deref() {
+                        if authed_invite && (!is_invite || previous != mailbox) {
+                            let address: [u8; 32] =
+                                hex::decode(previous).unwrap().try_into().unwrap();
+                            state.invite.unsubscribe(address, conn_id);
+                        } else if is_invite {
+                            remove_subscriber(&state.service, previous, conn_id);
+                        }
+                    }
+                    if !is_invite {
+                        switch_subscription(
+                            &state.service,
+                            (!authed_invite)
+                                .then_some(authed_mailbox.as_deref())
+                                .flatten(),
+                            &mailbox,
+                            conn_id,
+                            tx.clone(),
+                        );
+                    }
                     authed_mailbox = Some(mailbox.clone());
-                    let _ = tx.try_send(ServerMsg::Ok {
-                        detail: "authenticated".into(),
-                    });
-                    flush_queue(&state.service, &mailbox, &tx);
+                    authed_invite = is_invite;
+                    if !is_invite {
+                        let _ = tx.try_send(ServerMsg::Ok {
+                            detail: "authenticated".into(),
+                        });
+                        flush_queue(&state.service, &mailbox, &tx);
+                    }
                 } else {
                     let _ = tx.try_send(ServerMsg::Error {
                         message: "authentication failed".into(),
@@ -165,7 +289,12 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
             }
             ClientMsg::Ack { id } => {
                 if let Some(mailbox) = &authed_mailbox {
-                    ack(&state.service, mailbox, &id);
+                    if authed_invite {
+                        let address: [u8; 32] = hex::decode(mailbox).unwrap().try_into().unwrap();
+                        state.invite.ack(address, &id).unwrap();
+                    } else {
+                        ack(&state.service, mailbox, &id);
+                    }
                 } else {
                     let _ = tx.try_send(ServerMsg::Error {
                         message: "not authenticated".into(),
@@ -174,10 +303,23 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
                 }
             }
             ClientMsg::RegisterPush { token } => {
-                register_push(&state.push, &tx, authed_mailbox.as_deref(), token);
+                register_push(
+                    &state.push,
+                    &tx,
+                    authed_mailbox.as_deref(),
+                    authed_invite,
+                    token,
+                );
             }
             ClientMsg::UnregisterPush { token } => {
                 if let Some(mailbox) = &authed_mailbox {
+                    if authed_invite {
+                        let _ = tx.try_send(ServerMsg::Error {
+                            message: "invite push not supported".into(),
+                            request_id: None,
+                        });
+                        continue;
+                    }
                     state.push.unregister(mailbox, &token);
                     let _ = tx.try_send(ServerMsg::Ok {
                         detail: "push unregistered".into(),
@@ -194,7 +336,12 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
     }
 
     if let Some(mailbox) = authed_mailbox {
-        remove_subscriber(&state.service, &mailbox, conn_id);
+        if authed_invite {
+            let address: [u8; 32] = hex::decode(&mailbox).unwrap().try_into().unwrap();
+            state.invite.unsubscribe(address, conn_id);
+        } else {
+            remove_subscriber(&state.service, &mailbox, conn_id);
+        }
     }
     writer.abort();
 }

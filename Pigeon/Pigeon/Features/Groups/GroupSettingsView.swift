@@ -96,6 +96,7 @@ extension GroupSettingsView {
         ownerControls(group)
         recoveryControls(group)
         membersSection(group)
+        GroupInviteSettingsSection(groupID: groupID, group: group)
         securitySection
         destructiveSection(group)
         errorSection
@@ -301,8 +302,8 @@ extension GroupSettingsView {
 
   private func isOwner(_ group: PigeonGroupState) -> Bool { group.ownerIdentity == session.myID }
 
-  private func isAdmin(_ group: PigeonGroupState) -> Bool {
-    group.adminIdentities.contains(session.myID)
+  private func isAdmin(_ grp: PigeonGroupState) -> Bool {
+    grp.adminIdentities.contains(session.myID)
   }
 
   private func canManage(_ identity: Data, in group: PigeonGroupState) -> Bool {
@@ -369,9 +370,7 @@ extension GroupSettingsView {
         stringValue: stringValue, boolValue: boolValue)
       confirmation = nil
     } catch {
-      errorMessage =
-        "The change was not staged. Another group change may still be pending, "
-        + "or your role may not allow it."
+      errorMessage = "Could not save the change. Check your role and pending group changes."
     }
   }
 }

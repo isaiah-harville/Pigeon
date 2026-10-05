@@ -1,6 +1,7 @@
 # Pigeon — Roadmap
 
-Pigeon is an open-source messenger built for **extreme privacy and security**
+Pigeon is a source-available messenger with open-source protocol, mesh, and relay
+packages, built for **extreme privacy and security**
 across offline-capable local transports and federated server transports.
 Messages can travel end-to-end encrypted over a **Bluetooth Low Energy mesh**,
 or over an **optional zero-knowledge relay** for peers out of local range on
@@ -20,7 +21,7 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 - **Topology:** transport-flexible encrypted mesh — BLE today, relays in
   progress, and other links later. Every transport forwards ciphertext it cannot
   read.
-- **Remote delivery:** opt-in, self-hostable **zero-knowledge relay** (blind
+- **Remote delivery:** on by default and user-controllable, self-hostable **zero-knowledge relay** (blind
   ciphertext mailbox; federation-friendly) for peers out of local range. Relays
   are a first-class transport option but are never trusted for confidentiality,
   authentication, or integrity.
@@ -83,7 +84,7 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 - **Delivery confidence** — an honest **Sent → Delivered** status under each
   outbound message (Delivered only on the recipient's end-to-end ack), with a
   "Not delivered" + resend affordance when a message genuinely couldn't be dispatched.
-- **Relay transport (remote delivery)** — opt-in `RelayTransport` + a self-hostable
+- **Relay transport (remote delivery)** — enabled on a fresh install, with a user-controlled `RelayTransport` + a self-hostable
   zero-knowledge mailbox server (Rust, axum/tokio, Docker→GHCR). Carries the same
   E2E ciphertext to peers out of local range: per-recipient **addressed** delivery
   (no fan-out), **federation** (each peer advertises their relays in the QR card and
@@ -98,11 +99,11 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
   deterministic invite tie-break avoids forming two sessions per pair. Foreground-only
   (background reach is the relay's job); needs the local-network/Bonjour Info.plist
   entries. **Wi-Fi Aware** stays a Horizon item (Multipeer already covers same-network).
-- **Push wake-up (APNs via the official relay)** — opt-in, content-free push that
+- **Push wake-up (APNs via the official relay)** — enabled on a fresh install, with user-controllable content-free push that
   wakes a backgrounded app to drain its mailbox (decrypt still happens on unlock).
   Relay token registration over the authenticated `/ws` handshake, a config-gated
   APNs gateway that fires the content-free alert on deposit (coalesced, 410 token
-  eviction), and app-side opt-in. Only the app publisher can hold the APNs key, so
+  eviction), and app-side opt-out. Only the app publisher can hold the APNs key, so
   this can't be federated; self-hosted/third-party relays simply don't push. The
   payload is empty, so **confidentiality is untouched**; it does expose wake metadata
   (device token ↔ "has mail at time T") to the gateway and Apple — a deliberate,
@@ -125,6 +126,9 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
   mailbox and signed commit coordinator. Groups support 1–128 members, a
   permanent owner, delegated admins, post-join history, owner-controlled name,
   owner-controlled explicit mesh opt-in, member leave, and permanent dissolve.
+  Shareable link/QR invites for up to 128 members use anonymous, encrypted relay
+  inboxes: public links are handled automatically by an online admin, while
+  private links require admin approval. Neither mode requires an account.
   The implementation includes adversarial state-machine tests, authenticated
   coordinator failover without owner availability, atomic capability rotation,
   and transactional crash recovery. Physical multi-device and locked-delivery
@@ -197,7 +201,7 @@ Several are audit blockers (see [SECURITY_MODEL.md](SECURITY_MODEL.md) → Audit
   relay) and a single content-free notification is posted; they decrypt once the
   user unlocks (the message vault stays biometric-gated — no background
   decryption, deliberately). iOS still *suspends* a backgrounded app, which is why
-  the opt-in **push wake-up** (Shipped) exists to nudge it awake to drain its mailbox.
+  the default-on **push wake-up** (Shipped) exists to nudge it awake to drain its mailbox.
 
 *Resolved:* multi-path duplicate delivery (mesh dedup); identity↔Olm-key binding
 (the Ed25519 identity signs Olm's Curve25519 identity key); one-sided-restart

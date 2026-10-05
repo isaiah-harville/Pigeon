@@ -362,10 +362,12 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Pigeon/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Pigeon;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Pigeon uses Bluetooth to discover nearby devices and exchange end-to-end encrypted messages over the local mesh.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Pigeon uses the camera to scan a contact's QR code so you can verify their identity in person.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Pigeon uses Face ID to unlock your locally stored, encrypted messages.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Pigeon uses the local network to discover nearby devices and exchange end-to-end encrypted messages over Wi-Fi when you're on the same network.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -416,10 +418,12 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Pigeon/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Pigeon;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Pigeon uses Bluetooth to discover nearby devices and exchange end-to-end encrypted messages over the local mesh.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Pigeon uses the camera to scan a contact's QR code so you can verify their identity in person.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Pigeon uses Face ID to unlock your locally stored, encrypted messages.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Pigeon uses the local network to discover nearby devices and exchange end-to-end encrypted messages over Wi-Fi when you're on the same network.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;

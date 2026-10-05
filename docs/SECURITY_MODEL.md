@@ -6,7 +6,8 @@
 > audit report, and Pigeon should not yet be relied on against a real
 > adversary. See [Audit Readiness](#audit-readiness-pre-audit-notes).
 
-Pigeon is an open-source messenger built for **extreme privacy and security**
+Pigeon is a source-available messenger with open-source protocol, mesh, and relay
+packages, built for **extreme privacy and security**
 across offline-capable local transports and federated server transports.
 In-range, messages can travel end-to-end encrypted over a local **Bluetooth Low
 Energy mesh**. For peers who are **out of local range and on different
@@ -48,8 +49,6 @@ device; there is nothing to register with a central Pigeon service.
 - Anonymity against an adversary observing local Bluetooth radio.
 - Strong metadata privacy (who talks to whom, when, message sizes/timing).
 - Protection from a compromised or unlocked endpoint device.
-- Asynchronous first contact (messaging a peer who has never been in range) —
-  deferred; see §6.
 - Multi-device identity sync.
 
 ---
@@ -73,7 +72,7 @@ device; there is nothing to register with a central Pigeon service.
 ├──────────────────────────────────────────────┤
 │ Transport (`Transport` protocol)  pluggable pipes│
 │   • BLE: CoreBluetooth central+peripheral · GATT │
-│   • Relay (opt-in): blind ciphertext mailbox     │
+│   • Relay (default on): blind ciphertext mailbox │
 │   moves opaque ciphertext only · runs concurrently│
 ├──────────────────────────────────────────────┤
 │ pigeon-core (Rust, via PigeonFFI XCFramework)    │

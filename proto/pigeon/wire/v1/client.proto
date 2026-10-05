@@ -3,6 +3,7 @@ syntax = "proto3";
 package pigeon.wire.v1;
 
 import "pigeon/wire/v1/group.proto";
+import "pigeon/wire/v1/identity.proto";
 import "pigeon/wire/v1/pairwise.proto";
 
 message ClientCommand {
@@ -25,6 +26,13 @@ message ClientCommand {
     RecoverGroup recover_group = 23;
     BeginGroupRecovery begin_group_recovery = 24;
     FlushGroupAcknowledgements flush_group_acknowledgements = 25;
+    CreateGroupInvite create_group_invite = 26;
+    RevokeGroupInvite revoke_group_invite = 27;
+    StartGroupInviteJoin start_group_invite_join = 28;
+    ApplyGroupInviteInboxEnvelope apply_group_invite_inbox_envelope = 29;
+    DecideGroupInviteRequest decide_group_invite_request = 30;
+    ApplyGroupInviteReply apply_group_invite_reply = 31;
+    RefreshGroupInvites refresh_group_invites = 32;
   }
 }
 
@@ -97,6 +105,46 @@ message CreateGroup {
   bytes coordinator_public_key = 5;
 }
 
+message CreateGroupInvite {
+  bytes group_id = 1;
+  GroupInviteMode mode = 2;
+  int64 expires_at_ms = 3;
+  int64 now_ms = 4;
+}
+
+message RevokeGroupInvite {
+  bytes inbox_address = 1;
+}
+
+message StartGroupInviteJoin {
+  bytes ticket = 1;
+  int64 now_ms = 2;
+}
+
+message ApplyGroupInviteInboxEnvelope {
+  bytes inbox_address = 1;
+  bytes ciphertext = 2;
+  int64 now_ms = 3;
+}
+
+message DecideGroupInviteRequest {
+  bytes inbox_address = 1;
+  bytes request_id = 2;
+  bool approve = 3;
+  int64 now_ms = 4;
+}
+
+message ApplyGroupInviteReply {
+  bytes reply_address = 1;
+  bytes ciphertext = 2;
+  int64 now_ms = 3;
+}
+
+message RefreshGroupInvites {
+  int64 now_ms = 1;
+}
+
+
 message SendGroupMessage {
   bytes group_id = 1;
   string message_id = 2;
@@ -109,6 +157,9 @@ message ApplyInbound {
   OutboundKind kind = 1;
   bytes payload = 2;
   string request_id = 3;
+  // Host wall clock for expiry checks when a coordinator receipt releases
+  // public invite requests queued behind another group mutation.
+  int64 now_ms = 4;
 }
 
 message ChangeGroupPolicy {
@@ -177,6 +228,9 @@ enum OutboundKind {
   OUTBOUND_KIND_GROUP_RELAY_REGISTRATION = 8;
   OUTBOUND_KIND_GROUP_RELAY_CONTROL = 9;
   OUTBOUND_KIND_GROUP_LEAVE_PROPOSAL = 10;
+  OUTBOUND_KIND_GROUP_INVITE_REQUEST = 14;
+  OUTBOUND_KIND_GROUP_INVITE_REPLY = 15;
+  OUTBOUND_KIND_GROUP_INVITE_MATERIAL = 16;
 }
 
 message OutboundItem {
@@ -193,6 +247,13 @@ message ClientOutput {
   repeated AppEvent events = 2;
   repeated OutboundItem outbound = 3;
   GroupMessageOutcome group_message_outcome = 4;
+  GroupInviteEnvelopeOutcome invite_envelope_outcome = 5;
+}
+
+enum GroupInviteEnvelopeOutcome {
+  GROUP_INVITE_ENVELOPE_OUTCOME_UNSPECIFIED = 0;
+  GROUP_INVITE_ENVELOPE_OUTCOME_ACCEPTED = 1;
+  GROUP_INVITE_ENVELOPE_OUTCOME_REJECTED = 2;
 }
 
 // Set only for an ApplyInbound group message. A rejected result is returned
@@ -213,6 +274,36 @@ message ClientSnapshot {
   repeated AppEvent pending_events = 4;
   bytes pairwise_prekey_bundle = 5;
   repeated PairwiseContactState pairwise_contacts = 6;
+  repeated GroupInviteState group_invites = 7;
+  repeated GroupInviteJoinState group_invite_joins = 8;
+}
+
+enum GroupInviteProgress {
+  GROUP_INVITE_PROGRESS_UNSPECIFIED = 0;
+  GROUP_INVITE_PROGRESS_PENDING = 1;
+  GROUP_INVITE_PROGRESS_APPROVED = 2;
+  GROUP_INVITE_PROGRESS_REJECTED = 3;
+  GROUP_INVITE_PROGRESS_EXPIRED = 4;
+  GROUP_INVITE_PROGRESS_FULL = 5;
+  GROUP_INVITE_PROGRESS_JOINED = 6;
+}
+
+message GroupInviteRequestState {
+  bytes request_id = 1;
+  bytes requester_identity = 2;
+  GroupInviteProgress progress = 3;
+}
+
+message GroupInviteState {
+  bytes ticket = 1;
+  repeated GroupInviteRequestState requests = 2;
+}
+
+message GroupInviteJoinState {
+  bytes ticket = 1;
+  bytes request_id = 2;
+  bytes reply_address = 3;
+  GroupInviteProgress progress = 4;
 }
 
 message PairwiseContactState {
@@ -269,6 +360,26 @@ message ClientCheckpoint {
   repeated PendingGroupRecovery pending_group_recoveries = 21;
   repeated PendingGroupAcknowledgement pending_group_acknowledgements = 22;
   repeated PendingGroupLeave pending_group_leaves = 23;
+  repeated StoredGroupInvite group_invites = 24;
+  repeated StoredGroupInviteJoin group_invite_joins = 25;
+}
+
+message StoredGroupInvite {
+  bytes ticket = 1;
+  bytes inbox_state = 2;
+  repeated StoredGroupInviteRequest requests = 3;
+}
+
+message StoredGroupInviteRequest {
+  bytes intent = 1;
+  GroupInviteProgress progress = 2;
+}
+
+message StoredGroupInviteJoin {
+  bytes ticket = 1;
+  bytes request_id = 2;
+  bytes reply_inbox_state = 3;
+  GroupInviteProgress progress = 4;
 }
 
 message PendingGroupLeave {

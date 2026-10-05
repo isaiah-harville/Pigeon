@@ -18,6 +18,7 @@ struct ChatsListView: View {
   @State private var showMenu = false
   @State private var showContacts = false
   @State private var showCreateGroup = false
+  @State private var showJoinGroup = false
   /// The chat to push in *this* (home) stack. Set when a contact is opened from
   /// the contacts sheet, applied after the sheet dismisses so the chat opens in
   /// the real navigation stack rather than inside the sheet.
@@ -51,23 +52,6 @@ struct ChatsListView: View {
     }
     .navigationTitle("Pigeon")
     .navigationBarTitleDisplayMode(.inline)
-    .safeAreaInset(edge: .top) {
-      if !session.isPersistenceHealthy {
-        VStack(alignment: .leading, spacing: 4) {
-          Label("Storage error", systemImage: "externaldrive.badge.exclamationmark")
-            .font(.headline)
-          Text(
-            "Messaging is paused to protect your encryption state. "
-              + "Close and reopen Pigeon after checking available storage."
-          )
-          .font(.subheadline)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(.red.opacity(0.15))
-        .accessibilityAddTraits(.isStaticText)
-      }
-    }
     .refreshable { await session.refreshChats() }
     .toolbar { toolbarContent }
     .navigationDestination(item: $openedChatID) { id in
@@ -83,6 +67,11 @@ struct ChatsListView: View {
     }
     .sheet(isPresented: $showMenu) { MenuView() }
     .sheet(isPresented: $showCreateGroup) { CreateGroupView() }
+    .sheet(isPresented: $showJoinGroup) {
+      JoinGroupView { link in
+        (try? session.requestGroupInviteJoin(link)) != nil
+      }
+    }
     .sheet(isPresented: $showContacts, onDismiss: openPendingChat) {
       ContactsListView { contactID in
         pendingChatID = contactID
@@ -117,6 +106,12 @@ struct ChatsListView: View {
         .foregroundStyle(.primary)
     }
     ToolbarItemGroup(placement: .topBarTrailing) {
+      Button {
+        showJoinGroup = true
+      } label: {
+        Image(systemName: "person.badge.plus")
+      }
+      .accessibilityLabel("Join group")
       Button {
         showCreateGroup = true
       } label: {
@@ -161,6 +156,7 @@ extension ChatsListView {
   private var contactList: some View {
     List {
       messageRequestsSection
+      PendingGroupInvitesSection()
       groupRows
       chatRows
     }

@@ -12,6 +12,13 @@ public struct PigeonCoreCommand: Equatable, Sendable {
     case beginGroupRecovery(PigeonBeginGroupRecovery)
     /// Sends queued group delivery receipts for one group, or every group when nil.
     case flushGroupAcknowledgements(groupID: Data?)
+    case createGroupInvite(PigeonCreateGroupInvite)
+    case revokeGroupInvite(PigeonRevokeGroupInvite)
+    case startGroupInviteJoin(PigeonStartGroupInviteJoin)
+    case applyGroupInviteInboxEnvelope(PigeonApplyGroupInviteInboxEnvelope)
+    case decideGroupInviteRequest(PigeonDecideGroupInviteRequest)
+    case applyGroupInviteReply(PigeonApplyGroupInviteReply)
+    case refreshGroupInvites(PigeonRefreshGroupInvites)
     case ensurePairwiseAccount
     case registerPairwiseContact(PigeonRegisterPairwiseContact)
     case sendPairwiseControl(PigeonSendPairwiseControl)
@@ -78,11 +85,16 @@ public struct PigeonApplyInbound: Equatable, Sendable {
   public let kind: PigeonCoreOutboundKind
   public let payload: Data
   public let requestID: String
+  public let nowMilliseconds: Int64
 
-  public init(kind: PigeonCoreOutboundKind, payload: Data, requestID: String) {
+  public init(
+    kind: PigeonCoreOutboundKind, payload: Data, requestID: String,
+    nowMilliseconds: Int64 = 0
+  ) {
     self.kind = kind
     self.payload = payload
     self.requestID = requestID
+    self.nowMilliseconds = nowMilliseconds
   }
 }
 
@@ -120,6 +132,9 @@ public enum PigeonCoreOutboundKind: Equatable, Sendable {
   case groupRelayRegistration
   case groupRelayControl
   case groupLeaveProposal
+  case groupInviteRequest
+  case groupInviteReply
+  case groupInviteMaterial
   case unknown(Int)
 }
 
@@ -158,6 +173,8 @@ public struct PigeonCoreSnapshot: Equatable, Sendable {
   /// matching core-owned account has been durably initialized.
   public let pairwisePrekeyBundle: Data
   public let pairwiseContacts: [PigeonPairwiseContactState]
+  public let groupInvites: [PigeonGroupInviteState]
+  public let groupInviteJoins: [PigeonGroupInviteJoinState]
 
   public init(
     checkpointGeneration: UInt64,
@@ -165,7 +182,9 @@ public struct PigeonCoreSnapshot: Equatable, Sendable {
     pendingOutbound: [PigeonCoreOutboundItem] = [],
     pendingEvents: [PigeonCoreEvent] = [],
     pairwisePrekeyBundle: Data = Data(),
-    pairwiseContacts: [PigeonPairwiseContactState] = []
+    pairwiseContacts: [PigeonPairwiseContactState] = [],
+    groupInvites: [PigeonGroupInviteState] = [],
+    groupInviteJoins: [PigeonGroupInviteJoinState] = []
   ) {
     self.checkpointGeneration = checkpointGeneration
     self.groups = groups
@@ -173,6 +192,8 @@ public struct PigeonCoreSnapshot: Equatable, Sendable {
     self.pendingEvents = pendingEvents
     self.pairwisePrekeyBundle = pairwisePrekeyBundle
     self.pairwiseContacts = pairwiseContacts
+    self.groupInvites = groupInvites
+    self.groupInviteJoins = groupInviteJoins
   }
 }
 

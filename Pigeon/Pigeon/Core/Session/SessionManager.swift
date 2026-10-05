@@ -81,10 +81,13 @@ final class SessionManager {
   private var coreCheckpointStore: CoreCheckpointStore?
   @ObservationIgnored private(set) lazy var groupRelay = makeGroupRelay()
   @ObservationIgnored private(set) lazy var pairwiseRelay = makePairwiseRelay()
+  @ObservationIgnored private(set) lazy var groupInviteRelay = makeGroupInviteRelay()
   @ObservationIgnored var resolveGroupCoordinatorKey = GroupRelayCoordinatorKey.resolve
   /// Authenticated group projection rebuilt from the Rust checkpoint. It is
   /// never persisted separately, so it cannot drift across a crash boundary.
   var groups: [PigeonGroupState] = []
+  var groupInvites: [PigeonGroupInviteState] = []
+  var groupInviteJoins: [PigeonGroupInviteJoinState] = []
   var pendingGroupRegistrationIDs: Set<Data> = []
   var groupRelayCapacityLimited: Set<Data> = []
   var groupConversations: [Data: GroupConversation] = [:]
@@ -184,6 +187,7 @@ final class SessionManager {
     applyCoreSnapshot(coreSnapshot)
     restoreLoadedState(loaded)
     applyCoreSnapshot(coreSnapshot)
+    try refreshGroupInvites()
     try registerPairwiseContacts()
     guard persist() else { throw SessionPersistenceError.unreadableStore }
     guard purgeExpiredIncomingRequests(now: Date()) else {
@@ -192,6 +196,7 @@ final class SessionManager {
     try absorbCoreEvents(coreSnapshot.pendingEvents)
     let refreshedCoreSnapshot = try coreClient.stateSnapshot()
     groupRelay.reconfigure(snapshot: refreshedCoreSnapshot)
+    reconfigureGroupInviteRelay(snapshot: refreshedCoreSnapshot)
     fanOutGroupMesh(snapshot: refreshedCoreSnapshot)
     fanOutPairwiseMesh(snapshot: refreshedCoreSnapshot)
     if relay != nil {

@@ -36,6 +36,7 @@ struct PigeonApp: App {
   /// `ContentView` isn't in the hierarchy yet. `ContentView` presents it once the
   /// app is unlocked and past onboarding.
   @State private var pendingContactCode: String?
+  @State private var pendingGroupInviteCode: String?
 
   init() {
     let startup = Self.loadServices()
@@ -71,11 +72,14 @@ struct PigeonApp: App {
   @ViewBuilder
   private var rootContent: some View {
     if let services {
-      ContentView(pendingContactCode: $pendingContactCode)
-        .environment(services.identity)
-        .environment(services.session)
-        .environment(vault)
-        .environment(\.cleanSlateAction, CleanSlateAction(perform: performCleanSlate))
+      ContentView(
+        pendingContactCode: $pendingContactCode,
+        pendingGroupInviteCode: $pendingGroupInviteCode
+      )
+      .environment(services.identity)
+      .environment(services.session)
+      .environment(vault)
+      .environment(\.cleanSlateAction, CleanSlateAction(perform: performCleanSlate))
     } else {
       StartupRecoveryView(message: startupError)
     }
@@ -86,8 +90,11 @@ struct PigeonApp: App {
   /// Adding still needs an explicit confirmation in the sheet.
   private func queueContactImport(_ url: URL) {
     let code = url.absoluteString
-    guard ContactCard(scanned: code) != nil else { return }
-    pendingContactCode = code
+    if ContactCard(scanned: code) != nil {
+      pendingContactCode = code
+    } else if GroupInviteLink(scanned: code) != nil {
+      pendingGroupInviteCode = code
+    }
   }
 
   /// Builds the services once, if we don't already have them. Idempotent.
