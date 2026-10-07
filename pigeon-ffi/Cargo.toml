@@ -19,7 +19,7 @@ name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
 
 [dependencies]
-pigeon-core = { version = "=0.2.0", path = "../pigeon-core" }
+pigeon-core = { version = "=0.2.1", path = "../pigeon-core" }
 # The transport-agnostic mesh core, surfaced to Swift through this same bridge
 # so the app links one XCFramework. pigeon-mesh stays binding-free itself.
 pigeon-mesh = { version = "=0.2.0", path = "../pigeon-mesh" }

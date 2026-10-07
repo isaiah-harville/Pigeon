@@ -109,20 +109,28 @@ impl Service {
             }
         }
         let pending = store.fetch(mailbox).expect("invite fetch failed");
-        if tx.capacity() < pending.len() + 1 {
+        if tx.is_closed() || tx.capacity() < pending.len() + 1 {
             return false;
         }
-        tx.try_send(ServerMsg::Ok {
-            detail: "authenticated".into(),
-        })
-        .expect("checked channel capacity");
-        for envelope in pending {
-            tx.try_send(ServerMsg::Envelope {
-                id: envelope.id,
-                ciphertext: envelope.ciphertext,
-                ts: envelope.timestamp,
+        if tx
+            .try_send(ServerMsg::Ok {
+                detail: "authenticated".into(),
             })
-            .expect("checked channel capacity");
+            .is_err()
+        {
+            return false;
+        }
+        for envelope in pending {
+            if tx
+                .try_send(ServerMsg::Envelope {
+                    id: envelope.id,
+                    ciphertext: envelope.ciphertext,
+                    ts: envelope.timestamp,
+                })
+                .is_err()
+            {
+                return false;
+            }
         }
         let subscribers = store.subscribers.entry(mailbox).or_default();
         subscribers.push(Subscriber { connection_id, tx });

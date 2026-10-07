@@ -43,7 +43,10 @@ markdown_extensions:
 
 nav:
   - Overview: index.md
+  - How It Works: HOW_IT_WORKS.md
   - Security Model: SECURITY_MODEL.md
+  - Security Review: SECURITY_REVIEW.md
+  - Delivery and Privacy: DELIVERY_AND_PRIVACY.md
   - Host a Relay: host-a-relay.md
   - Releases: RELEASING.md
   - API Reference: api-reference.md

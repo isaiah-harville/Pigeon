@@ -79,6 +79,19 @@ fn authenticated_subscriber_receives_live_durable_deposit() {
 }
 
 #[test]
+fn closed_subscriber_does_not_panic_or_poison_invite_store() {
+    let directory = tempfile::tempdir().unwrap();
+    let service = super::Service::open(directory.path(), config(), 1).unwrap();
+    let address = [7; 32];
+    service.deposit(address, "opaque".into(), 1).unwrap();
+    let (tx, rx) = mpsc::channel(4);
+    drop(rx);
+
+    assert!(!service.subscribe(address, 42, tx));
+    assert_eq!(service.0.lock().unwrap().fetch(address).unwrap().len(), 1);
+}
+
+#[test]
 fn total_byte_quota_counts_utf8_bytes() {
     let directory = tempfile::tempdir().unwrap();
     let mut limits = config();

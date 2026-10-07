@@ -1,6 +1,6 @@
 [package]
 name = "pigeon-relay"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 description = "Pigeon's zero-knowledge, federated ciphertext relay (blind mailbox)."
 license = "AGPL-3.0-only"
@@ -28,6 +28,6 @@ jsonwebtoken = "10"
 rusqlite = { version = "0.40", features = ["bundled"] }
 
 [dev-dependencies]
-pigeon-core = { version = "=0.2.0", path = "../pigeon-core" }
+pigeon-core = { version = "=0.2.1", path = "../pigeon-core" }
 tower = { version = "0.5", features = ["util"] }
 tempfile = "3"
