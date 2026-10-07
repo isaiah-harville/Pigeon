@@ -135,6 +135,12 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
   validation remain release gates. Metadata minimization and independent
   cryptographic review remain audit-readiness work; do not describe Pigeon as
   audited or production-secure without that evidence.
+- **Identity move (1.4.0)** — a local, owner-confirmed move transfers the
+  identity keys, current pairwise and MLS checkpoint, and group registration
+  state to a new phone without saved messages. The old phone rotates its
+  identity after the destination durably stages the archive. Reinstall with a
+  surviving Keychain identity requires an explicit fresh start. Physical
+  two-phone interruption and locked-delivery checks remain release gates.
 - **UI polish** — ongoing refinement of chat/contacts.
 - **Security hardening / audit prep** — work toward the audit blockers below:
   traffic-analysis resistance (padding/cover traffic), key zeroization,

@@ -130,6 +130,25 @@ sessions in `pigeon-core`). The mesh layer relays opaque ciphertext;
   must re-compare in person.
 - **Identity reset** generates a fresh key, irreversibly invalidating all
   existing trust relationships. This is, and must remain, user-visible.
+- A reinstall that loses the app container but retains the Keychain identity
+  stops at a recovery screen. Starting fresh requires device-owner
+  authentication, erases the old store family and scoped keys, and rotates both
+  the root identity and vault key. A checkpoint continuity marker also prevents
+  an existing installation from silently recreating missing core state.
+- A phone-to-phone move requires the unlocked old phone and fresh owner
+  authentication. Both phones compare a 12-digit code derived from an ephemeral
+  P-256 key agreement. Directional AES-GCM frames carry the root seed, scoped
+  signing seeds, the live core checkpoint, contacts, and group metadata over
+  nearby transport. Saved direct and group message history is excluded. The
+  receiving phone stages identity seeds in ThisDeviceOnly Keychain slots and
+  the checkpoint under a random staged vault key. It activates only after
+  recording a root-signed retirement receipt sent after the old phone's
+  Clean Slate completes. An unretired staged move can be discarded only after
+  an explicit warning and device-owner authentication. An offline, lost old
+  phone cannot authorize recovery of that identity. If the old phone relaunches
+  with a prepared move record, its session remains frozen before any core
+  transaction or link resubscription; a corrupt record blocks restore. The
+  record is removed before the old session may resume after cancellation.
 
 > **Identity ↔ Olm-key binding:** Olm authenticates a session by its
 > **Curve25519** identity key, while Pigeon's *identity* is **Ed25519**. These are
@@ -312,7 +331,10 @@ valid transition or decrypt content. Pairwise Olm control messages carry join
 requests, join material, and welcomes before a new member can authenticate to
 the group mailbox. They also carry a member's signed leave proposal to current
 admins, allowing any online admin to commit the leave without owner availability.
-Normal group messages are encrypted once with MLS, not fanned out.
+The core rejects signed addressed controls received outside their
+authenticated pairwise wrapper and withholds pending controls until a
+pairwise contact can carry them. Normal group messages are encrypted once
+with MLS, not fanned out.
 
 Clients persist a coordinator receipt sequence independently from the group
 message cursor. A wake drains both bounded streams until empty. A correctly
@@ -320,9 +342,8 @@ signed receipt whose opaque candidate fails MLS or policy validation is consumed
 transactionally and emits a security-warning event; this prevents a malformed
 entry from wedging every later sequence without treating it as valid group state.
 
-Local mesh delivery is an explicit per-group owner opt-in and is off by default.
-Relay and mesh copies use the same authenticated MLS ciphertext and replay
-ledger, so transport duplication cannot produce duplicate application events.
+Group delivery uses the selected relay. The app does not send or accept group
+messages over the local mesh; pairwise chats can still use local transports.
 
 Group delivery receipts are MLS application messages, so only members can read
 which messages they acknowledge. A member queues receipts durably and sends them
@@ -347,11 +368,11 @@ the replacement capability-set hash. When delegated admins exist, a strict
 majority of those non-owner admins must sign with their policy-bound recovery
 keys; the permanent owner is the sole endorser only when no delegated admin
 exists. Proposals and endorsements travel as application data inside the
-existing MLS group, over its current group mailbox or its opt-in mesh path, so
-recovery does not require the owner or failed coordinator to be online. The
-result is an ordinary MLS epoch transition, and stale, replayed, minority, or
-removed-member certificates fail closed. A complete delivery partition still
-prevents progress: recovery restores coordination authority, not connectivity.
+existing MLS group over its current group mailbox. Recovery can proceed without
+the owner while that relay remains reachable; a relay outage blocks proposal
+delivery until connectivity returns. The result is an ordinary MLS epoch
+transition, and stale, replayed, minority, or removed-member certificates fail
+closed. Recovery restores coordination authority, not connectivity.
 
 ---
 

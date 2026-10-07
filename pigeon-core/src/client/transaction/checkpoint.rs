@@ -145,6 +145,12 @@ pub(super) fn decode_checkpoint(
             .iter()
             .any(|hash| hash.len() != 32)
         || state.processed_group_messages.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state.processed_group_messages.iter().any(|processed| {
+            processed.group_id.len() != 32
+                || processed.message_id.len() != 16
+                || !(processed.sender_identity.is_empty() || processed.sender_identity.len() == 32)
+                || !(processed.ciphertext_hash.is_empty() || processed.ciphertext_hash.len() == 32)
+        })
         || state.delivery_ledgers.len() > MAX_PENDING_OUTBOUND_ENTRIES
         || state.buffered_group_messages.len() > MAX_PENDING_OUTBOUND_ENTRIES
         || state.pending_group_mutations.len() > MAX_PENDING_OUTBOUND_ENTRIES
@@ -178,8 +184,15 @@ pub(super) fn decode_checkpoint(
             join.ticket.is_empty()
                 || join.ticket.len() > 4096
                 || join.request_id.len() != 32
-                || join.reply_inbox_state.is_empty()
+                || (join.reply_inbox_state.is_empty() && join.reply_address.len() != 32)
                 || join.reply_inbox_state.len() > 64 * 1024
+                || !(join.reply_address.is_empty() || join.reply_address.len() == 32)
+                || (join.reply_inbox_state.is_empty()
+                    && matches!(
+                        proto::GroupInviteProgress::try_from(join.progress),
+                        Ok(proto::GroupInviteProgress::Pending
+                            | proto::GroupInviteProgress::Approved)
+                    ))
                 || proto::GroupInviteProgress::try_from(join.progress).is_err()
         })
         || state

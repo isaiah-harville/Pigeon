@@ -255,13 +255,14 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             .collect::<Result<Vec<_>, _>>()?;
 
         let released = std::mem::take(&mut output.outbound);
-        output.outbound = released
-            .into_iter()
-            .map(|item| {
-                self.wrap_addressed_control(item.inner, candidate)
-                    .map(|inner| OutboundItem { inner })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        for item in released {
+            let inner = self.wrap_addressed_control(item.inner, candidate)?;
+            if is_addressed_group_control(inner.kind) {
+                candidate.pending_outbound.push(inner);
+            } else {
+                output.outbound.push(OutboundItem { inner });
+            }
+        }
         Ok(())
     }
 
@@ -270,16 +271,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         item: proto::OutboundItem,
         candidate: &mut proto::ClientCheckpoint,
     ) -> Result<proto::OutboundItem, Error> {
-        let Ok(kind) = proto::OutboundKind::try_from(item.kind) else {
-            return Ok(item);
-        };
-        if !matches!(
-            kind,
-            proto::OutboundKind::GroupJoinRequest
-                | proto::OutboundKind::GroupJoinMaterial
-                | proto::OutboundKind::GroupWelcome
-                | proto::OutboundKind::GroupLeaveProposal
-        ) {
+        if !is_addressed_group_control(item.kind) {
             return Ok(item);
         }
         let Ok(recipient) = item.destination.as_slice().try_into() else {
@@ -592,6 +584,16 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         }
         Ok((control, sender_contact_card, suppress_direct_event))
     }
+}
+
+pub(super) fn is_addressed_group_control(kind: i32) -> bool {
+    matches!(
+        proto::OutboundKind::try_from(kind),
+        Ok(proto::OutboundKind::GroupJoinRequest
+            | proto::OutboundKind::GroupJoinMaterial
+            | proto::OutboundKind::GroupWelcome
+            | proto::OutboundKind::GroupLeaveProposal)
+    )
 }
 
 fn verified_incoming_contact(

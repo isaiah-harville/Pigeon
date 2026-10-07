@@ -69,25 +69,69 @@ fn create_group() -> ClientCommand {
     .unwrap()
 }
 
-fn issue_join_material(
-    request: &wire_proto::OutboundItem,
-    member: &TestIdentity,
-    storage: &mut TransactionalOpenMlsStorage,
-) -> GroupJoinMaterial {
-    assert_eq!(
-        request.kind,
-        wire_proto::OutboundKind::GroupJoinRequest as i32
-    );
-    assert_eq!(request.destination, member.root_public());
-    let request = GroupJoinRequest::decode(&request.payload).unwrap();
-    GroupJoinMaterial::issue(
-        member,
-        request.requester_identity(),
-        request.group_id(),
-        request.coordination_id(),
-        storage,
+fn pairwise_prekey(client: &PigeonClient<MemoryStateStore, TestIdentity>) -> Vec<u8> {
+    wire_proto::ClientSnapshot::decode(client.snapshot().unwrap().encode().as_slice())
+        .unwrap()
+        .pairwise_prekey_bundle
+}
+
+fn register_pairwise_peers(
+    left: &mut PigeonClient<MemoryStateStore, TestIdentity>,
+    right: &mut PigeonClient<MemoryStateStore, TestIdentity>,
+    label: &str,
+) {
+    left.execute(ClientCommand::ensure_pairwise_account(format!("{label}-left-account")).unwrap())
+        .unwrap();
+    right
+        .execute(ClientCommand::ensure_pairwise_account(format!("{label}-right-account")).unwrap())
+        .unwrap();
+    let left_prekey = pairwise_prekey(left);
+    let right_prekey = pairwise_prekey(right);
+    left.execute(
+        ClientCommand::register_pairwise_contact(
+            format!("{label}-register-right"),
+            right_prekey,
+            "https://relay.example",
+        )
+        .unwrap(),
     )
-    .unwrap()
+    .unwrap();
+    right
+        .execute(
+            ClientCommand::register_pairwise_contact(
+                format!("{label}-register-left"),
+                left_prekey,
+                "https://relay.example",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+}
+
+fn group_clients() -> (
+    PigeonClient<MemoryStateStore, TestIdentity>,
+    PigeonClient<MemoryStateStore, TestIdentity>,
+    PigeonClient<MemoryStateStore, TestIdentity>,
+) {
+    let mut owner = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(1)).unwrap();
+    let mut bob = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(2)).unwrap();
+    let mut carol = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(3)).unwrap();
+    register_pairwise_peers(&mut owner, &mut bob, "group-bob");
+    register_pairwise_peers(&mut owner, &mut carol, "group-carol");
+    (owner, bob, carol)
+}
+
+fn receive_group_control(
+    recipient: &mut PigeonClient<MemoryStateStore, TestIdentity>,
+    command_id: &str,
+    item: &pigeon_core::OutboundItem,
+) -> pigeon_core::ClientOutput {
+    let payload = wire_proto::OutboundItem::decode(item.encode().as_slice())
+        .unwrap()
+        .payload;
+    recipient
+        .execute(ClientCommand::apply_pairwise_control(command_id, payload).unwrap())
+        .unwrap()
 }
 
 fn coordinator_candidate(
@@ -756,33 +800,70 @@ struct AnchoredGroup {
 
 fn create_anchored_group() -> AnchoredGroup {
     let mut client = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(1)).unwrap();
+    let mut bob = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(2)).unwrap();
+    let mut carol = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(3)).unwrap();
+    for peer in [&mut client, &mut bob, &mut carol] {
+        peer.execute(ClientCommand::ensure_pairwise_account("group-account").unwrap())
+            .unwrap();
+    }
+    let owner_prekey = pairwise_prekey(&client);
+    for (name, peer) in [("bob", &mut bob), ("carol", &mut carol)] {
+        client
+            .execute(
+                ClientCommand::register_pairwise_contact(
+                    format!("register-{name}"),
+                    pairwise_prekey(peer),
+                    "https://relay.example",
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        peer.execute(
+            ClientCommand::register_pairwise_contact(
+                "register-owner",
+                owner_prekey.clone(),
+                "https://relay.example",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    }
     let pending = client.execute(create_group()).unwrap();
     let requests: Vec<_> = pending
         .outbound
         .iter()
         .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
         .collect();
-    let mut bob_storage = TransactionalOpenMlsStorage::new();
-    let mut carol_storage = TransactionalOpenMlsStorage::new();
-    let bob_material = issue_join_material(&requests[0], &TestIdentity::new(2), &mut bob_storage);
-    let carol_material =
-        issue_join_material(&requests[1], &TestIdentity::new(3), &mut carol_storage);
+    let bob_material = bob
+        .execute(
+            ClientCommand::apply_pairwise_control("bob-joins", requests[0].payload.clone())
+                .unwrap(),
+        )
+        .unwrap();
+    let carol_material = carol
+        .execute(
+            ClientCommand::apply_pairwise_control("carol-joins", requests[1].payload.clone())
+                .unwrap(),
+        )
+        .unwrap();
     client
         .execute(
-            ClientCommand::apply_group_join_material(
+            ClientCommand::apply_pairwise_control(
                 "anchor-material-1",
-                "command-1:join:0",
-                bob_material.encode(),
+                wire_proto::OutboundItem::decode(bob_material.outbound[0].encode().as_slice())
+                    .unwrap()
+                    .payload,
             )
             .unwrap(),
         )
         .unwrap();
     let created = client
         .execute(
-            ClientCommand::apply_group_join_material(
+            ClientCommand::apply_pairwise_control(
                 "anchor-material-2",
-                "command-1:join:1",
-                carol_material.encode(),
+                wire_proto::OutboundItem::decode(carol_material.outbound[0].encode().as_slice())
+                    .unwrap()
+                    .payload,
             )
             .unwrap(),
         )
@@ -931,6 +1012,8 @@ fn create_group_with_dave() -> GroupWithDave {
     let group_id = anchored.group_id;
     let coordination_id = anchored.coordination_id;
     let receipt_head = anchored.receipt_head;
+    let mut dave = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(4)).unwrap();
+    register_pairwise_peers(&mut owner, &mut dave, "helper-dave");
     let invited = owner
         .execute(
             ClientCommand::add_group_member(
@@ -943,27 +1026,16 @@ fn create_group_with_dave() -> GroupWithDave {
         .unwrap();
     let request =
         wire_proto::OutboundItem::decode(invited.outbound[0].encode().as_slice()).unwrap();
-    let mut dave = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(4)).unwrap();
     let material_output = dave
         .execute(
-            ClientCommand::apply_group_join_request(
-                "helper-dave-material",
-                request.item_id.clone(),
-                request.payload,
-            )
-            .unwrap(),
+            ClientCommand::apply_pairwise_control("helper-dave-material", request.payload).unwrap(),
         )
         .unwrap();
     let material =
         wire_proto::OutboundItem::decode(material_output.outbound[0].encode().as_slice()).unwrap();
     let staged = owner
         .execute(
-            ClientCommand::apply_group_join_material(
-                "helper-apply-dave",
-                request.item_id,
-                material.payload,
-            )
-            .unwrap(),
+            ClientCommand::apply_pairwise_control("helper-apply-dave", material.payload).unwrap(),
         )
         .unwrap();
     let submission_item =
@@ -988,7 +1060,10 @@ fn create_group_with_dave() -> GroupWithDave {
         .outbound
         .iter()
         .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
-        .find(|item| item.kind == wire_proto::OutboundKind::GroupWelcome as i32)
+        .find(|item| {
+            item.kind == wire_proto::OutboundKind::Pairwise as i32
+                && item.destination == TestIdentity::new(4).root_public()
+        })
         .unwrap();
     let relay_control = merged
         .outbound
@@ -1006,8 +1081,10 @@ fn create_group_with_dave() -> GroupWithDave {
             .unwrap(),
         )
         .unwrap();
-    dave.execute(ClientCommand::apply_group_welcome("helper-join-dave", welcome.payload).unwrap())
-        .unwrap();
+    dave.execute(
+        ClientCommand::apply_pairwise_control("helper-join-dave", welcome.payload).unwrap(),
+    )
+    .unwrap();
     dave.execute(
         ClientCommand::apply_group_coordinator_candidate(
             "helper-anchor-initial",
@@ -1417,16 +1494,10 @@ fn registering_a_contact_wraps_already_pending_group_controls() {
         .unwrap();
 
     let draft = alice.execute(create_group()).unwrap();
-    let direct = draft
-        .outbound
-        .iter()
-        .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
-        .find(|item| item.destination == TestIdentity::new(2).root_public())
-        .unwrap();
-    assert_eq!(
-        direct.kind,
-        wire_proto::OutboundKind::GroupJoinRequest as i32
-    );
+    assert!(draft.outbound.is_empty());
+    let before_registration =
+        wire_proto::ClientSnapshot::decode(alice.snapshot().unwrap().encode().as_slice()).unwrap();
+    assert!(before_registration.pending_outbound.is_empty());
 
     alice
         .execute(
@@ -1443,10 +1514,35 @@ fn registering_a_contact_wraps_already_pending_group_controls() {
     let wrapped = snapshot
         .pending_outbound
         .iter()
-        .find(|item| item.item_id == direct.item_id)
+        .find(|item| item.item_id == "command-1:join:0")
         .unwrap();
     assert_eq!(wrapped.kind, wire_proto::OutboundKind::Pairwise as i32);
     assert_eq!(wrapped.relay_url, "https://bob-relay.example");
+}
+
+#[test]
+fn signed_group_join_request_requires_pairwise_envelope() {
+    let mut bob = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(2)).unwrap();
+    let request = GroupJoinRequest::create(
+        &TestIdentity::new(1),
+        GroupId::from_bytes([7; 32]),
+        [8; 32],
+        "https://relay.example",
+    )
+    .unwrap();
+    let generation = bob.checkpoint_generation();
+    assert!(matches!(
+        bob.execute(
+            ClientCommand::apply_group_join_request(
+                "unwrapped-request",
+                "join-request",
+                request.encode(),
+            )
+            .unwrap(),
+        ),
+        Err(Error::InvalidSignature)
+    ));
+    assert_eq!(bob.checkpoint_generation(), generation);
 }
 
 #[test]
@@ -1568,16 +1664,19 @@ fn checkpoint_rejects_unbounded_idempotency_history() {
 
 #[test]
 fn output_is_released_only_after_the_checkpoint_advances() {
-    let store = MemoryStateStore::default();
-    let mut client = PigeonClient::new(store, TestIdentity::new(1)).unwrap();
+    let (mut client, _, _) = group_clients();
+    let previous_generation = client.checkpoint_generation();
 
     let output = client.execute(create_group()).unwrap();
 
-    assert_eq!(output.checkpoint_generation, 1);
+    assert_eq!(output.checkpoint_generation, previous_generation + 1);
     assert!(output.events.is_empty());
     assert_eq!(output.outbound.len(), 2);
-    assert_eq!(client.checkpoint_generation(), 1);
-    assert_eq!(client.store().load().unwrap().unwrap().generation, 1);
+    assert_eq!(client.checkpoint_generation(), previous_generation + 1);
+    assert_eq!(
+        client.store().load().unwrap().unwrap().generation,
+        previous_generation + 1
+    );
 }
 
 #[test]
@@ -1610,30 +1709,21 @@ fn owner_only_group_is_created_and_durable_in_one_transaction() {
 
 #[test]
 fn final_join_material_atomically_creates_the_real_mls_group() {
-    let owner = TestIdentity::new(1);
-    let bob = TestIdentity::new(2);
-    let carol = TestIdentity::new(3);
-    let mut bob_storage = TransactionalOpenMlsStorage::new();
-    let mut carol_storage = TransactionalOpenMlsStorage::new();
-    let mut client = PigeonClient::new(MemoryStateStore::default(), owner).unwrap();
+    let (mut client, mut bob, mut carol) = group_clients();
 
     let pending = client.execute(create_group()).unwrap();
     assert!(pending.events.is_empty());
     assert_eq!(pending.outbound.len(), 2);
-    let requests: Vec<_> = pending
-        .outbound
-        .iter()
-        .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
-        .collect();
-    let bob_material = issue_join_material(&requests[0], &bob, &mut bob_storage);
-    let carol_material = issue_join_material(&requests[1], &carol, &mut carol_storage);
+    let bob_material = receive_group_control(&mut bob, "bob-material", &pending.outbound[0]);
+    let carol_material = receive_group_control(&mut carol, "carol-material", &pending.outbound[1]);
 
     let one = client
         .execute(
-            ClientCommand::apply_group_join_material(
+            ClientCommand::apply_pairwise_control(
                 "command-2",
-                "command-1:join:0",
-                bob_material.encode(),
+                wire_proto::OutboundItem::decode(bob_material.outbound[0].encode().as_slice())
+                    .unwrap()
+                    .payload,
             )
             .unwrap(),
         )
@@ -1643,15 +1733,19 @@ fn final_join_material_atomically_creates_the_real_mls_group() {
 
     let created = client
         .execute(
-            ClientCommand::apply_group_join_material(
+            ClientCommand::apply_pairwise_control(
                 "command-3",
-                "command-1:join:1",
-                carol_material.encode(),
+                wire_proto::OutboundItem::decode(carol_material.outbound[0].encode().as_slice())
+                    .unwrap()
+                    .payload,
             )
             .unwrap(),
         )
         .unwrap();
-    assert_eq!(created.checkpoint_generation, 3);
+    assert_eq!(
+        created.checkpoint_generation,
+        pending.checkpoint_generation + 2
+    );
     assert_eq!(created.events.len(), 1);
     assert_eq!(created.outbound.len(), 4);
     let event = wire_proto::AppEvent::decode(created.events[0].encode().as_slice()).unwrap();
@@ -1695,7 +1789,10 @@ fn final_join_material_atomically_creates_the_real_mls_group() {
         wire_proto::OutboundKind::GroupCoordinator as i32
     );
     assert_ne!(coordinator.payload, registration_item.payload);
-    assert_eq!(client.checkpoint_generation(), 3);
+    assert_eq!(
+        client.checkpoint_generation(),
+        created.checkpoint_generation
+    );
 }
 
 #[test]
@@ -1765,7 +1862,7 @@ fn relay_challenge_signature_is_bound_to_the_authenticated_group_capability() {
 
 #[test]
 fn outbound_effects_remain_in_the_snapshot_until_explicitly_acknowledged() {
-    let mut client = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(1)).unwrap();
+    let (mut client, _, _) = group_clients();
     let output = client.execute(create_group()).unwrap();
     let first = wire_proto::OutboundItem::decode(output.outbound[0].encode().as_slice()).unwrap();
 
@@ -1786,11 +1883,20 @@ fn outbound_effects_remain_in_the_snapshot_until_explicitly_acknowledged() {
 
 #[test]
 fn one_join_material_cannot_fill_two_group_drafts() {
-    let owner = TestIdentity::new(1);
-    let bob = TestIdentity::new(2);
+    let (mut client, mut bob, _) = group_clients();
     let mut bob_storage = TransactionalOpenMlsStorage::new();
-    let mut client = PigeonClient::new(MemoryStateStore::default(), owner).unwrap();
-    let first = client.execute(create_group()).unwrap();
+    client.execute(create_group()).unwrap();
+    let checkpoint = client.store().load().unwrap().unwrap();
+    let state = wire_proto::ClientCheckpoint::decode(checkpoint.bytes.as_slice()).unwrap();
+    let draft = &state.pending_group_creations[0];
+    let bob_material = GroupJoinMaterial::issue(
+        &TestIdentity::new(2),
+        TestIdentity::new(1).root_public(),
+        GroupId::from_bytes(draft.group_id.as_slice().try_into().unwrap()),
+        draft.coordination_id.as_slice().try_into().unwrap(),
+        &mut bob_storage,
+    )
+    .unwrap();
     client
         .execute(
             ClientCommand::create_group(
@@ -1807,137 +1913,83 @@ fn one_join_material_cannot_fill_two_group_drafts() {
             .unwrap(),
         )
         .unwrap();
-    let first_request =
-        wire_proto::OutboundItem::decode(first.outbound[0].encode().as_slice()).unwrap();
-    let bob_material = issue_join_material(&first_request, &bob, &mut bob_storage);
-    client
+    let first_wrapped = bob
         .execute(
-            ClientCommand::apply_group_join_material(
-                "first-response",
-                "command-1:join:0",
+            ClientCommand::send_pairwise_control(
+                "first-wrapper",
+                TestIdentity::new(1).root_public(),
+                wire_proto::OutboundKind::GroupJoinMaterial,
                 bob_material.encode(),
             )
             .unwrap(),
         )
         .unwrap();
+    receive_group_control(&mut client, "first-response", &first_wrapped.outbound[0]);
+    let generation = client.checkpoint_generation();
 
+    let replay_wrapped = bob
+        .execute(
+            ClientCommand::send_pairwise_control(
+                "second-wrapper",
+                TestIdentity::new(1).root_public(),
+                wire_proto::OutboundKind::GroupJoinMaterial,
+                bob_material.encode(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
     let replay = client.execute(
-        ClientCommand::apply_group_join_material(
+        ClientCommand::apply_pairwise_control(
             "replayed-response",
-            "other-group:join:0",
-            bob_material.encode(),
+            wire_proto::OutboundItem::decode(replay_wrapped.outbound[0].encode().as_slice())
+                .unwrap()
+                .payload,
         )
         .unwrap(),
     );
 
     assert!(matches!(replay, Err(Error::InvalidSignature)));
-    assert_eq!(client.checkpoint_generation(), 3);
+    assert_eq!(client.checkpoint_generation(), generation);
 }
 
 #[test]
 fn member_issues_join_material_only_after_its_checkpoint_advances() {
-    let creator = TestIdentity::new(1);
-    let member = TestIdentity::new(2);
-    let mut creator_client = PigeonClient::new(MemoryStateStore::default(), creator).unwrap();
+    let (mut creator_client, mut member_client, _) = group_clients();
     let pending = creator_client.execute(create_group()).unwrap();
-    let request =
-        wire_proto::OutboundItem::decode(pending.outbound[0].encode().as_slice()).unwrap();
-    let mut member_client = PigeonClient::new(MemoryStateStore::default(), member).unwrap();
+    let prior_generation = member_client.checkpoint_generation();
 
-    let response = member_client
-        .execute(
-            ClientCommand::apply_group_join_request(
-                "member-response",
-                request.item_id,
-                request.payload,
-            )
-            .unwrap(),
-        )
-        .unwrap();
+    let response =
+        receive_group_control(&mut member_client, "member-response", &pending.outbound[0]);
 
-    assert_eq!(response.checkpoint_generation, 1);
-    assert_eq!(member_client.checkpoint_generation(), 1);
+    assert_eq!(response.checkpoint_generation, prior_generation + 1);
+    assert_eq!(member_client.checkpoint_generation(), prior_generation + 1);
     assert!(response.events.is_empty());
     assert_eq!(response.outbound.len(), 1);
     let material =
         wire_proto::OutboundItem::decode(response.outbound[0].encode().as_slice()).unwrap();
-    assert_eq!(
-        material.kind,
-        wire_proto::OutboundKind::GroupJoinMaterial as i32
-    );
+    assert_eq!(material.kind, wire_proto::OutboundKind::Pairwise as i32);
     assert_eq!(material.destination, TestIdentity::new(1).root_public());
-    assert!(GroupJoinMaterial::decode(&material.payload).is_ok());
+    let accepted = receive_group_control(
+        &mut creator_client,
+        "owner-receives-material",
+        &response.outbound[0],
+    );
+    assert!(accepted.events.is_empty());
 }
 
 #[test]
 fn policy_change_persists_before_releasing_a_coordinator_submission() {
-    let owner = TestIdentity::new(1);
-    let bob = TestIdentity::new(2);
-    let carol = TestIdentity::new(3);
-    let mut bob_storage = TransactionalOpenMlsStorage::new();
-    let mut carol_storage = TransactionalOpenMlsStorage::new();
-    let mut client = PigeonClient::new(MemoryStateStore::default(), owner).unwrap();
-    let pending = client.execute(create_group()).unwrap();
-    let requests: Vec<_> = pending
-        .outbound
-        .iter()
-        .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
-        .collect();
-    let bob_material = issue_join_material(&requests[0], &bob, &mut bob_storage);
-    let carol_material = issue_join_material(&requests[1], &carol, &mut carol_storage);
-    client
-        .execute(
-            ClientCommand::apply_group_join_material(
-                "material-1",
-                "command-1:join:0",
-                bob_material.encode(),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-    let created = client
-        .execute(
-            ClientCommand::apply_group_join_material(
-                "material-2",
-                "command-1:join:1",
-                carol_material.encode(),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-    let event = wire_proto::AppEvent::decode(created.events[0].encode().as_slice()).unwrap();
-    let wire_proto::app_event::Body::GroupCreated(created_group) = event.body.unwrap() else {
-        panic!("expected group creation");
-    };
-    let group_id = GroupId::from_bytes(created_group.group_id.try_into().unwrap());
-    let initial_outbound = created
-        .outbound
-        .iter()
-        .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
-        .find(|item| item.kind == wire_proto::OutboundKind::GroupCoordinator as i32)
-        .unwrap();
-    let coordination_id: [u8; 32] = initial_outbound.destination.as_slice().try_into().unwrap();
-    let initial_submission =
-        wire_proto::GroupCoordinatorSubmission::decode(initial_outbound.payload.as_slice())
-            .unwrap();
-    let initial_candidate = coordinator_candidate(&initial_submission, 1, [0; 32], coordination_id);
-    let initial_receipt = CoordinatorReceipt::decode_candidate(&initial_candidate)
-        .unwrap()
-        .0;
-    let anchored = client
-        .execute(
-            ClientCommand::apply_group_coordinator_candidate("initial-receipt", initial_candidate)
-                .unwrap(),
-        )
-        .unwrap();
-    assert!(anchored.events.is_empty());
-    assert!(anchored.outbound.is_empty());
+    let anchored = create_anchored_group();
+    let mut client = anchored.owner;
+    let group_id = anchored.group_id;
+    let coordination_id = anchored.coordination_id;
+    let prior_generation = client.checkpoint_generation();
 
     let staged = client
         .execute(ClientCommand::rename_group("rename-1", group_id, "Best Friends").unwrap())
         .unwrap();
 
-    assert_eq!(staged.checkpoint_generation, 5);
+    assert_eq!(staged.checkpoint_generation, prior_generation + 1);
     assert!(staged.events.is_empty());
     assert_eq!(staged.outbound.len(), 1);
     let outbound =
@@ -1957,20 +2009,15 @@ fn policy_change_persists_before_releasing_a_coordinator_submission() {
             )
             .is_err()
     );
-    assert_eq!(client.checkpoint_generation(), 5);
+    assert_eq!(client.checkpoint_generation(), prior_generation + 1);
 
-    let canonical = coordinator_candidate(
-        &submission,
-        2,
-        initial_receipt.receipt_hash(),
-        coordination_id,
-    );
+    let canonical = coordinator_candidate(&submission, 2, anchored.receipt_head, coordination_id);
     let merged = client
         .execute(
             ClientCommand::apply_group_coordinator_candidate("rename-receipt", canonical).unwrap(),
         )
         .unwrap();
-    assert_eq!(merged.checkpoint_generation, 6);
+    assert_eq!(merged.checkpoint_generation, prior_generation + 2);
     assert!(merged.events.is_empty());
     assert_eq!(merged.outbound.len(), 1);
     let control = wire_proto::OutboundItem::decode(merged.outbound[0].encode().as_slice()).unwrap();
@@ -2049,43 +2096,34 @@ fn membership_changes_release_relay_controls_and_welcome_only_after_canonical_me
     let group_id = anchored.group_id;
     let coordination_id = anchored.coordination_id;
     let receipt_head = anchored.receipt_head;
-    let dave = TestIdentity::new(4);
+    let mut dave_client =
+        PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(4)).unwrap();
+    register_pairwise_peers(&mut owner_client, &mut dave_client, "membership-dave");
     let invited = owner_client
         .execute(
-            ClientCommand::add_group_member("invite-dave", group_id, dave.root_public()).unwrap(),
+            ClientCommand::add_group_member(
+                "invite-dave",
+                group_id,
+                TestIdentity::new(4).root_public(),
+            )
+            .unwrap(),
         )
         .unwrap();
     assert!(invited.events.is_empty());
     assert_eq!(invited.outbound.len(), 1);
     let request =
         wire_proto::OutboundItem::decode(invited.outbound[0].encode().as_slice()).unwrap();
-    assert_eq!(
-        request.kind,
-        wire_proto::OutboundKind::GroupJoinRequest as i32
-    );
-    assert_eq!(request.destination, dave.root_public());
+    assert_eq!(request.kind, wire_proto::OutboundKind::Pairwise as i32);
+    assert_eq!(request.destination, TestIdentity::new(4).root_public());
 
-    let mut dave_client = PigeonClient::new(MemoryStateStore::default(), dave).unwrap();
     let response = dave_client
-        .execute(
-            ClientCommand::apply_group_join_request(
-                "dave-material",
-                request.item_id.clone(),
-                request.payload,
-            )
-            .unwrap(),
-        )
+        .execute(ClientCommand::apply_pairwise_control("dave-material", request.payload).unwrap())
         .unwrap();
     let material =
         wire_proto::OutboundItem::decode(response.outbound[0].encode().as_slice()).unwrap();
     let staged = owner_client
         .execute(
-            ClientCommand::apply_group_join_material(
-                "apply-dave-material",
-                request.item_id,
-                material.payload,
-            )
-            .unwrap(),
+            ClientCommand::apply_pairwise_control("apply-dave-material", material.payload).unwrap(),
         )
         .unwrap();
     assert!(staged.events.is_empty());
@@ -2162,11 +2200,16 @@ fn membership_changes_release_relay_controls_and_welcome_only_after_canonical_me
 
     let welcome = outbound
         .iter()
-        .find(|item| item.kind == wire_proto::OutboundKind::GroupWelcome as i32)
+        .find(|item| {
+            item.kind == wire_proto::OutboundKind::Pairwise as i32
+                && item.destination == TestIdentity::new(4).root_public()
+        })
         .unwrap();
     assert_eq!(welcome.destination, TestIdentity::new(4).root_public());
     let joined = dave_client
-        .execute(ClientCommand::apply_group_welcome("join-dave", welcome.payload.clone()).unwrap())
+        .execute(
+            ClientCommand::apply_pairwise_control("join-dave", welcome.payload.clone()).unwrap(),
+        )
         .unwrap();
     assert_eq!(joined.events.len(), 1);
 

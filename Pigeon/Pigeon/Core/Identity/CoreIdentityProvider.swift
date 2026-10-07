@@ -10,6 +10,7 @@
 import CryptoKit
 import Foundation
 import PigeonFFI
+import Security
 
 protocol IdentityKeyStoreFactory {
   func makeStore(account: String) -> any KeyStore
@@ -23,6 +24,53 @@ private struct KeychainIdentityKeyStoreFactory: IdentityKeyStoreFactory {
 
 final class CoreIdentityProvider: PlatformIdentity, @unchecked Sendable {
   private static let mlsAccount = "identity.mls.ed25519.private"
+
+  static func isScopedIdentityAccount(_ account: String) -> Bool {
+    account == mlsAccount
+      || (account.hasPrefix("identity.group.")
+        && (account.hasSuffix(".capability.ed25519.private")
+          || account.hasSuffix(".recovery.ed25519.private")))
+  }
+
+  /// Removes purpose-scoped keys when the matching core checkpoint is erased.
+  /// A reset must never leave old group signing material in the Keychain.
+  static func deleteStoredScopedKeys() throws {
+    for account in try storedScopedAccounts() {
+      try KeychainStore(account: account).delete()
+    }
+  }
+
+  static func exportStoredScopedKeys() throws -> [String: Data] {
+    var seeds: [String: Data] = [:]
+    for account in try storedScopedAccounts() {
+      guard let seed = try KeychainStore(account: account).get(), seed.count == 32 else {
+        throw PlatformError.InvalidOutput
+      }
+      seeds[account] = seed
+    }
+    return seeds
+  }
+
+  private static func storedScopedAccounts() throws -> [String] {
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: KeychainStore.service,
+      kSecReturnAttributes as String: true,
+      kSecMatchLimit as String: kSecMatchLimitAll,
+    ]
+    var result: CFTypeRef?
+    let status = SecItemCopyMatching(query as CFDictionary, &result)
+    if status == errSecItemNotFound { return [] }
+    guard status == errSecSuccess, let items = result as? [[String: Any]] else {
+      throw KeychainError.unexpectedStatus(status)
+    }
+    return items.compactMap { item in
+      guard let account = item[kSecAttrAccount as String] as? String,
+        isScopedIdentityAccount(account)
+      else { return nil }
+      return account
+    }.sorted()
+  }
 
   private let rootIdentity: IdentityManager
   private let storeFactory: any IdentityKeyStoreFactory

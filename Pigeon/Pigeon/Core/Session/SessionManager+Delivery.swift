@@ -41,7 +41,7 @@ extension SessionManager {
   /// skip limit. That makes the per-contact resend backoff stopgap unnecessary;
   /// the relay still retains each deposited copy, so a later reconnect delivers.
   func flushOnConnectivity() {
-    guard isUnlocked else { return }  // can't decrypt/sign or read contacts yet
+    guard isUnlocked, !isIdentityMoveFrozen else { return }
     expireStaleDeliveries(now: Date())
     for contact in contacts where canUseCorePairwise(with: contact) {
       sendPending(to: contact)

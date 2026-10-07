@@ -35,7 +35,7 @@ final class PigeonCoreFacadeTests: XCTestCase {
     }
   }
 
-  func testPublicFacadeCreatesGroupAndReturnsTypedOutboundActions() throws {
+  func testPublicFacadeWithholdsAddressedControlsUntilPairwiseContact() throws {
     let client = try PigeonCoreClient(identity: Identity(), store: Store())
     let command = PigeonCoreCommand(
       id: "public-create",
@@ -51,20 +51,10 @@ final class PigeonCoreFacadeTests: XCTestCase {
 
     XCTAssertEqual(output.checkpointGeneration, 1)
     XCTAssertEqual(output.events, [])
-    XCTAssertEqual(output.outbound.map(\.kind), [.groupJoinRequest, .groupJoinRequest])
-    XCTAssertEqual(
-      output.outbound.map(\.destination),
-      [Data(repeating: 8, count: 32), Data(repeating: 9, count: 32)])
-
-    var snapshot = try client.stateSnapshot()
-    XCTAssertEqual(snapshot.pendingOutbound.map(\.id), output.outbound.map(\.id))
-    _ = try client.execute(
-      PigeonCoreCommand(
-        id: "ack-first-effect",
-        body: .acknowledgeEffects(
-          PigeonAcknowledgeEffects(outboundItemIDs: [output.outbound[0].id]))))
-    snapshot = try client.stateSnapshot()
-    XCTAssertEqual(snapshot.pendingOutbound.map(\.id), [output.outbound[1].id])
+    XCTAssertTrue(output.outbound.isEmpty)
+    let snapshot = try client.stateSnapshot()
+    XCTAssertEqual(snapshot.checkpointGeneration, 1)
+    XCTAssertTrue(snapshot.pendingOutbound.isEmpty)
   }
 
   func testBeginGroupRecoveryCommandPreservesReplacementCoordinatorContext() throws {

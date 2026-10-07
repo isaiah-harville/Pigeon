@@ -17,7 +17,62 @@ use crate::wire::{
     MAX_PENDING_OUTBOUND_ENTRIES, PROTOCOL_VERSION, proto,
 };
 
+const MAX_BUFFERED_GROUP_MESSAGES: usize = 64;
+
 impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
+    pub(super) fn stage_replay_buffered_group_messages(
+        &self,
+        command_id: &str,
+        group_id: &[u8],
+        epoch: u64,
+        candidate: &mut proto::ClientCheckpoint,
+        output: &mut ClientOutput,
+    ) -> Result<(), Error> {
+        let mut index = 0;
+        let mut replayed = 0;
+        while index < candidate.buffered_group_messages.len() {
+            let buffered = &candidate.buffered_group_messages[index];
+            if buffered.group_id != group_id || buffered.epoch > epoch {
+                index += 1;
+                continue;
+            }
+            let buffered = candidate.buffered_group_messages.remove(index);
+            let before = candidate.clone();
+            let before_output = output.clone();
+            let inbound = proto::ApplyInbound {
+                kind: proto::OutboundKind::GroupMessage as i32,
+                payload: buffered.ciphertext.clone(),
+                request_id: String::new(),
+                now_ms: 0,
+            };
+            if let Err(error) = self.stage_apply_group_message(
+                &format!("{command_id}:buffered:{replayed}"),
+                &inbound,
+                candidate,
+                output,
+            ) {
+                if !super::is_rejected_sequenced_input(&error) {
+                    return Err(error);
+                }
+                *candidate = before;
+                *output = before_output;
+                replayed += 1;
+                continue;
+            }
+            if candidate.pending_events.len() + output.events.len() > MAX_PENDING_OUTBOUND_ENTRIES
+                || candidate.pending_outbound.len() + output.outbound.len()
+                    > MAX_PENDING_OUTBOUND_ENTRIES
+            {
+                *candidate = before;
+                *output = before_output;
+                candidate.buffered_group_messages.insert(index, buffered);
+                break;
+            }
+            replayed += 1;
+        }
+        Ok(())
+    }
+
     pub(super) fn stage_apply_group_message(
         &self,
         command_id: &str,
@@ -26,9 +81,10 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         output: &mut ClientOutput,
     ) -> Result<(), Error> {
         let ciphertext = crate::GroupCiphertext::decode(&inbound.payload)?;
+        let ciphertext_hash = Sha256::digest(&inbound.payload);
         if candidate.processed_group_messages.iter().any(|processed| {
             processed.group_id.as_slice() == ciphertext.group_id().as_bytes()
-                && processed.message_id.as_slice() == ciphertext.message_id().as_bytes()
+                && processed.ciphertext_hash.as_slice() == ciphertext_hash.as_slice()
         }) {
             return Ok(());
         }
@@ -43,7 +99,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             .iter()
             .position(|buffered| {
                 buffered.group_id.as_slice() == ciphertext.group_id().as_bytes()
-                    && buffered.message_id.as_slice() == ciphertext.message_id().as_bytes()
+                    && buffered.ciphertext == inbound.payload
             });
         if ciphertext.epoch() > stored.epoch {
             if buffered_index.is_some() {
@@ -67,6 +123,14 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             TransactionalOpenMlsStorage::from_checkpoint(&candidate.openmls_checkpoint)?;
         let mut engine = GroupEngine::restore(&mls_storage, policy.clone(), stored.epoch)?;
         let received = engine.decrypt_application(&mut mls_storage, &ciphertext)?;
+        if candidate.processed_group_messages.iter().any(|processed| {
+            processed.group_id.as_slice() == received.group_id().as_bytes()
+                && processed.message_id.as_slice() == received.message_id().as_bytes()
+                && processed.sender_identity.as_slice() == received.sender_identity()
+        }) {
+            candidate.openmls_checkpoint = mls_storage.export_checkpoint()?;
+            return Ok(());
+        }
         if candidate.processed_group_messages.len() >= MAX_PENDING_OUTBOUND_ENTRIES {
             candidate.processed_group_messages.remove(0);
         }
@@ -75,6 +139,8 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             .push(proto::ProcessedGroupMessage {
                 group_id: ciphertext.group_id().as_bytes().to_vec(),
                 message_id: ciphertext.message_id().as_bytes().to_vec(),
+                sender_identity: received.sender_identity().to_vec(),
+                ciphertext_hash: ciphertext_hash.to_vec(),
             });
         match received.application() {
             GroupApplication::Text { body, reply_to, .. } => {
@@ -247,30 +313,10 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             .iter()
             .map(|message| message.ciphertext.len())
             .sum();
-        let warning_code = if candidate.buffered_group_messages.len()
-            >= MAX_PENDING_OUTBOUND_ENTRIES
-            || buffered_bytes.saturating_add(inbound.payload.len()) > MAX_FUTURE_EPOCH_BUFFER_BYTES
-        {
-            Some(2)
-        } else {
-            None
-        };
-        if let Some(code) = warning_code {
-            output.events.push(AppEvent {
-                inner: proto::AppEvent {
-                    version: PROTOCOL_VERSION,
-                    event_id: format!("{command_id}:security-warning"),
-                    body: Some(proto::app_event::Body::GroupSecurityWarning(
-                        proto::GroupSecurityWarning {
-                            group_id: ciphertext.group_id().as_bytes().to_vec(),
-                            code,
-                            evidence_id: Sha256::digest(&inbound.payload).to_vec(),
-                            epoch: stored.epoch,
-                        },
-                    )),
-                },
-            });
-            return Ok(());
+        let buffer_full = candidate.buffered_group_messages.len() >= MAX_BUFFERED_GROUP_MESSAGES
+            || buffered_bytes.saturating_add(inbound.payload.len()) > MAX_FUTURE_EPOCH_BUFFER_BYTES;
+        if buffer_full {
+            return Err(Error::FutureEpochBufferFull);
         }
         candidate
             .buffered_group_messages

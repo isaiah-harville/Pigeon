@@ -75,6 +75,7 @@ impl From<pigeon_core::Error> for PigeonError {
             CoreError::Entropy => PigeonError::Entropy,
             CoreError::Serialization => PigeonError::Serialization,
             CoreError::ResourceLimit(_) => PigeonError::ResourceLimit,
+            CoreError::FutureEpochBufferFull => PigeonError::ResourceLimit,
             CoreError::UnsupportedVersion { .. } => PigeonError::UnsupportedVersion,
             CoreError::Persistence(_) => PigeonError::Persistence,
             CoreError::Identity(_) => PigeonError::Identity,

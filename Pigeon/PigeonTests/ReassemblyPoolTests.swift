@@ -5,6 +5,7 @@
 //  The bound on how many BLE sources we track reassembly state for.
 //
 
+import PigeonFFI
 import XCTest
 
 @testable import Pigeon
@@ -52,5 +53,19 @@ final class ReassemblyPoolTests: XCTestCase {
     pool.drop(source)
     XCTAssertFalse(pool.tracks(source))
     XCTAssertEqual(pool.count, 0)
+  }
+
+  func testAggregateFragmentPayloadIsBoundedAcrossSources() throws {
+    var pool = ReassemblyPool()
+    let payload = Data(repeating: 0x42, count: 200_000)
+    for _ in 0..<16 {
+      let source = UUID()
+      for messageID in UInt16(1)...UInt16(2) {
+        _ = try pool.ingest(
+          Fragment(messageId: messageID, index: 0, count: 2, payload: payload),
+          from: source)
+      }
+      XCTAssertLessThanOrEqual(pool.pendingBytes, ReassemblyPool.maxPendingBytes)
+    }
   }
 }

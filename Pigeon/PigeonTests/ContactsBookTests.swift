@@ -43,6 +43,8 @@ final class ContactsBookTests: XCTestCase {
   private func wipe(_ key: SymmetricKey, _ file: String) {
     EncryptedStore(key: key, fileName: file).wipe()
     EncryptedStore(key: key, fileName: file).companion(suffix: ".crypto").wipe()
+    EncryptedStore(key: key, fileName: file)
+      .companion(suffix: CoreCheckpointStore.companionSuffix).wipe()
   }
 
   private func contact(_ manager: SessionManager, _ id: Data) -> Contact {

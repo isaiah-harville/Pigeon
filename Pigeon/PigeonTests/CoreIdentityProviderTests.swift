@@ -52,6 +52,20 @@ private final class MemoryScopedKeyStoreFactory: IdentityKeyStoreFactory {
 }
 
 final class CoreIdentityProviderTests: XCTestCase {
+
+  func testScopedKeyCleanupSelectsOnlyCorePurposeKeys() {
+    XCTAssertTrue(CoreIdentityProvider.isScopedIdentityAccount("identity.mls.ed25519.private"))
+    XCTAssertTrue(
+      CoreIdentityProvider.isScopedIdentityAccount(
+        "identity.group.abcdef.capability.ed25519.private"))
+    XCTAssertTrue(
+      CoreIdentityProvider.isScopedIdentityAccount(
+        "identity.group.abcdef.recovery.ed25519.private"))
+    XCTAssertFalse(
+      CoreIdentityProvider.isScopedIdentityAccount("identity.ed25519.private"))
+    XCTAssertFalse(
+      CoreIdentityProvider.isScopedIdentityAccount("clean-slate.identity.target"))
+  }
   private func request(_ kind: IdentityPurposeKind, group: UInt8? = nil)
     -> IdentityPurposeRequest
   {

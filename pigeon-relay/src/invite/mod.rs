@@ -343,5 +343,5 @@ fn admit_rate(
 }
 
 fn fail_stop(error: DurableError) -> ! {
-    panic!("durable invite mailbox failure: {error}")
+    crate::durable::fail_stop(error)
 }

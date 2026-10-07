@@ -68,6 +68,8 @@ final class SessionManager {
   /// False after any persistence failure. Processing stays frozen for the rest
   /// of the run so the live ratchet can never advance farther than sealed state.
   var isPersistenceHealthy = true
+  /// Prevents core mutations while a live checkpoint is being moved to a new phone.
+  var isIdentityMoveFrozen = false
   /// Whether we've already reported that writes to the encrypted store are
   /// failing, so a run of failures logs once rather than per save.
   var didWarnAboutSaveFailure = false
@@ -83,6 +85,9 @@ final class SessionManager {
   @ObservationIgnored private(set) lazy var pairwiseRelay = makePairwiseRelay()
   @ObservationIgnored private(set) lazy var groupInviteRelay = makeGroupInviteRelay()
   @ObservationIgnored var resolveGroupCoordinatorKey = GroupRelayCoordinatorKey.resolve
+  @ObservationIgnored var makeSourceMoveJournal: () throws -> IdentityMoveSourceJournal = {
+    try IdentityMoveSourceJournal()
+  }
   /// Authenticated group projection rebuilt from the Rust checkpoint. It is
   /// never persisted separately, so it cannot drift across a crash boundary.
   var groups: [PigeonGroupState] = []
@@ -92,9 +97,6 @@ final class SessionManager {
   var groupRelayCapacityLimited: Set<Data> = []
   var groupConversations: [Data: GroupConversation] = [:]
   var coreSnapshotGeneration: UInt64 = 0
-  /// Group relay effects already copied onto the best-effort local mesh during
-  /// this process. The relay effect remains pending until the relay confirms it.
-  var meshedCoreOutboundIDs: Set<String> = []
   var meshedPairwiseOutboundIDs: Set<String> = []
   /// Pending receipt timers, one per group; see `+GroupAcknowledgements`.
   @ObservationIgnored var groupAcknowledgementFlushes: [Data: Task<Void, Never>] = [:]
@@ -169,24 +171,19 @@ final class SessionManager {
   func attachStore(_ store: EncryptedStore) throws {
     // Decode app-owned state, construct the transactional core over its sealed
     // checkpoint, then import any pre-1.4 pairwise state before unlocking.
-    let loaded = try persistence.attach(store)
-    let coreIdentityProvider = CoreIdentityProvider(rootIdentity: identity)
-    let coreCheckpointStore = CoreCheckpointStore(appStore: store)
-    let coreClient = try PigeonCoreClient(
-      identity: coreIdentityProvider,
-      store: coreCheckpointStore)
-    try migrateLegacyPairwiseStateIfNeeded(loaded.legacyPairwiseMigration, into: coreClient)
-    _ = try coreClient.execute(
-      PigeonCoreCommand(
-        id: "ensure-pairwise-account-v1",
-        body: .ensurePairwiseAccount))
+    let resumeMove = try makeSourceMoveJournal().requiresSourceFreeze(identity: identity)
+    if resumeMove {
+      isIdentityMoveFrozen = true
+      mesh.setConnectivityEnabled(false)
+      groupInviteRelay.disconnect()
+    }
+    let loaded = try loadCore(store, allowMutations: !resumeMove)
+    let coreClient = loaded.client
     let coreSnapshot = try coreClient.stateSnapshot()
-    self.coreIdentityProvider = coreIdentityProvider
-    self.coreCheckpointStore = coreCheckpointStore
-    self.coreClient = coreClient
     applyCoreSnapshot(coreSnapshot)
-    restoreLoadedState(loaded)
+    restoreLoadedState(loaded.state)
     applyCoreSnapshot(coreSnapshot)
+    if resumeMove { return }
     try refreshGroupInvites()
     try registerPairwiseContacts()
     guard persist() else { throw SessionPersistenceError.unreadableStore }
@@ -197,7 +194,6 @@ final class SessionManager {
     let refreshedCoreSnapshot = try coreClient.stateSnapshot()
     groupRelay.reconfigure(snapshot: refreshedCoreSnapshot)
     reconfigureGroupInviteRelay(snapshot: refreshedCoreSnapshot)
-    fanOutGroupMesh(snapshot: refreshedCoreSnapshot)
     fanOutPairwiseMesh(snapshot: refreshedCoreSnapshot)
     if relay != nil {
       pairwiseRelay.reconfigure(snapshot: refreshedCoreSnapshot)
@@ -267,6 +263,76 @@ final class SessionManager {
     if conversationStore.delivery(messageID: message.id, contactID: contact.id) != .delivered {
       setDelivery(.sent, messageID: message.id, contactID: contact.id)
       persist()
+    }
+  }
+
+}
+
+extension SessionManager {
+  private func loadCore(_ store: EncryptedStore, allowMutations: Bool) throws -> (
+    state: SessionPersistence.Loaded, client: PigeonCoreClient
+  ) {
+    let loaded = try persistence.attach(store)
+    let coreIdentityProvider = CoreIdentityProvider(rootIdentity: identity)
+    let coreCheckpointStore = CoreCheckpointStore(appStore: store)
+    let existingCheckpoint = try coreCheckpointStore.load()
+    if store.isDefaultStore, CoreCheckpointStore.hasCheckpointEvidence,
+      existingCheckpoint == nil
+    {
+      throw PlatformError.Corrupt
+    }
+    if store.isDefaultStore, existingCheckpoint != nil {
+      CoreCheckpointStore.markCheckpointCreated()
+    }
+    let coreClient = try PigeonCoreClient(
+      identity: coreIdentityProvider, store: coreCheckpointStore)
+    if allowMutations {
+      try migrateLegacyPairwiseStateIfNeeded(loaded.legacyPairwiseMigration, into: coreClient)
+      _ = try coreClient.execute(
+        PigeonCoreCommand(
+          id: "ensure-pairwise-account-v1", body: .ensurePairwiseAccount))
+    }
+    self.coreIdentityProvider = coreIdentityProvider
+    self.coreCheckpointStore = coreCheckpointStore
+    self.coreClient = coreClient
+    return (loaded, coreClient)
+  }
+
+  func prepareIdentityMoveArchive(transferID: UUID) throws -> IdentityMoveArchive {
+    guard isUnlocked, isPersistenceHealthy, !isIdentityMoveFrozen,
+      let coreCheckpointStore, let checkpoint = try coreCheckpointStore.load()
+    else { throw PlatformError.Unavailable }
+    isIdentityMoveFrozen = true
+    mesh.setConnectivityEnabled(false)
+    groupRelay.disconnect()
+    groupInviteRelay.disconnect()
+    pairwiseRelay.disconnect()
+    do {
+      guard persist() else { throw SessionPersistenceError.unreadableStore }
+      let persisted = PersistedCoreCheckpoint(
+        generation: checkpoint.generation, bytes: checkpoint.bytes,
+        sha256: checkpoint.sha256)
+      return try IdentityMoveArchive(
+        transferID: transferID,
+        rootSeed: identity.identitySeed,
+        scopedKeySeeds: CoreIdentityProvider.exportStoredScopedKeys(),
+        checkpoint: persisted,
+        appState: persistence.exportIdentityMoveState(),
+        relayURLs: RelaySettings.urls().map(\.absoluteString))
+    } catch {
+      cancelIdentityMove()
+      throw error
+    }
+  }
+
+  func cancelIdentityMove() {
+    guard isIdentityMoveFrozen else { return }
+    isIdentityMoveFrozen = false
+    mesh.setConnectivityEnabled(ConnectivitySettings.isEnabled)
+    if let snapshot = try? coreClient?.stateSnapshot() {
+      groupRelay.reconfigure(snapshot: snapshot)
+      reconfigureGroupInviteRelay(snapshot: snapshot)
+      pairwiseRelay.reconfigure(snapshot: snapshot)
     }
   }
 

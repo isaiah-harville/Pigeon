@@ -20,16 +20,37 @@ struct PersistedCoreCheckpoint: Codable, Equatable {
 /// events or ciphertext for state that the host did not persist.
 final class CoreCheckpointStore: CheckpointStore, @unchecked Sendable {
   static let companionSuffix = ".core"
+  private static let continuityKey = "pigeon.core.checkpointCreated"
+
+  static var hasCheckpointEvidence: Bool {
+    UserDefaults.standard.bool(forKey: continuityKey)
+  }
+
+  static func markCheckpointCreated() {
+    UserDefaults.standard.set(true, forKey: continuityKey)
+  }
+
+  static func clearCheckpointEvidence() {
+    UserDefaults.standard.removeObject(forKey: continuityKey)
+  }
 
   private let store: EncryptedStore
+  private let trackContinuity: Bool
   private let lock = NSLock()
 
   convenience init(appStore: EncryptedStore) {
-    self.init(store: appStore.companion(suffix: Self.companionSuffix))
+    self.init(
+      store: appStore.companion(suffix: Self.companionSuffix),
+      trackContinuity: appStore.isDefaultStore)
   }
 
-  init(store: EncryptedStore) {
+  convenience init(store: EncryptedStore) {
+    self.init(store: store, trackContinuity: false)
+  }
+
+  private init(store: EncryptedStore, trackContinuity: Bool) {
     self.store = store
+    self.trackContinuity = trackContinuity
   }
 
   func load() throws -> Checkpoint? {
@@ -57,6 +78,7 @@ final class CoreCheckpointStore: CheckpointStore, @unchecked Sendable {
         sha256: next.sha256)
       guard store.save(persisted) else { throw PlatformError.Unavailable }
       guard try loadUnlocked() == next else { throw PlatformError.Unavailable }
+      if trackContinuity { Self.markCheckpointCreated() }
     }
   }
 

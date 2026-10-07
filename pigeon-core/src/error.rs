@@ -28,6 +28,8 @@ pub enum Error {
     Serialization,
     /// An input exceeded a named, pre-cryptographic resource limit.
     ResourceLimit(&'static str),
+    /// The bounded future-epoch queue is full; the transport must retry later.
+    FutureEpochBufferFull,
     /// A versioned cross-language object is not supported by this core.
     UnsupportedVersion { kind: &'static str, version: u32 },
     /// Durable checkpoint replacement failed.
@@ -56,6 +58,7 @@ impl fmt::Display for Error {
             Error::Entropy => write!(f, "OS entropy source failed"),
             Error::Serialization => write!(f, "pairwise state serialization failed"),
             Error::ResourceLimit(name) => write!(f, "resource limit exceeded: {name}"),
+            Error::FutureEpochBufferFull => write!(f, "future group epoch buffer is full"),
             Error::UnsupportedVersion { kind, version } => {
                 write!(f, "unsupported {kind} version {version}")
             }

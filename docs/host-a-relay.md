@@ -38,6 +38,7 @@ docker run -d --name pigeon-relay \
   -p 127.0.0.1:8080:8080 \
   -v pigeon-relay-state:/var/lib/pigeon-relay \
   -e PIGEON_COORDINATOR_SIGNING_SEED_HEX='<stored 64-character hex seed>' \
+  -e PIGEON_TRUSTED_PROXY_IP='<proxy IP seen by the container>' \
   ghcr.io/isaiah-harville/pigeon/relay:latest
 ```
 
@@ -124,12 +125,13 @@ serve a valid certificate. Point it at `http://127.0.0.1:8080`.
 
 ### Caddy
 
-Caddy gets you a certificate automatically and proxies WebSockets with no extra
-configuration:
+Caddy gets you a certificate automatically and proxies WebSockets:
 
 ```caddy
 relay.example.com {
-    reverse_proxy 127.0.0.1:8080
+    reverse_proxy 127.0.0.1:8080 {
+        header_up X-Real-IP {remote_host}
+    }
 }
 ```
 
@@ -149,6 +151,7 @@ server {
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
 
         # Connections are long-lived; don't let the proxy cut idle sockets.
         proxy_read_timeout 3600s;
@@ -210,6 +213,12 @@ do — you do not need to serve the world for it to work.
 
 ## Operating notes
 
+- **Connection limits.** The relay caps all WebSockets globally and limits each
+  client IP to 32 sockets and 12 invite publishes per minute. Set
+  `PIGEON_TRUSTED_PROXY_IP` to the exact TCP peer address the relay sees for
+  your proxy; only that peer's `X-Real-IP` header is trusted. Without this
+  setting, all proxied clients share one per-IP quota. Make the relay port
+  private and have the proxy overwrite `X-Real-IP` with its observed client IP.
 - **Sizing.** Memory is capped by `MAX_TOTAL_BYTES` (512 MiB by default) plus a
   small per-connection overhead. A small VPS handles a community.
 - **Backups.** Back up `/var/lib/pigeon-relay` and the coordinator seed as one

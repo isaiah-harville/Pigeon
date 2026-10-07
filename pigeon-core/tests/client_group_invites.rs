@@ -1,7 +1,7 @@
 use ed25519_dalek::{Signer, SigningKey};
 use pigeon_core::{
     ClientCommand, IdentityError, IdentityPurpose, MemoryStateStore, PigeonClient, SecureIdentity,
-    wire_proto,
+    StateStore, wire_proto,
 };
 use prost::Message;
 use sha2::{Digest, Sha256};
@@ -713,6 +713,18 @@ fn refresh_expires_unanswered_join_and_removes_unsent_request() {
         wire_proto::GroupInviteProgress::Expired as i32
     );
     assert!(refreshed.pending_outbound.is_empty());
+    let checkpoint = joiner.store().load().unwrap().unwrap();
+    let state = wire_proto::ClientCheckpoint::decode(checkpoint.bytes.as_slice()).unwrap();
+    assert!(state.group_invite_joins[0].reply_inbox_state.is_empty());
+    assert_eq!(state.group_invite_joins[0].reply_address.len(), 32);
+    execute(
+        &mut joiner,
+        "refresh-again",
+        wire_proto::client_command::Body::RefreshGroupInvites(wire_proto::RefreshGroupInvites {
+            now_ms: EXPIRY + 2,
+        }),
+    );
+    assert!(snapshot(&joiner).group_invite_joins.is_empty());
     execute(
         &mut admin,
         "refresh",

@@ -107,7 +107,7 @@ final class PigeonFFIRoundTripTests: XCTestCase {
     let output = try client.execute(createGroupCommand())
 
     XCTAssertEqual(output.checkpointGeneration, 1)
-    XCTAssertEqual(output.outbound.count, 2)
+    XCTAssertTrue(output.outbound.isEmpty)
     XCTAssertEqual(store.load()?.generation, 1)
   }
 

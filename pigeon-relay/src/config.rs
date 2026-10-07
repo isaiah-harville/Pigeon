@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Pigeon contributors.
 
 use std::fmt;
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -18,6 +19,7 @@ const MAX_FETCHED_ITEM_BYTES: usize = 1024 * 1024;
 pub struct RelayConfig {
     pub bind_addr: String,
     pub max_connections: usize,
+    pub trusted_proxy_ip: Option<IpAddr>,
     pub mailbox: MailboxConfig,
     pub group: GroupConfig,
     pub group_admission_difficulty: u8,
@@ -34,6 +36,7 @@ impl fmt::Debug for RelayConfig {
             .debug_struct("RelayConfig")
             .field("bind_addr", &self.bind_addr)
             .field("max_connections", &self.max_connections)
+            .field("trusted_proxy_ip", &self.trusted_proxy_ip)
             .field("mailbox", &self.mailbox)
             .field("group", &self.group)
             .field("invite", &self.invite)
@@ -95,6 +98,13 @@ impl RelayConfig {
             return Err(ConfigError::new("PIGEON_RELAY_ADDR", "must not be empty"));
         }
         let max_connections = parse_usize(&mut lookup, "PIGEON_RELAY_MAX_CONNECTIONS", 1024)?;
+        let trusted_proxy_ip = lookup("PIGEON_TRUSTED_PROXY_IP")
+            .map(|value| {
+                value.parse::<IpAddr>().map_err(|_| {
+                    ConfigError::new("PIGEON_TRUSTED_PROXY_IP", "must be an IP address")
+                })
+            })
+            .transpose()?;
 
         let mailbox = MailboxConfig {
             ttl_secs: parse_u64(&mut lookup, "PIGEON_RELAY_TTL_SECS", DEFAULT_TTL_SECS)?,
@@ -261,6 +271,7 @@ impl RelayConfig {
         Ok(Self {
             bind_addr,
             max_connections,
+            trusted_proxy_ip,
             mailbox,
             group,
             group_admission_difficulty,

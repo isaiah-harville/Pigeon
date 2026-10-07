@@ -101,6 +101,13 @@ final class SessionPersistence {
     return loaded
   }
 
+  func exportIdentityMoveState() throws -> PersistedState {
+    guard let store, transactionIsClear(),
+      let state = try store.load(PersistedState.self)
+    else { throw SessionPersistenceError.unreadableStore }
+    return state
+  }
+
   // MARK: - Codec
 
   private static func encodeContact(_ contact: Contact) -> PersistedContact {

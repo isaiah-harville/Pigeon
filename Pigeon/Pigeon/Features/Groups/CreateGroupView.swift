@@ -7,7 +7,6 @@ struct CreateGroupView: View {
   @State private var name = ""
   @State private var selectedMemberIDs: Set<Data> = []
   @State private var selectedRelay: URL?
-  @State private var meshEnabled = false
   @State private var isCreating = false
   @State private var errorMessage: String?
 
@@ -36,7 +35,6 @@ struct CreateGroupView: View {
         groupSection
         peopleSection
         relaySection
-        meshSection
         errorSection
       }
       .navigationTitle("New Group")
@@ -130,18 +128,6 @@ struct CreateGroupView: View {
     }
   }
 
-  private var meshSection: some View {
-    Section("Local mesh") {
-      Toggle("Enable for this group", isOn: $meshEnabled)
-      Text(
-        "Off by default. Enable only for smaller groups that should exchange "
-          + "encrypted group traffic over nearby devices."
-      )
-      .font(.footnote)
-      .foregroundStyle(.secondary)
-    }
-  }
-
   @ViewBuilder
   private var errorSection: some View {
     if let errorMessage {
@@ -169,8 +155,7 @@ struct CreateGroupView: View {
     Task { @MainActor in
       do {
         try await session.createGroup(
-          name: name, memberIDs: selectedMemberIDs, relayURL: selectedRelay,
-          meshEnabled: meshEnabled)
+          name: name, memberIDs: selectedMemberIDs, relayURL: selectedRelay)
         dismiss()
       } catch {
         errorMessage =

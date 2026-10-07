@@ -361,10 +361,21 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         let policy = engine.policy();
         candidate.groups.push(stored_group(&engine));
         for join in &mut candidate.group_invite_joins {
+            let Ok(ticket) = crate::identity::GroupInviteTicket::decode(&join.ticket) else {
+                continue;
+            };
             if join.progress == proto::GroupInviteProgress::Approved as i32
-                && crate::identity::GroupInviteTicket::decode(&join.ticket)
-                    .is_ok_and(|ticket| ticket.group_id() == engine.group_id())
+                && ticket.group_id() == engine.group_id()
             {
+                if join.reply_address.is_empty() {
+                    join.reply_address = crate::identity::GroupInviteReplyInbox::import_state(
+                        &join.reply_inbox_state,
+                        &ticket,
+                    )?
+                    .address()
+                    .to_vec();
+                }
+                join.reply_inbox_state.clear();
                 join.progress = proto::GroupInviteProgress::Joined as i32;
             }
         }

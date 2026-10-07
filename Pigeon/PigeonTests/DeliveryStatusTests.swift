@@ -163,6 +163,15 @@ final class DeliveryStatusTests: XCTestCase {
     for file in ["dsA.store", "dsB.store"] {
       EncryptedStore(key: keyA, fileName: file).wipe()
       EncryptedStore(key: keyA, fileName: file).companion(suffix: ".crypto").wipe()
+      EncryptedStore(key: keyA, fileName: file)
+        .companion(suffix: CoreCheckpointStore.companionSuffix).wipe()
+    }
+    defer {
+      for file in ["dsA.store", "dsB.store"] {
+        EncryptedStore(key: keyA, fileName: file).wipe()
+        EncryptedStore(key: keyA, fileName: file)
+          .companion(suffix: CoreCheckpointStore.companionSuffix).wipe()
+      }
     }
 
     let a = try launch(seed: newSeed(), key: keyA, storeFile: "dsA.store", bus: bus)

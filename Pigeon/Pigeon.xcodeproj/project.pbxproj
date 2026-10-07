@@ -362,7 +362,6 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Pigeon/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Pigeon;
-				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Pigeon uses Bluetooth to discover nearby devices and exchange end-to-end encrypted messages over the local mesh.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Pigeon uses the camera to scan a contact's QR code so you can verify their identity in person.";
@@ -418,7 +417,6 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Pigeon/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Pigeon;
-				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Pigeon uses Bluetooth to discover nearby devices and exchange end-to-end encrypted messages over the local mesh.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Pigeon uses the camera to scan a contact's QR code so you can verify their identity in person.";

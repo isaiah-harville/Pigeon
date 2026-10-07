@@ -228,7 +228,7 @@ extension SessionManager {
   }
 
   private func enqueueDirectAcknowledgement(messageID: String, to contact: Contact) throws {
-    guard let coreClient else { throw PlatformError.Unavailable }
+    guard !isIdentityMoveFrozen, let coreClient else { throw PlatformError.Unavailable }
     let id = UUID()
     _ = try coreClient.execute(
       PigeonCoreCommand(

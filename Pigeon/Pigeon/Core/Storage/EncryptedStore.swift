@@ -205,6 +205,15 @@ struct EncryptedStore {
   private let url: URL?
   private let io: EncryptedStoreIO
 
+  var isDefaultStore: Bool {
+    guard let url,
+      let base = try? FileManager.default.url(
+        for: .applicationSupportDirectory, in: .userDomainMask,
+        appropriateFor: nil, create: true)
+    else { return false }
+    return url == base.appendingPathComponent("pigeon.store")
+  }
+
   /// The default bulk store.
   init(key: SymmetricKey) {
     self.init(key: key, fileName: "pigeon.store")

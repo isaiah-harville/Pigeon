@@ -19,6 +19,13 @@ final class MessageRequestTests: XCTestCase {
     return manager
   }
 
+  private func launchFresh(seed: Data, key: SymmetricKey, file: String, bus: TestBus) throws
+    -> SessionManager
+  {
+    wipe(key, file)
+    return try launch(seed: seed, key: key, file: file, bus: bus)
+  }
+
   private func seed() -> Data { Curve25519.Signing.PrivateKey().rawRepresentation }
 
   private func wipe(_ key: SymmetricKey, _ file: String) {
@@ -26,6 +33,7 @@ final class MessageRequestTests: XCTestCase {
     store.wipe()
     store.companion(suffix: ".crypto").wipe()
     store.companion(suffix: ".transaction").wipe()
+    store.companion(suffix: CoreCheckpointStore.companionSuffix).wipe()
   }
 
   private func addRemoteCard(of recipient: SessionManager, to sender: SessionManager) throws {
@@ -323,7 +331,7 @@ final class MessageRequestTests: XCTestCase {
     wipe(key, file)
     let localSeed = seed()
     let local = try launch(seed: localSeed, key: key, file: file, bus: bus)
-    let remote = try launch(
+    let remote = try launchFresh(
       seed: seed(), key: SymmetricKey(size: .bits256),
       file: "requests-quarantine-remote.store", bus: bus)
     let card = try XCTUnwrap(remote.myCard)
@@ -345,10 +353,10 @@ final class MessageRequestTests: XCTestCase {
 
   func testIncomingRequestRelaysRemainInactiveUntilAcceptance() throws {
     let bus = TestBus()
-    let local = try launch(
+    let local = try launchFresh(
       seed: seed(), key: SymmetricKey(size: .bits256),
       file: "requests-relay-policy-local.store", bus: bus)
-    let remote = try launch(
+    let remote = try launchFresh(
       seed: seed(), key: SymmetricKey(size: .bits256),
       file: "requests-relay-policy-remote.store", bus: bus)
     let card = try XCTUnwrap(remote.myCard)
@@ -366,10 +374,10 @@ final class MessageRequestTests: XCTestCase {
 
   func testPreIntroductionStageIsShortLivedAndUserClearable() throws {
     let bus = TestBus()
-    let local = try launch(
+    let local = try launchFresh(
       seed: seed(), key: SymmetricKey(size: .bits256),
       file: "requests-short-stage-local.store", bus: bus)
-    let remote = try launch(
+    let remote = try launchFresh(
       seed: seed(), key: SymmetricKey(size: .bits256),
       file: "requests-short-stage-remote.store", bus: bus)
     let card = try XCTUnwrap(remote.myCard)

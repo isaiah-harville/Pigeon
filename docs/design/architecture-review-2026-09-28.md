@@ -3,9 +3,10 @@
 This is a code and design review, not an independent security audit. The basic split between the Swift app, transactional Rust cryptographic core, opaque transports, and federated relay is sound. A broad rewrite would increase risk. The changes below target boundaries where an apparently successful operation can lack durable delivery, or where metadata leaves the device unexpectedly.
 
 Review status on 2026-10-04: items 1–5 have code fixes in this branch. Item 6
-has a global socket cap and unauthenticated deadline; trusted per-IP limiting
-remains deployment work. Item 7 now has a 4 MiB aggregate fragment budget per
-source, but checkpoint size and latency still need stress measurements. Item 8
+has a global socket cap, per-IP cap based on the TCP peer address, and unauthenticated
+deadline; deployments behind a reverse proxy must set compatible upstream limits.
+Item 7 now has a 4 MiB aggregate fragment budget across BLE sources, but checkpoint
+size and latency still need stress measurements. Item 8
 remains open. The invite flow is still awaiting live multi-device validation.
 
 ## Release correctness and privacy

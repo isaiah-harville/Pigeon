@@ -139,7 +139,11 @@ final class GroupInviteRelayTransport {
   private func receiveEnvelope(
     for key: Subscription, over socket: URLSessionWebSocketTask, on connection: Connection
   ) async throws {
-    guard case .envelope(let id, let ciphertext) = try await receive(over: socket) else {
+    guard
+      case .envelope(let id, let ciphertext) = try await receive(
+        over: socket, timeout: 60
+      )
+    else {
       throw RelayError.protocolError
     }
     let requestID = "invite-\(key.address.hexEncoded)-\(id)"

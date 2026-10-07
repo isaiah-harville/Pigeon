@@ -15,6 +15,7 @@ use crate::clock::now;
 use crate::config::RelayConfig;
 use crate::durable::{self, CoordinatorJournal, DurableError, GroupJournal};
 use crate::push::{ApnsGateway, PushRegistry};
+use crate::socket_admission::SocketAdmission;
 use crate::{coordinator, group, invite, mailbox};
 
 pub const SUBSCRIBER_CHANNEL_CAPACITY: usize = 256;
@@ -29,6 +30,8 @@ pub struct AppState {
     pub(crate) push: Arc<PushRegistry>,
     pub(crate) connection_ids: Arc<AtomicU64>,
     pub(crate) socket_slots: Arc<Semaphore>,
+    pub(crate) socket_admission: SocketAdmission,
+    pub(crate) trusted_proxy_ip: Option<std::net::IpAddr>,
 }
 
 pub fn build_state(config: RelayConfig) -> Result<AppState, DurableError> {
@@ -58,6 +61,8 @@ pub fn build_state(config: RelayConfig) -> Result<AppState, DurableError> {
         push: Arc::new(PushRegistry::new(gateway, config.apns_min_interval)),
         connection_ids: Arc::new(AtomicU64::new(1)),
         socket_slots: Arc::new(Semaphore::new(config.max_connections)),
+        socket_admission: SocketAdmission::default(),
+        trusted_proxy_ip: config.trusted_proxy_ip,
     })
 }
 
@@ -122,6 +127,7 @@ mod tests {
         RelayConfig {
             bind_addr: "127.0.0.1:0".into(),
             max_connections: 2,
+            trusted_proxy_ip: None,
             mailbox: mailbox::store::Config {
                 ttl_secs: 60,
                 max_queue: 8,

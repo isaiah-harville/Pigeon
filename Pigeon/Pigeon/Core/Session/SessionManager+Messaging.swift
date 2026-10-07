@@ -10,15 +10,13 @@ import PigeonFFI
 extension SessionManager {
   func handleInbound(_ data: Data, channel: TransportChannel) -> TransportMessageDisposition {
     guard let envelope = try? SessionEnvelope(decoding: data) else { return .consumed }
-    if envelope.type == .groupMls {
-      return handleInboundGroupMesh(envelope, encoded: data, channel: channel)
-    }
+    if envelope.type == .groupMls { return .consumed }
     guard envelope.recipient == myID else { return .consumed }
     guard isUnlocked else {
       bufferWhileLocked(data, channel: channel)
       return .retryAfterRestart
     }
-    guard isPersistenceHealthy else { return .retryAfterRestart }
+    guard isPersistenceHealthy, !isIdentityMoveFrozen else { return .retryAfterRestart }
     guard purgeExpiredIncomingRequests(now: Date()) else { return .retryAfterRestart }
     guard !blockedContactIDs.contains(envelope.sender) else { return .consumed }
     guard envelope.type == .pairwise else { return .consumed }

@@ -2,9 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use ed25519_dalek::{Signer, SigningKey};
 use pigeon_core::{
-    ClientCommand, Error, GroupCiphertext, GroupId, GroupJoinMaterial, GroupJoinRequest,
-    IdentityError, IdentityPurpose, PigeonClient, SealedCheckpoint, SecureIdentity, StateStore,
-    StorageError, TransactionalOpenMlsStorage, coordinator_receipt_transcript, wire_proto,
+    ClientCommand, Error, GroupCiphertext, GroupId, IdentityError, IdentityPurpose, PigeonClient,
+    SealedCheckpoint, SecureIdentity, StateStore, StorageError, coordinator_receipt_transcript,
+    wire_proto,
 };
 use prost::Message;
 use sha2::{Digest, Sha256};
@@ -69,15 +69,6 @@ impl SwitchableStore {
     fn set_fail_replace(&self, fail: bool) {
         self.state.lock().unwrap().fail_replace = fail;
     }
-
-    fn with_checkpoint(checkpoint: SealedCheckpoint) -> Self {
-        Self {
-            state: Arc::new(Mutex::new(StoreState {
-                checkpoint: Some(checkpoint),
-                fail_replace: false,
-            })),
-        }
-    }
 }
 
 impl StateStore for SwitchableStore {
@@ -106,22 +97,114 @@ impl StateStore for SwitchableStore {
     }
 }
 
-fn issue_join_material(
-    item: &pigeon_core::OutboundItem,
-    member: &TestIdentity,
-    storage: &mut TransactionalOpenMlsStorage,
-) -> GroupJoinMaterial {
-    let item = wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap();
-    let request = GroupJoinRequest::decode(&item.payload).unwrap();
-    assert_eq!(item.destination, member.root_public());
-    GroupJoinMaterial::issue(
-        member,
-        request.requester_identity(),
-        request.group_id(),
-        request.coordination_id(),
-        storage,
+type TestClient = PigeonClient<SwitchableStore, TestIdentity>;
+
+fn pairwise_prekey(client: &TestClient) -> Vec<u8> {
+    wire_proto::ClientSnapshot::decode(client.snapshot().unwrap().encode().as_slice())
+        .unwrap()
+        .pairwise_prekey_bundle
+}
+
+fn register_pairwise_peers(left: &mut TestClient, right: &mut TestClient, label: &str) {
+    left.execute(ClientCommand::ensure_pairwise_account(format!("{label}-left-account")).unwrap())
+        .unwrap();
+    right
+        .execute(ClientCommand::ensure_pairwise_account(format!("{label}-right-account")).unwrap())
+        .unwrap();
+    let left_prekey = pairwise_prekey(left);
+    let right_prekey = pairwise_prekey(right);
+    left.execute(
+        ClientCommand::register_pairwise_contact(
+            format!("{label}-register-right"),
+            right_prekey,
+            "https://relay.example",
+        )
+        .unwrap(),
     )
-    .unwrap()
+    .unwrap();
+    right
+        .execute(
+            ClientCommand::register_pairwise_contact(
+                format!("{label}-register-left"),
+                left_prekey,
+                "https://relay.example",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+}
+
+fn receive_control(
+    recipient: &mut TestClient,
+    command_id: &str,
+    item: &pigeon_core::OutboundItem,
+) -> pigeon_core::ClientOutput {
+    let payload = wire_proto::OutboundItem::decode(item.encode().as_slice())
+        .unwrap()
+        .payload;
+    recipient
+        .execute(ClientCommand::apply_pairwise_control(command_id, payload).unwrap())
+        .unwrap()
+}
+
+fn create_group_with_members(
+    store: SwitchableStore,
+    identity_bytes: [u8; 3],
+    command_id: &str,
+    name: &str,
+    coordinator: [u8; 32],
+    mesh_enabled: bool,
+) -> (
+    TestClient,
+    TestClient,
+    TestClient,
+    pigeon_core::ClientOutput,
+) {
+    let [owner_byte, bob_byte, carol_byte] = identity_bytes;
+    let mut owner = PigeonClient::new(store, TestIdentity::new(owner_byte)).unwrap();
+    let mut bob =
+        PigeonClient::new(SwitchableStore::default(), TestIdentity::new(bob_byte)).unwrap();
+    let mut carol =
+        PigeonClient::new(SwitchableStore::default(), TestIdentity::new(carol_byte)).unwrap();
+    register_pairwise_peers(&mut owner, &mut bob, &format!("{command_id}-bob"));
+    register_pairwise_peers(&mut owner, &mut carol, &format!("{command_id}-carol"));
+    let pending = owner
+        .execute(
+            ClientCommand::create_group(
+                command_id,
+                name,
+                vec![
+                    TestIdentity::new(bob_byte).root_public(),
+                    TestIdentity::new(carol_byte).root_public(),
+                ],
+                "https://relay.example",
+                coordinator,
+                mesh_enabled,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let bob_material = receive_control(
+        &mut bob,
+        &format!("{command_id}-bob-material"),
+        &pending.outbound[0],
+    );
+    let carol_material = receive_control(
+        &mut carol,
+        &format!("{command_id}-carol-material"),
+        &pending.outbound[1],
+    );
+    receive_control(
+        &mut owner,
+        &format!("{command_id}-apply-bob"),
+        &bob_material.outbound[0],
+    );
+    let created = receive_control(
+        &mut owner,
+        &format!("{command_id}-apply-carol"),
+        &carol_material.outbound[0],
+    );
+    (owner, bob, carol, created)
 }
 
 fn coordinator_candidate(
@@ -156,48 +239,15 @@ fn coordinator_candidate(
 
 #[test]
 fn failed_send_checkpoint_releases_no_ciphertext_and_retry_is_durable() {
-    let owner = TestIdentity::new(1);
-    let bob = TestIdentity::new(2);
-    let carol = TestIdentity::new(3);
-    let mut bob_storage = TransactionalOpenMlsStorage::new();
-    let mut carol_storage = TransactionalOpenMlsStorage::new();
     let store = SwitchableStore::default();
-    let mut client = PigeonClient::new(store.clone(), owner).unwrap();
-    let pending = client
-        .execute(
-            ClientCommand::create_group(
-                "create",
-                "Birds",
-                vec![bob.root_public(), carol.root_public()],
-                "https://relay.example",
-                TestIdentity::new(60).root_public(),
-                false,
-            )
-            .unwrap(),
-        )
-        .unwrap();
-    let bob_material = issue_join_material(&pending.outbound[0], &bob, &mut bob_storage);
-    let carol_material = issue_join_material(&pending.outbound[1], &carol, &mut carol_storage);
-    client
-        .execute(
-            ClientCommand::apply_group_join_material(
-                "bob-package",
-                "create:join:0",
-                bob_material.encode(),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-    let created = client
-        .execute(
-            ClientCommand::apply_group_join_material(
-                "carol-package",
-                "create:join:1",
-                carol_material.encode(),
-            )
-            .unwrap(),
-        )
-        .unwrap();
+    let (mut client, _, _, created) = create_group_with_members(
+        store.clone(),
+        [1, 2, 3],
+        "create",
+        "Birds",
+        TestIdentity::new(60).root_public(),
+        false,
+    );
     let created_event =
         wire_proto::AppEvent::decode(created.events[0].encode().as_slice()).unwrap();
     let wire_proto::app_event::Body::GroupCreated(created_group) = created_event.body.unwrap()
@@ -206,18 +256,19 @@ fn failed_send_checkpoint_releases_no_ciphertext_and_retry_is_durable() {
     };
     let group_id = GroupId::from_bytes(created_group.group_id.try_into().unwrap());
     let send = ClientCommand::send_group_text("send-1", group_id, b"hello".to_vec(), "").unwrap();
+    let generation = client.checkpoint_generation();
 
     store.set_fail_replace(true);
     assert!(matches!(
         client.execute(send.clone()),
         Err(Error::Persistence(_))
     ));
-    assert_eq!(client.checkpoint_generation(), 3);
-    assert_eq!(store.load().unwrap().unwrap().generation, 3);
+    assert_eq!(client.checkpoint_generation(), generation);
+    assert_eq!(store.load().unwrap().unwrap().generation, generation);
 
     store.set_fail_replace(false);
     let output = client.execute(send).unwrap();
-    assert_eq!(output.checkpoint_generation, 4);
+    assert_eq!(output.checkpoint_generation, generation + 1);
     assert_eq!(output.events.len(), 2);
     let message_event = wire_proto::AppEvent::decode(output.events[0].encode().as_slice()).unwrap();
     let wire_proto::app_event::Body::GroupMessageReceived(message) = message_event.body.unwrap()
@@ -237,56 +288,23 @@ fn failed_send_checkpoint_releases_no_ciphertext_and_retry_is_durable() {
         wire_proto::OutboundItem::decode(output.outbound[0].encode().as_slice()).unwrap();
     assert_eq!(outbound.kind, wire_proto::OutboundKind::GroupMessage as i32);
     assert!(GroupCiphertext::decode(&outbound.payload).is_ok());
-    assert_eq!(store.load().unwrap().unwrap().generation, 4);
+    assert_eq!(store.load().unwrap().unwrap().generation, generation + 1);
 }
 
 #[test]
 fn failed_recovery_checkpoint_releases_no_coordinator_work_and_retry_is_durable() {
-    let owner = TestIdentity::new(21);
-    let bob = TestIdentity::new(22);
-    let carol = TestIdentity::new(23);
     let coordinator = TestIdentity::new(60);
     let replacement_coordinator = TestIdentity::new(61);
     let replacement_coordination_id = [92; 32];
-    let mut bob_storage = TransactionalOpenMlsStorage::new();
-    let mut carol_storage = TransactionalOpenMlsStorage::new();
     let store = SwitchableStore::default();
-    let mut client = PigeonClient::new(store.clone(), owner).unwrap();
-    let pending = client
-        .execute(
-            ClientCommand::create_group(
-                "create-recovery",
-                "Recovery Birds",
-                vec![bob.root_public(), carol.root_public()],
-                "https://relay.example",
-                coordinator.root_public(),
-                false,
-            )
-            .unwrap(),
-        )
-        .unwrap();
-    let bob_material = issue_join_material(&pending.outbound[0], &bob, &mut bob_storage);
-    let carol_material = issue_join_material(&pending.outbound[1], &carol, &mut carol_storage);
-    client
-        .execute(
-            ClientCommand::apply_group_join_material(
-                "recovery-bob-package",
-                "create-recovery:join:0",
-                bob_material.encode(),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-    let created = client
-        .execute(
-            ClientCommand::apply_group_join_material(
-                "recovery-carol-package",
-                "create-recovery:join:1",
-                carol_material.encode(),
-            )
-            .unwrap(),
-        )
-        .unwrap();
+    let (mut client, _, _, created) = create_group_with_members(
+        store.clone(),
+        [21, 22, 23],
+        "create-recovery",
+        "Recovery Birds",
+        coordinator.root_public(),
+        false,
+    );
     let created_event =
         wire_proto::AppEvent::decode(created.events[0].encode().as_slice()).unwrap();
     let wire_proto::app_event::Body::GroupCreated(created_group) = created_event.body.unwrap()
@@ -354,54 +372,22 @@ fn failed_recovery_checkpoint_releases_no_coordinator_work_and_retry_is_durable(
 
 #[test]
 fn relay_and_mesh_copies_emit_one_received_event_and_one_acknowledgement() {
-    let owner = TestIdentity::new(11);
-    let bob = TestIdentity::new(12);
-    let carol = TestIdentity::new(13);
-    let mut bob_mls = TransactionalOpenMlsStorage::new();
-    let mut carol_mls = TransactionalOpenMlsStorage::new();
-    let mut owner_client = PigeonClient::new(SwitchableStore::default(), owner).unwrap();
-    let pending = owner_client
-        .execute(
-            ClientCommand::create_group(
-                "create-mesh",
-                "Mesh Birds",
-                vec![bob.root_public(), carol.root_public()],
-                "https://relay.example",
-                TestIdentity::new(60).root_public(),
-                true,
-            )
-            .unwrap(),
-        )
-        .unwrap();
-    let bob_material = issue_join_material(&pending.outbound[0], &bob, &mut bob_mls);
-    let carol_material = issue_join_material(&pending.outbound[1], &carol, &mut carol_mls);
-    owner_client
-        .execute(
-            ClientCommand::apply_group_join_material(
-                "mesh-bob-package",
-                "create-mesh:join:0",
-                bob_material.encode(),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-    let created = owner_client
-        .execute(
-            ClientCommand::apply_group_join_material(
-                "mesh-carol-package",
-                "create-mesh:join:1",
-                carol_material.encode(),
-            )
-            .unwrap(),
-        )
-        .unwrap();
+    let (mut owner_client, mut bob_client, _, created) = create_group_with_members(
+        SwitchableStore::default(),
+        [11, 12, 13],
+        "create-mesh",
+        "Mesh Birds",
+        TestIdentity::new(60).root_public(),
+        true,
+    );
+    let bob_store = bob_client.store().clone();
     let welcome = created
         .outbound
         .iter()
         .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
         .find(|item| {
-            item.kind == wire_proto::OutboundKind::GroupWelcome as i32
-                && item.destination == bob.root_public()
+            item.kind == wire_proto::OutboundKind::Pairwise as i32
+                && item.destination == TestIdentity::new(12).root_public()
         })
         .unwrap();
     let created_event =
@@ -412,42 +398,8 @@ fn relay_and_mesh_copies_emit_one_received_event_and_one_acknowledgement() {
     };
     let group_id = GroupId::from_bytes(created_group.group_id.try_into().unwrap());
 
-    let bob_checkpoint = wire_proto::ClientCheckpoint {
-        version: 1,
-        generation: 0,
-        applied_command_ids: Vec::new(),
-        groups: Vec::new(),
-        openmls_checkpoint: bob_mls.export_checkpoint().unwrap(),
-        pending_group_creations: Vec::new(),
-        consumed_key_package_hashes: Vec::new(),
-        processed_group_messages: Vec::new(),
-        delivery_ledgers: Vec::new(),
-        buffered_group_messages: Vec::new(),
-        pending_group_mutations: Vec::new(),
-        pending_group_additions: Vec::new(),
-        pending_outbound: Vec::new(),
-        pending_events: Vec::new(),
-        pairwise_account_state: Vec::new(),
-        pairwise_fallback_key: Vec::new(),
-        pairwise_contacts: Vec::new(),
-        pairwise_sessions: Vec::new(),
-        consumed_pairwise_envelope_hashes: Vec::new(),
-        deferred_events: Vec::new(),
-        pending_group_recoveries: Vec::new(),
-        pending_group_acknowledgements: Vec::new(),
-        pending_group_leaves: Vec::new(),
-        group_invites: Vec::new(),
-        group_invite_joins: Vec::new(),
-    };
-    let bytes = bob_checkpoint.encode_to_vec();
-    let bob_store = SwitchableStore::with_checkpoint(SealedCheckpoint {
-        generation: 0,
-        sha256: Sha256::digest(&bytes).into(),
-        bytes,
-    });
-    let mut bob_client = PigeonClient::new(bob_store.clone(), bob).unwrap();
     bob_client
-        .execute(ClientCommand::apply_group_welcome("welcome", welcome.payload).unwrap())
+        .execute(ClientCommand::apply_pairwise_control("welcome", welcome.payload).unwrap())
         .unwrap();
 
     let sent = owner_client
@@ -479,12 +431,13 @@ fn relay_and_mesh_copies_emit_one_received_event_and_one_acknowledgement() {
     assert_eq!(fetch.through_epoch, 2);
     let relay_command =
         ClientCommand::apply_group_message("relay-copy", ciphertext.clone()).unwrap();
+    let generation = bob_client.checkpoint_generation();
     bob_store.set_fail_replace(true);
     assert!(matches!(
         bob_client.execute(relay_command.clone()),
         Err(Error::Persistence(_))
     ));
-    assert_eq!(bob_client.checkpoint_generation(), 2);
+    assert_eq!(bob_client.checkpoint_generation(), generation);
     bob_store.set_fail_replace(false);
     let relay = bob_client.execute(relay_command).unwrap();
     assert_eq!(relay.events.len(), 1);
@@ -540,78 +493,25 @@ struct ThreeMemberGroup {
     bob_store: SwitchableStore,
 }
 
-fn joined_member(
-    identity: TestIdentity,
-    mls: &TransactionalOpenMlsStorage,
-    welcome: Vec<u8>,
-) -> (PigeonClient<SwitchableStore, TestIdentity>, SwitchableStore) {
-    let checkpoint = wire_proto::ClientCheckpoint {
-        version: 1,
-        openmls_checkpoint: mls.export_checkpoint().unwrap(),
-        ..Default::default()
-    };
-    let bytes = checkpoint.encode_to_vec();
-    let store = SwitchableStore::with_checkpoint(SealedCheckpoint {
-        generation: 0,
-        sha256: Sha256::digest(&bytes).into(),
-        bytes,
-    });
-    let mut client = PigeonClient::new(store.clone(), identity).unwrap();
-    client
-        .execute(ClientCommand::apply_group_welcome("welcome", welcome).unwrap())
-        .unwrap();
-    (client, store)
-}
-
 fn three_member_group() -> ThreeMemberGroup {
-    let (bob, carol) = (TestIdentity::new(22), TestIdentity::new(23));
-    let (bob_public, carol_public) = (bob.root_public(), carol.root_public());
-    let mut bob_mls = TransactionalOpenMlsStorage::new();
-    let mut carol_mls = TransactionalOpenMlsStorage::new();
-    let mut owner = PigeonClient::new(SwitchableStore::default(), TestIdentity::new(21)).unwrap();
-    let pending = owner
-        .execute(
-            ClientCommand::create_group(
-                "create-receipts",
-                "Receipt Birds",
-                vec![bob_public, carol_public],
-                "https://relay.example",
-                TestIdentity::new(61).root_public(),
-                false,
-            )
-            .unwrap(),
-        )
-        .unwrap();
-    let bob_material = issue_join_material(&pending.outbound[0], &bob, &mut bob_mls);
-    let carol_material = issue_join_material(&pending.outbound[1], &carol, &mut carol_mls);
-    owner
-        .execute(
-            ClientCommand::apply_group_join_material(
-                "receipts-bob-package",
-                "create-receipts:join:0",
-                bob_material.encode(),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-    let created = owner
-        .execute(
-            ClientCommand::apply_group_join_material(
-                "receipts-carol-package",
-                "create-receipts:join:1",
-                carol_material.encode(),
-            )
-            .unwrap(),
-        )
-        .unwrap();
+    let (owner, mut bob, mut carol, created) = create_group_with_members(
+        SwitchableStore::default(),
+        [21, 22, 23],
+        "create-receipts",
+        "Receipt Birds",
+        TestIdentity::new(61).root_public(),
+        false,
+    );
+    let bob_public = TestIdentity::new(22).root_public();
+    let carol_public = TestIdentity::new(23).root_public();
+    let bob_store = bob.store().clone();
     let welcome_for = |member: [u8; 32]| {
         created
             .outbound
             .iter()
             .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
             .find(|item| {
-                item.kind == wire_proto::OutboundKind::GroupWelcome as i32
-                    && item.destination == member
+                item.kind == wire_proto::OutboundKind::Pairwise as i32 && item.destination == member
             })
             .unwrap()
             .payload
@@ -621,12 +521,15 @@ fn three_member_group() -> ThreeMemberGroup {
     let wire_proto::app_event::Body::GroupCreated(group) = event.body.unwrap() else {
         panic!("expected GroupCreated");
     };
-    let (bob_client, bob_store) = joined_member(bob, &bob_mls, bob_welcome);
-    let (carol_client, _) = joined_member(carol, &carol_mls, carol_welcome);
+    bob.execute(ClientCommand::apply_pairwise_control("welcome-bob", bob_welcome).unwrap())
+        .unwrap();
+    carol
+        .execute(ClientCommand::apply_pairwise_control("welcome-carol", carol_welcome).unwrap())
+        .unwrap();
     ThreeMemberGroup {
         owner,
-        bob: bob_client,
-        carol: carol_client,
+        bob,
+        carol,
         group_id: GroupId::from_bytes(group.group_id.try_into().unwrap()),
         bob_store,
     }
@@ -730,6 +633,118 @@ fn distant_future_epoch_is_durably_rejected_before_later_entries() {
         pigeon_core::GroupMessageOutcome::Rejected
     );
     assert_eq!(bob.checkpoint_generation(), generation + 1);
+}
+
+#[test]
+fn buffered_future_message_is_delivered_when_its_epoch_is_merged() {
+    let ThreeMemberGroup {
+        mut owner,
+        mut bob,
+        group_id,
+        ..
+    } = three_member_group();
+    let coordinator = TestIdentity::new(61);
+    let owner_snapshot =
+        wire_proto::ClientSnapshot::decode(owner.snapshot().unwrap().encode().as_slice()).unwrap();
+    let initial = owner_snapshot
+        .pending_outbound
+        .iter()
+        .find(|item| item.kind == wire_proto::OutboundKind::GroupCoordinator as i32)
+        .unwrap();
+    let coordination_id: [u8; 32] = initial.destination.as_slice().try_into().unwrap();
+    let initial_submission =
+        wire_proto::GroupCoordinatorSubmission::decode(initial.payload.as_slice()).unwrap();
+    let initial_candidate = coordinator_candidate(
+        &initial_submission,
+        1,
+        [0; 32],
+        coordination_id,
+        &coordinator.root,
+    );
+    let initial_head = pigeon_core::CoordinatorReceipt::decode_candidate(&initial_candidate)
+        .unwrap()
+        .0
+        .receipt_hash();
+    owner
+        .execute(
+            ClientCommand::apply_group_coordinator_candidate(
+                "anchor-owner",
+                initial_candidate.clone(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    bob.execute(
+        ClientCommand::apply_group_coordinator_candidate("anchor-bob", initial_candidate).unwrap(),
+    )
+    .unwrap();
+
+    let changed = owner
+        .execute(ClientCommand::rename_group("rename", group_id, "Swifts").unwrap())
+        .unwrap();
+    let submission = changed
+        .outbound
+        .iter()
+        .map(|item| wire_proto::OutboundItem::decode(item.encode().as_slice()).unwrap())
+        .find(|item| item.kind == wire_proto::OutboundKind::GroupCoordinator as i32)
+        .unwrap();
+    let submission =
+        wire_proto::GroupCoordinatorSubmission::decode(submission.payload.as_slice()).unwrap();
+    let candidate = coordinator_candidate(
+        &submission,
+        2,
+        initial_head,
+        coordination_id,
+        &coordinator.root,
+    );
+    owner
+        .execute(
+            ClientCommand::apply_group_coordinator_candidate("merge-owner", candidate.clone())
+                .unwrap(),
+        )
+        .unwrap();
+    let ciphertext = group_text(&mut owner, "after-rename", group_id);
+    let early = bob
+        .execute(ClientCommand::apply_group_message("early", ciphertext).unwrap())
+        .unwrap();
+    assert!(early.events.is_empty());
+    let merged = bob
+        .execute(ClientCommand::apply_group_coordinator_candidate("merge-bob", candidate).unwrap())
+        .unwrap();
+    assert!(merged.events.iter().any(|event| {
+        let event = wire_proto::AppEvent::decode(event.encode().as_slice()).unwrap();
+        matches!(
+            event.body,
+            Some(wire_proto::app_event::Body::GroupMessageReceived(_))
+        )
+    }));
+    let checkpoint = bob.store().load().unwrap().unwrap();
+    let state = wire_proto::ClientCheckpoint::decode(checkpoint.bytes.as_slice()).unwrap();
+    assert!(state.buffered_group_messages.is_empty());
+}
+
+#[test]
+fn unauthenticated_future_message_id_cannot_suppress_another_ciphertext() {
+    let ThreeMemberGroup {
+        mut owner,
+        mut bob,
+        group_id,
+        ..
+    } = three_member_group();
+    let first = group_text(&mut owner, "first-future", group_id);
+    let second = group_text(&mut owner, "second-future", group_id);
+    let mut first = wire_proto::GroupApplicationCiphertext::decode(first.as_slice()).unwrap();
+    let mut second = wire_proto::GroupApplicationCiphertext::decode(second.as_slice()).unwrap();
+    first.epoch += 1;
+    second.epoch += 1;
+    second.message_id = first.message_id.clone();
+    bob.execute(ClientCommand::apply_group_message("future-one", first.encode_to_vec()).unwrap())
+        .unwrap();
+    bob.execute(ClientCommand::apply_group_message("future-two", second.encode_to_vec()).unwrap())
+        .unwrap();
+    let checkpoint = bob.store().load().unwrap().unwrap();
+    let state = wire_proto::ClientCheckpoint::decode(checkpoint.bytes.as_slice()).unwrap();
+    assert_eq!(state.buffered_group_messages.len(), 2);
 }
 
 #[test]

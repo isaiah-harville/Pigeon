@@ -15,8 +15,7 @@ extension SessionManager {
   func createGroup(
     name: String,
     memberIDs: Set<Data>,
-    relayURL: URL,
-    meshEnabled: Bool
+    relayURL: URL
   ) async throws -> PigeonCoreOutput {
     guard Self.isValidGroupName(name) else { throw GroupCreationError.invalidName }
     guard memberIDs.count < Self.maximumGroupMembers,
@@ -49,7 +48,7 @@ extension SessionManager {
             name: name,
             memberIdentities: memberIDs.sorted { $0.lexicographicallyPrecedes($1) },
             relayURL: relayURL.absoluteString,
-            meshEnabled: meshEnabled,
+            meshEnabled: false,
             coordinatorPublicKey: coordinatorKey))))
   }
 
@@ -230,6 +229,7 @@ extension SessionManager {
   /// the checkpoint that the core persisted before returning its effects.
   @discardableResult
   func executeCore(_ command: PigeonCoreCommand) throws -> PigeonCoreOutput {
+    guard !isIdentityMoveFrozen else { throw PlatformError.Unavailable }
     guard let coreClient else { throw PlatformError.Unavailable }
     let output = try coreClient.execute(command)
     let snapshot = try coreClient.stateSnapshot()
@@ -241,7 +241,6 @@ extension SessionManager {
     let refreshed = try coreClient.stateSnapshot()
     groupRelay.reconfigure(snapshot: refreshed)
     reconfigureGroupInviteRelay(snapshot: refreshed)
-    fanOutGroupMesh(snapshot: refreshed)
     fanOutPairwiseMesh(snapshot: refreshed)
     if relay != nil {
       pairwiseRelay.reconfigure(snapshot: refreshed)
@@ -352,7 +351,7 @@ extension SessionManager {
   }
 
   private func acknowledgeCoreEvents(_ eventIDs: [String]) throws {
-    guard let coreClient else { throw PlatformError.Unavailable }
+    guard !isIdentityMoveFrozen, let coreClient else { throw PlatformError.Unavailable }
     let encodedIDs = try JSONEncoder().encode(eventIDs)
     let digest = SHA256.hash(data: encodedIDs)
       .map { String(format: "%02x", $0) }

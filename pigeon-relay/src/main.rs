@@ -17,6 +17,7 @@ mod group;
 mod invite;
 mod mailbox;
 mod push;
+mod socket_admission;
 
 #[cfg(test)]
 mod live_group_socket_tests;
@@ -60,7 +61,10 @@ async fn main() {
         .unwrap_or_else(|error| panic!("failed to bind {addr}: {error}"));
     // Intentionally the only operational log; never log addresses or content.
     eprintln!("pigeon-relay listening");
-    axum::serve(listener, app::router(state))
-        .await
-        .expect("server error");
+    axum::serve(
+        listener,
+        app::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await
+    .expect("server error");
 }

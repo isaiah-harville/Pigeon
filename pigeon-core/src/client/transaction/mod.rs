@@ -361,6 +361,21 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             )?;
         }
 
+        let ready_groups: Vec<_> = candidate
+            .groups
+            .iter()
+            .map(|group| (group.group_id.clone(), group.epoch))
+            .collect();
+        for (group_id, epoch) in ready_groups {
+            self.stage_replay_buffered_group_messages(
+                &command.inner.command_id,
+                &group_id,
+                epoch,
+                &mut candidate,
+                &mut output,
+            )?;
+        }
+
         self.stage_flush_full_acknowledgement_batches(
             &command.inner.command_id,
             &mut candidate,
@@ -509,7 +524,13 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             inner: proto::ClientSnapshot {
                 checkpoint_generation: self.state.generation,
                 groups,
-                pending_outbound: self.state.pending_outbound.clone(),
+                pending_outbound: self
+                    .state
+                    .pending_outbound
+                    .iter()
+                    .filter(|item| !pairwise::is_addressed_group_control(item.kind))
+                    .cloned()
+                    .collect(),
                 pending_events: self.state.pending_events.clone(),
                 pairwise_prekey_bundle,
                 pairwise_contacts,
@@ -659,23 +680,15 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     .push(envelope_hash);
                 Ok(())
             }
-            proto::OutboundKind::GroupJoinRequest => {
-                self.stage_apply_group_join_request(command_id, inbound, candidate, output)
-            }
-            proto::OutboundKind::GroupJoinMaterial => {
-                self.stage_apply_group_join_material(command_id, inbound, candidate, output)
-            }
-            proto::OutboundKind::GroupWelcome => {
-                self.stage_apply_group_welcome(command_id, inbound, candidate, output)
-            }
+            proto::OutboundKind::GroupJoinRequest
+            | proto::OutboundKind::GroupJoinMaterial
+            | proto::OutboundKind::GroupWelcome
+            | proto::OutboundKind::GroupLeaveProposal => Err(Error::InvalidSignature),
             proto::OutboundKind::GroupMessage => {
                 self.stage_apply_group_message(command_id, inbound, candidate, output)
             }
             proto::OutboundKind::GroupCoordinator => {
                 self.stage_apply_group_coordinator(command_id, inbound, candidate, output)
-            }
-            proto::OutboundKind::GroupLeaveProposal => {
-                self.stage_apply_group_leave_proposal(command_id, inbound, candidate, output)
             }
             _ => Err(Error::MalformedBundle),
         }

@@ -6,12 +6,13 @@
 //! operations in [`crate::mailbox`]. A single writer task owns the outbound side
 //! so the socket is never written from two places.
 
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{FromRef, State};
-use axum::http::StatusCode;
+use axum::extract::{ConnectInfo, FromRef, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
@@ -30,6 +31,7 @@ use crate::mailbox::{
     verify_ownership, Service,
 };
 use crate::push::PushRegistry;
+use crate::socket_admission::{client_ip, SocketAdmission};
 
 #[derive(Clone)]
 pub struct ConnectionState {
@@ -38,6 +40,8 @@ pub struct ConnectionState {
     message_ids: Arc<AtomicU64>,
     invite: invite::Service,
     socket_slots: Arc<Semaphore>,
+    socket_admission: SocketAdmission,
+    trusted_proxy_ip: Option<IpAddr>,
 }
 
 impl FromRef<AppState> for ConnectionState {
@@ -48,6 +52,8 @@ impl FromRef<AppState> for ConnectionState {
             message_ids: state.connection_ids.clone(),
             invite: state.invite.clone(),
             socket_slots: state.socket_slots.clone(),
+            socket_admission: state.socket_admission.clone(),
+            trusted_proxy_ip: state.trusted_proxy_ip,
         }
     }
 }
@@ -55,19 +61,30 @@ impl FromRef<AppState> for ConnectionState {
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<ConnectionState>,
+    connection: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     let Ok(slot) = state.socket_slots.clone().try_acquire_owned() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    let peer_ip = client_ip(
+        connection.map_or(IpAddr::V4(Ipv4Addr::LOCALHOST), |value| value.0.ip()),
+        &headers,
+        state.trusted_proxy_ip,
+    );
+    let Some(ip_slot) = state.socket_admission.acquire(peer_ip) else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     ws.max_message_size(512 * 1024)
         .on_upgrade(move |socket| async move {
             let _slot = slot;
-            handle_socket(socket, state).await;
+            let _ip_slot = ip_slot;
+            handle_socket(socket, state, peer_ip).await;
         })
         .into_response()
 }
 
-async fn handle_socket(socket: WebSocket, state: ConnectionState) {
+async fn handle_socket(socket: WebSocket, state: ConnectionState, peer_ip: IpAddr) {
     let conn_id = state.message_ids.fetch_add(1, Ordering::Relaxed);
     let (mut ws_tx, mut ws_rx) = socket.split();
     // Bounded: a client that stops draining loses its subscription rather than
@@ -157,6 +174,13 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState) {
                 ciphertext,
                 request_id,
             } => {
+                if !state.socket_admission.admit_invite(peer_ip) {
+                    let _ = tx.try_send(ServerMsg::Error {
+                        message: "invite publish rate exceeded".into(),
+                        request_id,
+                    });
+                    continue;
+                }
                 if selected_version < 3 {
                     let _ = tx.try_send(ServerMsg::Error {
                         message: "protocol version 3 required".into(),

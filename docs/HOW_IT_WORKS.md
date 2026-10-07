@@ -298,8 +298,8 @@ Pigeon groups have these product rules:
   The owner can permanently dissolve the group. Nobody can post after that, but
   the relay keeps the group readable for a while (30 days by default) so members
   who were offline still learn it ended.
-- Only the owner can change the shared name, selected relay, or local-mesh opt-in.
-  Mesh is off by default for every group.
+- Only the owner can change the shared name or selected relay. Group traffic
+  uses the selected relay; local mesh remains available for pairwise chats.
 - Membership and policy changes appear as status entries in the conversation,
   while verification failures appear as prominent security warnings.
 - "Delivered to" counts arrive in batches: each phone waits a few seconds (longer
@@ -496,8 +496,10 @@ security audit and must not be treated as proven-secure. See the
 ## Where the secrets live
 
 - Long-term and purpose-scoped **Ed25519 identity keys** live in the iPhone
-  **Keychain**, marked *this-device-only*: never synced to iCloud, never in
-  backups, and never moved to another device. The root/relay identity uses
+  **Keychain**, marked *this-device-only*: never synced to iCloud or included in
+  backups. An explicit move between two unlocked phones can transfer them over
+  a locally authenticated, encrypted channel; the old phone then retires its
+  identity before the new phone activates it. The root/relay identity uses
   `AfterFirstUnlock` when background delivery is enabled, or `WhenUnlocked` when
   disabled. MLS signing, group-capability, and recovery keys always use
   `WhenUnlocked`; a process that loaded them while unlocked may retain them in

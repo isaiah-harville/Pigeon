@@ -13,7 +13,7 @@ use crate::identity::{
     PlatformMlsSigner, SecureIdentity,
 };
 use crate::storage::TransactionalOpenMlsStorage;
-use crate::wire::{MAX_FUTURE_EPOCHS, MAX_MLS_OBJECT_BYTES};
+use crate::wire::{MAX_FUTURE_EPOCHS, MAX_MLS_OBJECT_BYTES, MAX_PAST_EPOCHS};
 
 #[derive(Clone, Debug)]
 pub struct GroupEngine {
@@ -216,7 +216,7 @@ impl GroupEngine {
             .use_ratchet_tree_extension(true)
             .with_capabilities(policy_capabilities())
             .with_group_context_extensions(policy_extensions(&policy)?)
-            .max_past_epochs(MAX_FUTURE_EPOCHS)
+            .max_past_epochs(MAX_PAST_EPOCHS)
             .build(provider, &signer, binding.credential_with_key())
             .map_err(|_| Error::Mls("create group"))?;
 
@@ -283,7 +283,7 @@ impl GroupEngine {
             return Err(Error::Serialization);
         };
         let join_config = MlsGroupJoinConfig::builder()
-            .max_past_epochs(MAX_FUTURE_EPOCHS)
+            .max_past_epochs(MAX_PAST_EPOCHS)
             .build();
         let staged =
             StagedWelcome::new_from_welcome(storage.provider(), &join_config, welcome, None)

@@ -3,12 +3,13 @@
 
 //! Per-socket handling for the isolated opaque group-message service.
 
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{FromRef, State};
-use axum::http::StatusCode;
+use axum::extract::{ConnectInfo, FromRef, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
@@ -31,6 +32,7 @@ use crate::app::{AppState, SUBSCRIBER_CHANNEL_CAPACITY};
 use crate::clock::now;
 use crate::coordinator::{self, protocol::CandidateWire};
 use crate::push::{self, PushRegistry};
+use crate::socket_admission::{client_ip, SocketAdmission};
 
 #[derive(Clone)]
 pub struct ConnectionState {
@@ -40,6 +42,8 @@ pub struct ConnectionState {
     connection_ids: Arc<AtomicU64>,
     admission_difficulty: u8,
     socket_slots: Arc<Semaphore>,
+    socket_admission: SocketAdmission,
+    trusted_proxy_ip: Option<IpAddr>,
 }
 
 impl FromRef<AppState> for ConnectionState {
@@ -51,6 +55,8 @@ impl FromRef<AppState> for ConnectionState {
             connection_ids: state.connection_ids.clone(),
             admission_difficulty: state.group_admission_difficulty,
             socket_slots: state.socket_slots.clone(),
+            socket_admission: state.socket_admission.clone(),
+            trusted_proxy_ip: state.trusted_proxy_ip,
         }
     }
 }
@@ -58,13 +64,24 @@ impl FromRef<AppState> for ConnectionState {
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<ConnectionState>,
+    connection: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     let Ok(slot) = state.socket_slots.clone().try_acquire_owned() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    let peer_ip = client_ip(
+        connection.map_or(IpAddr::V4(Ipv4Addr::LOCALHOST), |value| value.0.ip()),
+        &headers,
+        state.trusted_proxy_ip,
+    );
+    let Some(ip_slot) = state.socket_admission.acquire(peer_ip) else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     ws.max_message_size(MAX_GROUP_FRAME_BYTES)
         .on_upgrade(move |socket| async move {
             let _slot = slot;
+            let _ip_slot = ip_slot;
             handle_socket(socket, state).await;
         })
         .into_response()

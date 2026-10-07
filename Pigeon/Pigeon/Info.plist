@@ -19,6 +19,8 @@
 	<array>
 		<string>_pigeon-mesh._tcp</string>
 		<string>_pigeon-mesh._udp</string>
+		<string>_pigeon-move._tcp</string>
+		<string>_pigeon-move._udp</string>
 	</array>
 	<key>UIBackgroundModes</key>
 	<array>

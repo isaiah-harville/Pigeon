@@ -381,6 +381,13 @@ impl Reassembler {
             .expect("reassembler poisoned")
             .pending_count() as u32
     }
+
+    pub fn pending_bytes(&self) -> u64 {
+        self.inner
+            .lock()
+            .expect("reassembler poisoned")
+            .pending_bytes() as u64
+    }
 }
 
 #[cfg(test)]

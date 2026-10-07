@@ -37,6 +37,70 @@ final class SessionCoreIntegrationTests: XCTestCase {
     XCTAssertEqual(card.bundle.curveIdentityKey, card.prekeyBundle?.curveIdentityKey)
   }
 
+  func testForegroundDuringIdentityMoveDoesNotPoisonSession() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    try fixture.manager.attachStore(fixture.store)
+    fixture.manager.isIdentityMoveFrozen = true
+
+    fixture.manager.setAppActive(true)
+
+    XCTAssertTrue(fixture.manager.isPersistenceHealthy)
+    XCTAssertTrue(fixture.manager.isIdentityMoveFrozen)
+    fixture.manager.cancelIdentityMove()
+    XCTAssertTrue(fixture.manager.isPersistenceHealthy)
+  }
+
+  func testPreparedMoveRelaunchKeepsCheckpointFrozenUntilCancellation() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    let journalURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("pigeon-move-test-\(UUID().uuidString).source")
+    let journal = IdentityMoveSourceJournal(url: journalURL)
+    fixture.manager.makeSourceMoveJournal = { journal }
+    defer { try? journal.cancelBeforeRetirement(identity: fixture.manager.identity) }
+    XCTAssertFalse(journal.isPending)
+    try fixture.manager.attachStore(fixture.store)
+    let archive = try fixture.manager.prepareIdentityMoveArchive(transferID: UUID())
+    try journal.prepare(
+      archive: archive,
+      digest: Data(SHA256.hash(data: try archive.encode())),
+      identity: fixture.manager.identity)
+    let generation = try fixture.manager.coreClient?.checkpointGeneration()
+
+    let restored = SessionManager(
+      identity: fixture.manager.identity,
+      mesh: MeshService(transport: SessionCoreNoopTransport()))
+    restored.makeSourceMoveJournal = { journal }
+    try restored.attachStore(fixture.store)
+    restored.setAppActive(true)
+
+    XCTAssertTrue(restored.isIdentityMoveFrozen)
+    XCTAssertTrue(restored.isPersistenceHealthy)
+    XCTAssertEqual(try restored.coreClient?.checkpointGeneration(), generation)
+    XCTAssertThrowsError(
+      try restored.executeCore(
+        PigeonCoreCommand(
+          id: "must-not-advance", body: .ensurePairwiseAccount)))
+
+    try journal.cancelBeforeRetirement(identity: fixture.manager.identity)
+    restored.cancelIdentityMove()
+    XCTAssertFalse(restored.isIdentityMoveFrozen)
+  }
+
+  func testUnreadablePreparedMoveRecordBlocksSessionRestore() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("pigeon-move-corrupt-\(UUID().uuidString).source")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try Data("corrupt move record".utf8).write(to: url)
+    fixture.manager.makeSourceMoveJournal = { IdentityMoveSourceJournal(url: url) }
+
+    XCTAssertThrowsError(try fixture.manager.attachStore(fixture.store))
+    XCTAssertFalse(fixture.manager.isUnlocked)
+  }
+
   func testCoreSnapshotAtomicallyReplacesGroupProjectionAndRejectsRollback() throws {
     let fixture = try makeFixture()
     defer { wipe(fixture.store) }
@@ -209,6 +273,20 @@ final class SessionCoreIntegrationTests: XCTestCase {
     XCTAssertEqual(try fixture.manager.coreClient?.checkpointGeneration(), initialGeneration)
   }
 
+  func testGroupCiphertextFromBluetoothIsIgnored() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    try fixture.manager.attachStore(fixture.store)
+    let generation = try fixture.manager.coreClient?.checkpointGeneration()
+    let envelope = SessionEnvelope(
+      type: .groupMls, sender: Data(repeating: 7, count: 32),
+      recipient: Data(repeating: 8, count: 32), payload: Data([1, 2, 3]))
+
+    XCTAssertEqual(
+      fixture.manager.handleInbound(envelope.encoded(), channel: .bluetooth), .consumed)
+    XCTAssertEqual(try fixture.manager.coreClient?.checkpointGeneration(), generation)
+  }
+
   func makeFixture() throws -> (manager: SessionManager, store: EncryptedStore) {
     let identity = try IdentityManager(
       store: InMemoryKeyStore(seed: Data(repeating: 23, count: 32)))
@@ -267,8 +345,7 @@ extension SessionCoreIntegrationTests {
     }
 
     let output = try await fixture.manager.createGroup(
-      name: "Bird Friends", memberIDs: Set(peers.map(\.id)), relayURL: relay,
-      meshEnabled: false)
+      name: "Bird Friends", memberIDs: Set(peers.map(\.id)), relayURL: relay)
 
     XCTAssertEqual(output.outbound.count, 2)
     XCTAssertTrue(output.outbound.allSatisfy { $0.kind == .pairwise })
@@ -292,8 +369,7 @@ extension SessionCoreIntegrationTests {
 
     do {
       _ = try await fixture.manager.createGroup(
-        name: "Bird Friends", memberIDs: Set(peers.map(\.id)), relayURL: relay,
-        meshEnabled: false)
+        name: "Bird Friends", memberIDs: Set(peers.map(\.id)), relayURL: relay)
       XCTFail("Expected unreachable member error")
     } catch {
       XCTAssertEqual(error as? SessionManager.GroupCreationError, .unreachableMember)

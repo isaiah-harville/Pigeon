@@ -37,6 +37,14 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 index += 1;
             }
         }
+        let prior_join_count = candidate.group_invite_joins.len();
+        candidate.group_invite_joins.retain(|join| {
+            matches!(
+                proto::GroupInviteProgress::try_from(join.progress),
+                Ok(proto::GroupInviteProgress::Pending | proto::GroupInviteProgress::Approved)
+            )
+        });
+        changed |= candidate.group_invite_joins.len() != prior_join_count;
         let mut expired_destinations = Vec::new();
         for join in &mut candidate.group_invite_joins {
             let ticket = GroupInviteTicket::decode(&join.ticket)?;
@@ -47,6 +55,12 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 )
             {
                 join.progress = proto::GroupInviteProgress::Expired as i32;
+                if join.reply_address.is_empty() {
+                    let inbox =
+                        GroupInviteReplyInbox::import_state(&join.reply_inbox_state, &ticket)?;
+                    join.reply_address = inbox.address().to_vec();
+                }
+                join.reply_inbox_state.clear();
                 expired_destinations.push(ticket.inbox_address().to_vec());
                 changed = true;
             }
@@ -126,12 +140,8 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         candidate: &mut proto::ClientCheckpoint,
     ) -> Result<(), Error> {
         let index = invite_index(candidate, &value.inbox_address)?;
-        let ticket = GroupInviteTicket::decode(&candidate.group_invites[index].ticket)?;
-        let policy = group_policy(candidate, ticket.group_id())?;
-        let actor = self.identity.ensure_public_key(IdentityPurpose::Root)?;
-        if !policy.is_admin(actor) {
-            return Err(Error::InvalidSignature);
-        }
+        // The inbox key is local state: its holder can always stop serving it,
+        // including after leaving or losing the group's admin role.
         candidate.group_invites.remove(index);
         Ok(())
     }
@@ -145,6 +155,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
     ) -> Result<(), Error> {
         let ticket = GroupInviteTicket::decode(&value.ticket)?;
         ticket.validate(value.now_ms)?;
+        self.stage_refresh_group_invites(value.now_ms, candidate)?;
         // Completed joins no longer need their private reply inbox. Remove them
         // before enforcing the cap so historical attempts cannot block joining.
         candidate.group_invite_joins.retain(|join| {
@@ -186,6 +197,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 request_id: request_id.to_vec(),
                 reply_inbox_state: reply.export_state()?,
                 progress: proto::GroupInviteProgress::Pending as i32,
+                reply_address: reply.address().to_vec(),
             });
         output.outbound.push(invite_outbound(
             command_id,
@@ -522,7 +534,16 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 payload,
             ));
         }
-        candidate.group_invite_joins[index].reply_inbox_state = inbox.export_state()?;
+        candidate.group_invite_joins[index].reply_inbox_state = if matches!(
+            progress,
+            proto::GroupInviteProgress::Rejected
+                | proto::GroupInviteProgress::Expired
+                | proto::GroupInviteProgress::Full
+        ) {
+            Vec::new()
+        } else {
+            inbox.export_state()?
+        };
         candidate.group_invite_joins[index].progress = progress as i32;
         Ok(())
     }
@@ -562,12 +583,17 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             .iter()
             .map(|stored| {
                 let ticket = GroupInviteTicket::decode(&stored.ticket)?;
-                let inbox =
-                    GroupInviteReplyInbox::import_state(&stored.reply_inbox_state, &ticket)?;
+                let address = if stored.reply_address.len() == 32 {
+                    stored.reply_address.clone()
+                } else {
+                    GroupInviteReplyInbox::import_state(&stored.reply_inbox_state, &ticket)?
+                        .address()
+                        .to_vec()
+                };
                 Ok(proto::GroupInviteJoinState {
                     ticket: stored.ticket.clone(),
                     request_id: stored.request_id.clone(),
-                    reply_address: inbox.address().to_vec(),
+                    reply_address: address,
                     progress: stored.progress,
                 })
             })
@@ -587,6 +613,9 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             }
         }
         for stored in &self.state.group_invite_joins {
+            if stored.reply_inbox_state.is_empty() {
+                continue;
+            }
             let ticket = GroupInviteTicket::decode(&stored.ticket)?;
             let inbox = GroupInviteReplyInbox::import_state(&stored.reply_inbox_state, &ticket)?;
             if inbox.address().as_slice() == address {

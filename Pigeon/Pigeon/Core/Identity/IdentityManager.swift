@@ -28,12 +28,10 @@ protocol IdentityInitializationStore {
 }
 
 private struct UserDefaultsIdentityInitializationStore: IdentityInitializationStore {
-  private let key = "pigeon.identity.initialized"
-
-  var wasInitialized: Bool { UserDefaults.standard.bool(forKey: key) }
+  var wasInitialized: Bool { IdentityManager.hasContainerEvidence }
 
   func markInitialized() {
-    UserDefaults.standard.set(true, forKey: key)
+    IdentityManager.markContainerInitialized()
   }
 }
 
@@ -55,6 +53,19 @@ private struct UserDefaultsIdentityInitializationStore: IdentityInitializationSt
 final class IdentityManager {
 
   private static let identityAccount = "identity.ed25519.private"
+  private static let initializedKey = "pigeon.identity.initialized"
+
+  static var hasContainerEvidence: Bool {
+    UserDefaults.standard.bool(forKey: initializedKey)
+  }
+
+  static func storedIdentityExists() throws -> Bool {
+    try KeychainStore(account: identityAccount).get() != nil
+  }
+
+  static func markContainerInitialized() {
+    UserDefaults.standard.set(true, forKey: initializedKey)
+  }
 
   private let store: any KeyStore
   private var privateKey: Curve25519.Signing.PrivateKey

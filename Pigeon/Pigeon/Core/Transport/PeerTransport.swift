@@ -275,7 +275,7 @@ final class PeerTransport: NSObject, Transport {
     guard isEnabled else { return }
     do {
       let fragment = try Fragment(decoding: data)
-      if let message = try reassembly.reassembler(for: source).ingest(fragment) {
+      if let message = try reassembly.ingest(fragment, from: source) {
         note(.transportReceived)
         _ = onMessage?(message, source.uuidString)
       }

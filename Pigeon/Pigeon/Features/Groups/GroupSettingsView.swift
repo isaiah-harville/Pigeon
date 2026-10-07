@@ -149,7 +149,6 @@ extension GroupSettingsView {
     if isOwner(group) {
       Section("Owner controls") {
         renameButton(group)
-        meshButton(group)
         relayButton(group)
         LabeledContent("Current relay", value: URL(string: group.relayURL)?.host ?? group.relayURL)
         if relayChangeInProgress {
@@ -170,18 +169,6 @@ extension GroupSettingsView {
       showRename = true
     } label: {
       Label("Change Group Name", systemImage: "pencil")
-    }
-  }
-
-  private func meshButton(_ group: PigeonGroupState) -> some View {
-    Button {
-      apply(.meshChanged, boolValue: !group.meshEnabled)
-    } label: {
-      Label(
-        group.meshEnabled ? "Turn Off Local Mesh" : "Turn On Local Mesh",
-        systemImage: group.meshEnabled
-          ? "antenna.radiowaves.left.and.right.slash"
-          : "antenna.radiowaves.left.and.right")
     }
   }
 

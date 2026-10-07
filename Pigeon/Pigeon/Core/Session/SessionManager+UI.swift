@@ -13,6 +13,10 @@ extension SessionManager {
 
   func setAppActive(_ active: Bool) {
     presenter.setAppActive(active)
+    if isIdentityMoveFrozen {
+      groupInviteRelay.disconnect()
+      return
+    }
     if active {
       if isUnlocked {
         do {
@@ -110,7 +114,11 @@ extension SessionManager {
     do {
       try CleanSlateExecutor.run(
         wipe: { persistence.wipeAll() },
-        rotateIdentity: { try identity.replaceIdentity(with: identitySeed) },
+        rotateIdentity: {
+          CoreCheckpointStore.clearCheckpointEvidence()
+          try CoreIdentityProvider.deleteStoredScopedKeys()
+          try identity.replaceIdentity(with: identitySeed)
+        },
         rotateVault: replaceVault)
       isPersistenceHealthy = false
     } catch CleanSlateError.wipeFailed {
@@ -324,6 +332,7 @@ extension SessionManager {
   /// Request senders get one ordinary introductory message. Recipients cannot
   /// reply until accepting; normal contacts are unrestricted.
   func canSendMessage(to contact: Contact) -> Bool {
+    guard !isIdentityMoveFrozen else { return false }
     guard let current = contacts.first(where: { $0.id == contact.id }) else { return false }
     switch current.requestState {
     case .none: return true
