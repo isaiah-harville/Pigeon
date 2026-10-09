@@ -2,9 +2,8 @@
 //  ChatsListView.swift
 //  Pigeon
 //
-//  The app's home: a sleek list of conversations. The leading toolbar button
-//  opens the menu (identity, Bluetooth, activity); the trailing button adds a
-//  contact by scanning their QR code.
+//  The app's home: a list of conversations with a pinned creation menu and
+//  a contacts shortcut in the top-right toolbar.
 //
 
 import PigeonFFI
@@ -14,7 +13,6 @@ struct ChatsListView: View {
   @Environment(SessionManager.self) private var session
   @Environment(IdentityManager.self) private var identity
 
-  @State private var showAddContact = false
   @State private var showMenu = false
   @State private var showContacts = false
   @State private var showCreateGroup = false
@@ -41,14 +39,8 @@ struct ChatsListView: View {
         contactList
       }
     }
-    // The bubble floats over the content, bottom-right. The empty state has its
-    // own add button, so it's only shown when there are chats.
     .overlay(alignment: .bottomTrailing) {
-      if !session.chatContacts.isEmpty || !session.incomingMessageRequests.isEmpty
-        || !activeGroups.isEmpty
-      {
-        addContactBubble
-      }
+      newConversationMenu
     }
     .navigationTitle("Pigeon")
     .navigationBarTitleDisplayMode(.inline)
@@ -57,12 +49,6 @@ struct ChatsListView: View {
     .navigationDestination(item: $openedChatID) { id in
       if let contact = session.contacts.first(where: { $0.id == id }) {
         ChatView(contact: contact)
-      }
-    }
-    .sheet(isPresented: $showAddContact, onDismiss: openPendingChat) {
-      AddContactView { contactID in
-        pendingChatID = contactID
-        showAddContact = false
       }
     }
     .sheet(isPresented: $showMenu) { MenuView() }
@@ -105,20 +91,7 @@ struct ChatsListView: View {
         .tracking(2)
         .foregroundStyle(.primary)
     }
-    ToolbarItemGroup(placement: .topBarTrailing) {
-      Button {
-        showJoinGroup = true
-      } label: {
-        Image(systemName: "person.badge.plus")
-      }
-      .accessibilityLabel("Join group")
-      Button {
-        showCreateGroup = true
-      } label: {
-        Image(systemName: "person.3.fill")
-          .font(.body)
-      }
-      .accessibilityLabel("New group")
+    ToolbarItem(placement: .topBarTrailing) {
       Button {
         showContacts = true
       } label: {
@@ -129,14 +102,25 @@ struct ChatsListView: View {
     }
   }
 
-  /// The primary "add someone" action: a floating QR bubble in the bottom-right,
-  /// so the toolbar stays to navigation (menu + contacts) and the create action
-  /// reads as the prominent thing it is.
-  private var addContactBubble: some View {
-    Button {
-      showAddContact = true
+  private var newConversationMenu: some View {
+    Menu {
+      Button {
+        showContacts = true
+      } label: {
+        Label("New Chat", systemImage: "bubble.left")
+      }
+      Button {
+        showCreateGroup = true
+      } label: {
+        Label("New Group", systemImage: "person.3.fill")
+      }
+      Button {
+        showJoinGroup = true
+      } label: {
+        Label("Join Group", systemImage: "person.badge.plus")
+      }
     } label: {
-      Image(systemName: "qrcode.viewfinder")
+      Image(systemName: "plus")
         .font(.title2.weight(.semibold))
         .foregroundStyle(.white)
         .frame(width: 56, height: 56)
@@ -145,7 +129,7 @@ struct ChatsListView: View {
     }
     .padding(.trailing, 20)
     .padding(.bottom, 20)
-    .accessibilityLabel("Add contact")
+    .accessibilityLabel("New conversation")
   }
 }
 
@@ -218,8 +202,8 @@ extension ChatsListView {
 
   // MARK: - Empty state
 
-  // Two cases: no contacts at all (add one), or contacts exist in the book but no
-  // open conversation (open one).
+  // The empty state distinguishes an empty contacts book from contacts with no
+  // open conversation.
   private var hasContacts: Bool {
     session.contacts.contains { $0.requestState != .incoming }
   }
@@ -234,34 +218,18 @@ extension ChatsListView {
           .font(.title3.weight(.semibold))
         Text(
           hasContacts
-            ? "Open a contact from your contacts book to start chatting."
-            : "Scan someone nearby or exchange contact links from anywhere."
+            ? "Tap + to start a chat with a contact."
+            : "Open Contacts to add someone, then tap + to start a chat."
         )
         .font(.callout)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
       }
-      emptyStateButton
     }
     .padding(40)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
-  private var emptyStateButton: some View {
-    Button {
-      if hasContacts { showContacts = true } else { showAddContact = true }
-    } label: {
-      Label(
-        hasContacts ? "Open Contacts" : "Add Contact",
-        systemImage: hasContacts ? "person.2" : "plus"
-      )
-      .font(.body.weight(.semibold))
-      .padding(.horizontal, 8)
-    }
-    .buttonStyle(.borderedProminent)
-    .controlSize(.large)
-    .buttonBorderShape(.capsule)
-  }
 }
 
 private struct GroupRow: View {
