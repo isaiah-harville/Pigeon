@@ -9,13 +9,17 @@ import SwiftUI
 
 struct AdvancedSettingsView: View {
   @Environment(SessionManager.self) private var session
+  @Environment(Vault.self) private var vault
   @Environment(\.cleanSlateAction) private var cleanSlateAction
+  @Environment(\.identityMoveAction) private var identityMoveAction
 
   @State private var receiveWhileLocked = true
   @State private var connectivityEnabled = true
   @State private var showCleanSlateConfirmation = false
   @State private var cleanSlateRunning = false
   @State private var cleanSlateError: String?
+  @State private var showIdentityMove = false
+  @State private var moveAuthorizationError: String?
 
   var body: some View {
     List {
@@ -24,6 +28,7 @@ struct AdvancedSettingsView: View {
       pendingSendersSection
       blockedContactsSection
       cleanSlateSection
+      identityMoveSection
     }
     .navigationTitle("Advanced Settings")
     .navigationBarTitleDisplayMode(.inline)
@@ -50,6 +55,21 @@ struct AdvancedSettingsView: View {
       Button("OK", role: .cancel) {}
     } message: {
       Text(cleanSlateError ?? "Pigeon did not complete the reset.")
+    }
+    .alert(
+      "Device move unavailable",
+      isPresented: Binding(
+        get: { moveAuthorizationError != nil },
+        set: { if !$0 { moveAuthorizationError = nil } })
+    ) {
+      Button("OK", role: .cancel) {}
+    } message: {
+      Text(moveAuthorizationError ?? "Try again.")
+    }
+    .sheet(isPresented: $showIdentityMove) {
+      IdentityMoveView(
+        mode: .source, sourceSession: session,
+        action: identityMoveAction)
     }
   }
 
@@ -105,6 +125,31 @@ struct AdvancedSettingsView: View {
       Text(
         "Tap, confirm, then authenticate. This deletes all messages "
           + "and contacts and creates a new long-term identity.")
+    }
+  }
+
+  private var identityMoveSection: some View {
+    let resumePending = (try? IdentityMoveSourceJournal())?.isPending == true
+    return Section {
+      Button {
+        Task {
+          do {
+            try await vault.authorizeDestructiveAction(
+              reason: "Move your Pigeon identity to a new phone")
+            showIdentityMove = true
+          } catch {
+            moveAuthorizationError = "Unlock this phone to move your identity."
+          }
+        }
+      } label: {
+        Label(
+          resumePending ? "Resume device move" : "Move to a new phone",
+          systemImage: "iphone.gen3.radiowaves.left.and.right")
+      }
+    } footer: {
+      Text(
+        "Requires both phones nearby and unlocked. Transfers identity and group membership, "
+          + "not saved messages.")
     }
   }
 
@@ -175,5 +220,18 @@ extension EnvironmentValues {
   var cleanSlateAction: CleanSlateAction {
     get { self[CleanSlateActionKey.self] }
     set { self[CleanSlateActionKey.self] = newValue }
+  }
+}
+
+private struct IdentityMoveActionKey: EnvironmentKey {
+  static let defaultValue = IdentityMoveAction(
+    retireSource: { throw IdentityMoveStage.StageError.unavailable },
+    completeSource: {})
+}
+
+extension EnvironmentValues {
+  var identityMoveAction: IdentityMoveAction {
+    get { self[IdentityMoveActionKey.self] }
+    set { self[IdentityMoveActionKey.self] = newValue }
   }
 }

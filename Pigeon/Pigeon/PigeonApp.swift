@@ -18,7 +18,7 @@ struct PigeonApp: App {
   @Environment(\.scenePhase) private var scenePhase
 
   #if os(iOS)
-    // Receives the APNs device token (opt-in push wake-ups) and forwards it to
+    // Receives the APNs device token (push wake-ups are enabled by default) and forwards it to
     // `RemoteNotificationManager`; SwiftUI has no hook for these UIKit callbacks.
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
   #endif
@@ -29,6 +29,10 @@ struct PigeonApp: App {
   /// fatal, so we defer and retry rather than crash.
   @State private var services: AppServices?
   @State private var startupError: String?
+  @State private var requiresReinstallRecovery = false
+  @State private var offersFirstLaunch = false
+  @State private var hasStagedMove = false
+  @State private var moveDisplayName = ""
   @State private var vault = Vault()
 
   /// A contact link tapped elsewhere on the device, held here rather than in
@@ -36,11 +40,15 @@ struct PigeonApp: App {
   /// `ContentView` isn't in the hierarchy yet. `ContentView` presents it once the
   /// app is unlocked and past onboarding.
   @State private var pendingContactCode: String?
+  @State private var pendingGroupInviteCode: String?
 
   init() {
-    let startup = Self.loadServices()
+    let startup = StartupBootstrap.loadServices()
     _services = State(initialValue: startup.services)
     _startupError = State(initialValue: startup.errorMessage)
+    _requiresReinstallRecovery = State(initialValue: startup.reinstallRecovery)
+    _offersFirstLaunch = State(initialValue: startup.firstLaunch)
+    _hasStagedMove = State(initialValue: startup.stagedMove)
   }
 
   var body: some Scene {
@@ -71,13 +79,28 @@ struct PigeonApp: App {
   @ViewBuilder
   private var rootContent: some View {
     if let services {
-      ContentView(pendingContactCode: $pendingContactCode)
-        .environment(services.identity)
-        .environment(services.session)
-        .environment(vault)
-        .environment(\.cleanSlateAction, CleanSlateAction(perform: performCleanSlate))
+      ContentView(
+        pendingContactCode: $pendingContactCode,
+        pendingGroupInviteCode: $pendingGroupInviteCode
+      )
+      .environment(services.identity)
+      .environment(services.session)
+      .environment(vault)
+      .environment(\.cleanSlateAction, CleanSlateAction(perform: performCleanSlate))
+      .environment(
+        \.identityMoveAction,
+        IdentityMoveAction(
+          retireSource: retireSourceForMove, completeSource: completeSourceMove))
     } else {
-      StartupRecoveryView(message: startupError)
+      StartupRecoveryView(
+        message: startupError,
+        reinstallRecovery: requiresReinstallRecovery,
+        firstLaunch: offersFirstLaunch,
+        stagedMove: hasStagedMove,
+        startFresh: requiresReinstallRecovery
+          ? performReinstallFreshStart : beginFirstLaunch,
+        moveCompleted: retryStartupIfNeeded,
+        discardMove: discardStagedMove)
     }
   }
 
@@ -86,16 +109,84 @@ struct PigeonApp: App {
   /// Adding still needs an explicit confirmation in the sheet.
   private func queueContactImport(_ url: URL) {
     let code = url.absoluteString
-    guard ContactCard(scanned: code) != nil else { return }
-    pendingContactCode = code
+    if ContactCard(scanned: code) != nil {
+      pendingContactCode = code
+    } else if GroupInviteLink(scanned: code) != nil {
+      pendingGroupInviteCode = code
+    }
   }
 
   /// Builds the services once, if we don't already have them. Idempotent.
   private func retryStartupIfNeeded() {
     guard services == nil else { return }
-    let startup = Self.loadServices()
+    let startup = StartupBootstrap.loadServices()
     services = startup.services
     startupError = startup.errorMessage
+    requiresReinstallRecovery = startup.reinstallRecovery
+    offersFirstLaunch = startup.firstLaunch
+    hasStagedMove = startup.stagedMove
+  }
+
+  private func beginFirstLaunch() throws {
+    guard services == nil, offersFirstLaunch else {
+      throw CleanSlateError.recoveryStateFailed
+    }
+    try CoreIdentityProvider.deleteStoredScopedKeys()
+    let startup = StartupBootstrap.loadServices(allowFirstLaunch: true)
+    services = startup.services
+    startupError = startup.errorMessage
+    offersFirstLaunch = startup.firstLaunch
+    guard services != nil else { throw CleanSlateError.serviceRestartFailed }
+  }
+
+  private func discardStagedMove() async throws {
+    guard services == nil, hasStagedMove else {
+      throw IdentityMoveStage.StageError.invalidState
+    }
+    try await vault.authorizeDestructiveAction(
+      reason: "Discard the staged Pigeon device move")
+    try IdentityMoveStage().discardUnretired()
+    hasStagedMove = false
+    offersFirstLaunch = true
+    startupError = "The staged move was discarded. Start with a new identity."
+  }
+
+  private func retireSourceForMove() async throws {
+    guard let current = services, vault.key != nil else {
+      throw CleanSlateError.wipeFailed
+    }
+    moveDisplayName = current.session.myName
+    try await retireCurrentIdentity(current)
+  }
+
+  private func completeSourceMove() {
+    guard let key = vault.key else {
+      services = nil
+      startupError = "The old phone retired its identity. Reopen Pigeon to finish setup."
+      return
+    }
+    do {
+      try rebuildServices(afterCleanSlateWith: key, displayName: moveDisplayName)
+    } catch {
+      services = nil
+      startupError = "The old phone retired its identity. Reopen Pigeon to finish setup."
+    }
+  }
+
+  private func performReinstallFreshStart() async throws {
+    guard services == nil, requiresReinstallRecovery else {
+      throw CleanSlateError.recoveryStateFailed
+    }
+    try await vault.authorizeDestructiveAction(
+      reason: "Remove the identity left by the previous Pigeon installation")
+    let recovery = CleanSlateRecovery()
+    try recovery.begin()
+    try StartupBootstrap.resumeCleanSlateIfNeeded()
+    let startup = StartupBootstrap.loadServices()
+    services = startup.services
+    startupError = startup.errorMessage
+    requiresReinstallRecovery = startup.reinstallRecovery
+    guard services != nil else { throw CleanSlateError.serviceRestartFailed }
   }
 
   /// Authenticates again, retires the live service graph, wipes every sealed
@@ -114,18 +205,23 @@ struct PigeonApp: App {
       try rebuildServices(afterCleanSlateWith: key, displayName: displayName)
       return
     }
+    try await retireCurrentIdentity(current)
+    guard let key = vault.key else { throw CleanSlateError.vaultRotationFailed }
+    try rebuildServices(afterCleanSlateWith: key, displayName: displayName)
+  }
+
+  private func retireCurrentIdentity(_ current: AppServices) async throws {
+    let recovery = CleanSlateRecovery()
     try recovery.begin()
     let targets = try recovery.targets()
     try await current.session.prepareCleanSlate(identitySeed: targets.identitySeed) {
       try vault.replaceKeyAfterCleanSlate(with: targets.vaultKey)
     }
     try recovery.finish()
-    guard let key = vault.key else { throw CleanSlateError.vaultRotationFailed }
-    try rebuildServices(afterCleanSlateWith: key, displayName: displayName)
   }
 
   private func rebuildServices(afterCleanSlateWith key: SymmetricKey, displayName: String) throws {
-    let startup = Self.loadServices()
+    let startup = StartupBootstrap.loadServices()
     guard let replacement = startup.services else {
       services = nil
       startupError = startup.errorMessage
@@ -143,87 +239,6 @@ struct PigeonApp: App {
     startupError = nil
   }
 
-  private static func loadServices() -> StartupResult {
-    #if os(iOS)
-      let protectedDataAvailable = UIApplication.shared.isProtectedDataAvailable
-    #else
-      let protectedDataAvailable = true
-    #endif
-
-    let backgroundDeliveryEnabled = BackgroundDelivery.isEnabled
-    guard
-      StartupPolicy.shouldAttemptIdentityLoad(
-        protectedDataAvailable: protectedDataAvailable,
-        backgroundDeliveryEnabled: backgroundDeliveryEnabled)
-    else { return waitingForUnlock() }
-
-    do {
-      try resumeCleanSlateIfNeeded()
-    } catch {
-      return StartupResult(
-        services: nil,
-        errorMessage: "Pigeon could not finish the pending Clean Slate reset.")
-    }
-
-    do {
-      let identity = try IdentityManager(
-        creationPolicy: StartupPolicy.identityCreationPolicy(
-          protectedDataAvailable: protectedDataAvailable))
-      let mode = StartupPolicy.mode(
-        protectedDataAvailable: protectedDataAvailable,
-        backgroundDeliveryEnabled: backgroundDeliveryEnabled,
-        identityReadable: true)
-      guard mode != .waitForUnlock else { return waitingForUnlock() }
-      return StartupResult(
-        services: makeServices(identity: identity),
-        errorMessage: nil)
-    } catch {
-      if !protectedDataAvailable { return waitingForUnlock() }
-      return StartupResult(
-        services: nil,
-        errorMessage: "Pigeon could not load its device identity.")
-    }
-  }
-
-  private static func waitingForUnlock() -> StartupResult {
-    StartupResult(
-      services: nil,
-      errorMessage: "Waiting for the device to unlock before loading identity keys.")
-  }
-
-  private static func makeServices(identity: IdentityManager) -> AppServices {
-    let session = SessionManager(identity: identity)
-    let notifier = MessageNotifier()
-    // This cannot depend on view lifecycle: BLE or relay may relaunch the app.
-    notifier.start()
-    session.onIncomingNotification = { notifier.notifyIncomingMessage() }
-    #if os(iOS)
-      RemoteNotificationManager.shared.onToken = { [weak session] token in
-        session?.relay?.setPushToken(token)
-      }
-      if RelaySettings.pushEnabled { RemoteNotificationManager.shared.enable() }
-    #endif
-    return AppServices(identity: identity, session: session, notifier: notifier)
-  }
-
-  private static func resumeCleanSlateIfNeeded() throws {
-    let recovery = CleanSlateRecovery()
-    guard recovery.isPending else { return }
-    if try recovery.finishCleanupIfNeeded() { return }
-    let targets = try recovery.targets()
-    guard SessionPersistence.wipeDefaultStoreFamily() else {
-      throw CleanSlateError.wipeFailed
-    }
-    let identity = try IdentityManager(creationPolicy: .existingOnly)
-    try identity.replaceIdentity(with: targets.identitySeed)
-    try Vault.replaceStoredKeyAfterCleanSlate(with: targets.vaultKey)
-    try recovery.finish()
-  }
-}
-
-private struct StartupResult {
-  let services: AppServices?
-  let errorMessage: String?
 }
 
 #if os(iOS)
@@ -247,30 +262,94 @@ private struct StartupResult {
   }
 #endif
 
-/// Bundles the services built once identity is available, so they move together.
-private struct AppServices {
-  let identity: IdentityManager
-  let session: SessionManager
-  let notifier: MessageNotifier
-}
-
 /// Shown when identity can't load yet (device still locked after a background
 /// relaunch). Resolves automatically once the device unlocks.
 private struct StartupRecoveryView: View {
   let message: String?
+  let reinstallRecovery: Bool
+  let firstLaunch: Bool
+  let stagedMove: Bool
+  let startFresh: @MainActor () async throws -> Void
+  let moveCompleted: @MainActor @Sendable () -> Void
+  let discardMove: @MainActor () async throws -> Void
+
+  @State private var isStartingFresh = false
+  @State private var freshStartError: String?
+  @State private var showMove = false
+  @State private var showDiscardMove = false
 
   var body: some View {
     VStack(spacing: 16) {
       Image(systemName: "lock.shield")
         .font(.system(size: 42, weight: .semibold))
         .foregroundStyle(.tint)
-      Text("Pigeon is locked")
-        .font(.title2.weight(.semibold))
+      Text(
+        reinstallRecovery
+          ? "Previous installation found"
+          : (firstLaunch || stagedMove ? "Set up Pigeon" : "Pigeon is locked")
+      )
+      .font(.title2.weight(.semibold))
       Text(message ?? "Unlock your device and open Pigeon again.")
         .font(.body)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
+      recoveryActions
+      if let freshStartError {
+        Text(freshStartError).font(.footnote).foregroundStyle(.red)
+      }
+    }
+    .sheet(isPresented: $showMove) {
+      IdentityMoveView(
+        mode: .destination, sourceSession: nil,
+        action: IdentityMoveAction(
+          retireSource: { throw IdentityMoveStage.StageError.unavailable },
+          completeSource: { moveCompleted() }))
+    }
+    .confirmationDialog(
+      "Discard this move?",
+      isPresented: $showDiscardMove,
+      titleVisibility: .visible
+    ) {
+      Button("Discard staged identity", role: .destructive) {
+        Task {
+          do { try await discardMove() } catch {
+            freshStartError = "The staged move could not be discarded."
+          }
+        }
+      }
+    } message: {
+      Text(
+        "If the old phone has already retired, this permanently loses the staged identity "
+          + "and group access.")
     }
     .padding()
+  }
+
+  @ViewBuilder
+  private var recoveryActions: some View {
+    if reinstallRecovery || firstLaunch {
+      Button("Start with a new identity") {
+        isStartingFresh = true
+        freshStartError = nil
+        Task {
+          do { try await startFresh() } catch {
+            freshStartError = "Pigeon could not finish the fresh start. Try again."
+          }
+          isStartingFresh = false
+        }
+      }
+      .disabled(isStartingFresh)
+    }
+    if firstLaunch || stagedMove {
+      Button(stagedMove ? "Reconnect old phone" : "Receive from old phone") {
+        showMove = true
+      }
+      .buttonStyle(.borderedProminent)
+    }
+    if stagedMove {
+      Button("Discard move and start fresh", role: .destructive) {
+        showDiscardMove = true
+      }
+    }
   }
 }

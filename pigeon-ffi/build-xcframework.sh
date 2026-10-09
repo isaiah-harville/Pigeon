@@ -6,6 +6,7 @@
 # Output:
 #   ../Pigeon/PigeonFFI/PigeonFFIBindings.xcframework  (device + simulator static libs)
 #   ../Pigeon/PigeonFFI/Sources/PigeonFFI/Generated/   (UniFFI + protobuf Swift)
+#   ../Pigeon/PigeonFFI/PigeonFFIBindings.sha256        (tracked output manifest)
 #
 # Re-run whenever the FFI surface in src/lib.rs changes.
 set -euo pipefail
@@ -33,6 +34,11 @@ CRATE_DIR="$(pwd)"
 LIB_NAME="libpigeon_ffi.a"
 PACKAGE_DIR="$CRATE_DIR/../Pigeon/PigeonFFI"
 BUILD_DIR="$CRATE_DIR/../target"
+APPLE_DEPLOYMENT_TARGET="26.0"
+# Cargo does not include Apple's deployment-target environment variables in its
+# artifact fingerprint. Keep these objects in a versioned target directory so a
+# prior host build cannot leak a newer minimum OS into the XCFramework.
+APPLE_BUILD_DIR="$BUILD_DIR/apple-$APPLE_DEPLOYMENT_TARGET"
 GEN_DIR="$(mktemp -d)"
 trap 'rm -rf "$GEN_DIR"' EXIT
 
@@ -51,12 +57,20 @@ rustup target add "$DEVICE_TARGET" "$SIM_TARGET" "$MAC_TARGET"
 
 echo "==> Building release static libs (symbols stripped via the release profile)"
 for target in "$DEVICE_TARGET" "$SIM_TARGET" "$MAC_TARGET"; do
-  cargo build --locked --release --target "$target" --lib
+  if [[ "$target" == "$MAC_TARGET" ]]; then
+    MACOSX_DEPLOYMENT_TARGET="$APPLE_DEPLOYMENT_TARGET" \
+      CARGO_TARGET_DIR="$APPLE_BUILD_DIR" \
+      cargo build --locked --release --target "$target" --lib
+  else
+    IPHONEOS_DEPLOYMENT_TARGET="$APPLE_DEPLOYMENT_TARGET" \
+      CARGO_TARGET_DIR="$APPLE_BUILD_DIR" \
+      cargo build --locked --release --target "$target" --lib
+  fi
 done
 
-DEVICE_LIB="$BUILD_DIR/$DEVICE_TARGET/release/$LIB_NAME"
-SIM_LIB="$BUILD_DIR/$SIM_TARGET/release/$LIB_NAME"
-MAC_LIB="$BUILD_DIR/$MAC_TARGET/release/$LIB_NAME"
+DEVICE_LIB="$APPLE_BUILD_DIR/$DEVICE_TARGET/release/$LIB_NAME"
+SIM_LIB="$APPLE_BUILD_DIR/$SIM_TARGET/release/$LIB_NAME"
+MAC_LIB="$APPLE_BUILD_DIR/$MAC_TARGET/release/$LIB_NAME"
 
 echo "==> Generating Swift bindings + C headers (matched generator)"
 # --library mode reads the namespace/metadata straight from the built dylib so
@@ -84,13 +98,37 @@ xcodebuild -create-xcframework \
   -output "$PACKAGE_DIR/PigeonFFIBindings.xcframework"
 
 echo "==> Refreshing generated Swift bindings in PigeonFFI"
-mkdir -p "$PACKAGE_DIR/Sources/PigeonFFI/Generated"
-cp "$GEN_DIR"/*.swift "$PACKAGE_DIR/Sources/PigeonFFI/Generated/"
+GENERATED_SWIFT_DIR="$PACKAGE_DIR/Sources/PigeonFFI/Generated"
+# Generated filenames follow proto source filenames. Remove the exact generated
+# tree so schema renames cannot leave duplicate Swift types behind.
+rm -rf "$GENERATED_SWIFT_DIR"
+mkdir -p "$GENERATED_SWIFT_DIR"
+cp "$GEN_DIR"/*.swift "$GENERATED_SWIFT_DIR/"
 
 echo "==> Generating Swift protobuf bindings"
 protoc \
   --proto_path="$CRATE_DIR/../proto" \
-  --swift_out="$PACKAGE_DIR/Sources/PigeonFFI/Generated" \
-  "$CRATE_DIR/../proto/pigeon/wire/v1/pigeon_wire.proto"
+  --swift_out="$GENERATED_SWIFT_DIR" \
+  "$CRATE_DIR/../proto/pigeon/wire/v1/identity.proto" \
+  "$CRATE_DIR/../proto/pigeon/wire/v1/pairwise.proto" \
+  "$CRATE_DIR/../proto/pigeon/wire/v1/transport.proto" \
+  "$CRATE_DIR/../proto/pigeon/wire/v1/group.proto" \
+  "$CRATE_DIR/../proto/pigeon/wire/v1/client.proto"
+
+echo "==> Writing PigeonFFIBindings.sha256"
+# A tracked manifest of the build output, so a changed FFI surface shows up in
+# `git diff` even though the artifacts themselves are gitignored. Verify a local
+# build with `shasum -a 256 -c PigeonFFIBindings.sha256` from the package dir.
+# Only deterministic files are listed. The static libs embed absolute toolchain
+# and registry paths, so their hashes differ per machine; xcodebuild writes the
+# Info.plist library entries in an unstable order between runs.
+MANIFEST="$PACKAGE_DIR/PigeonFFIBindings.sha256"
+(
+  cd "$PACKAGE_DIR"
+  find PigeonFFIBindings.xcframework Sources/PigeonFFI/Generated -type f ! -name '*.a' ! -name Info.plist ! -name .DS_Store \
+    | LC_ALL=C sort \
+    | while IFS= read -r file; do shasum -a 256 "$file"; done
+) > "$MANIFEST.tmp"
+mv "$MANIFEST.tmp" "$MANIFEST"
 
 echo "==> Done: $PACKAGE_DIR/PigeonFFIBindings.xcframework"

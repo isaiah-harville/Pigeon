@@ -4,9 +4,10 @@
 > This document describes the design and current implementation of Pigeon's
 > security. It is a working model for implementation and review, **not** an
 > audit report, and Pigeon should not yet be relied on against a real
-> adversary. See [Audit Readiness](#audit-readiness-pre-audit-notes).
+> adversary. See [Audit Readiness](SECURITY_REVIEW.md#audit-readiness-pre-audit-notes).
 
-Pigeon is an open-source messenger built for **extreme privacy and security**
+Pigeon is a source-available messenger with open-source protocol, mesh, and relay
+packages, built for **extreme privacy and security**
 across offline-capable local transports and federated server transports.
 In-range, messages can travel end-to-end encrypted over a local **Bluetooth Low
 Energy mesh**. For peers who are **out of local range and on different
@@ -48,8 +49,6 @@ device; there is nothing to register with a central Pigeon service.
 - Anonymity against an adversary observing local Bluetooth radio.
 - Strong metadata privacy (who talks to whom, when, message sizes/timing).
 - Protection from a compromised or unlocked endpoint device.
-- Asynchronous first contact (messaging a peer who has never been in range) —
-  deferred; see §6.
 - Multi-device identity sync.
 
 ---
@@ -58,9 +57,8 @@ device; there is nothing to register with a central Pigeon service.
 
 > **Visual walkthrough.** For an illustrated, plain-language version of the flows
 > below — identity exchange, the handshake, the ratchet, and each transport —
-> see [How Pigeon Works](HOW_IT_WORKS.md). The per-flow sequence diagrams (showing
-> what each party's keys do, and what a relay can and cannot see) are regenerated
-> by [`diagrams/generate_diagrams.py`](diagrams/generate_diagrams.py).
+> see [How Pigeon Works](HOW_IT_WORKS.md). Its accessible SVG flow diagrams show
+> what each party's keys do and what a relay can and cannot see.
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -74,7 +72,7 @@ device; there is nothing to register with a central Pigeon service.
 ├──────────────────────────────────────────────┤
 │ Transport (`Transport` protocol)  pluggable pipes│
 │   • BLE: CoreBluetooth central+peripheral · GATT │
-│   • Relay (opt-in): blind ciphertext mailbox     │
+│   • Relay (default on): blind ciphertext mailbox │
 │   moves opaque ciphertext only · runs concurrently│
 ├──────────────────────────────────────────────┤
 │ pigeon-core (Rust, via PigeonFFI XCFramework)    │
@@ -114,6 +112,11 @@ sessions in `pigeon-core`). The mesh layer relays opaque ciphertext;
   biometric-gated vault regardless of this setting. Locked startup is
   load-existing-only: it can never generate or replace an identity before
   protected data becomes available.
+- MLS signing, group-capability, and group-recovery private keys always use
+  `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. They are migrated to that
+  class when loaded. A process that loaded them before screen lock may retain
+  them in memory for durable running-process delivery; a cold locked launch
+  cannot load them or mutate group cryptographic state.
 - **Secure Enclave is deliberately not used**: it supports only P-256, which is
   incompatible with the X25519/Ed25519 stack the protocols require.
 - The public key's **SHA-256 fingerprint** is the device's address/handle.
@@ -127,6 +130,25 @@ sessions in `pigeon-core`). The mesh layer relays opaque ciphertext;
   must re-compare in person.
 - **Identity reset** generates a fresh key, irreversibly invalidating all
   existing trust relationships. This is, and must remain, user-visible.
+- A reinstall that loses the app container but retains the Keychain identity
+  stops at a recovery screen. Starting fresh requires device-owner
+  authentication, erases the old store family and scoped keys, and rotates both
+  the root identity and vault key. A checkpoint continuity marker also prevents
+  an existing installation from silently recreating missing core state.
+- A phone-to-phone move requires the unlocked old phone and fresh owner
+  authentication. Both phones compare a 12-digit code derived from an ephemeral
+  P-256 key agreement. Directional AES-GCM frames carry the root seed, scoped
+  signing seeds, the live core checkpoint, contacts, and group metadata over
+  nearby transport. Saved direct and group message history is excluded. The
+  receiving phone stages identity seeds in ThisDeviceOnly Keychain slots and
+  the checkpoint under a random staged vault key. It activates only after
+  recording a root-signed retirement receipt sent after the old phone's
+  Clean Slate completes. An unretired staged move can be discarded only after
+  an explicit warning and device-owner authentication. An offline, lost old
+  phone cannot authorize recovery of that identity. If the old phone relaunches
+  with a prepared move record, its session remains frozen before any core
+  transaction or link resubscription; a corrupt record blocks restore. The
+  record is removed before the old session may resume after cancellation.
 
 > **Identity ↔ Olm-key binding:** Olm authenticates a session by its
 > **Curve25519** identity key, while Pigeon's *identity* is **Ed25519**. These are
@@ -135,7 +157,7 @@ sessions in `pigeon-core`). The mesh layer relays opaque ciphertext;
 > payload. At establishment, the session's reported peer identity is checked
 > against the imported bundle, so comparing safety numbers authenticates the
 > encrypted channel. (Still in scope for the overall audit.) See
-> [Audit Readiness](#audit-readiness-pre-audit-notes).
+> [Audit Readiness](SECURITY_REVIEW.md#audit-readiness-pre-audit-notes).
 
 ---
 
@@ -183,7 +205,7 @@ the Olm account, so re-pickling or rotating Olm keys never churns safety numbers
 
 ### 5.4 Wire format
 All bundles and messages use the shared **`pigeon.wire.v1`** Protocol Buffer
-schema (`proto/pigeon/wire/v1/pigeon_wire.proto`), encoded identically by the
+schemas under `proto/pigeon/wire/v1/`, encoded identically by the
 Rust core and the Swift app. An Olm message crosses the wire as
 `pigeon.wire.v1.OlmMessage` (its type tag + ciphertext); first contact crosses as
 `pigeon.wire.v1.Initiation` (the initiator's identity bundle + the first Olm
@@ -272,6 +294,86 @@ named one-time key is the replay defense.
 - **No forward secrecy for the prekey-publication metadata** itself; prekeys are
   public by construction.
 
+### 5.8 Group chats — MLS
+
+Group chats use **MLS 1.0 (RFC 9420)** through OpenMLS 0.9 in `pigeon-core`, with
+the `MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519` ciphersuite. MLS credentials
+are bound to Pigeon's long-term Ed25519 root identity with a domain-separated
+signature. The OpenMLS signer delegates back to the platform identity boundary;
+private identity and MLS state do not cross into Swift or `pigeon-ffi`.
+
+The core persists the OpenMLS storage checkpoint, authenticated group policy,
+pending mutation, replay ledgers, application events, and outbound effects as one
+transaction. Ciphertext or host-visible events are not released before that
+checkpoint commits. The app then persists replayable events in its encrypted
+history before acknowledging them to the core. This ordering prevents a crash
+from reusing an MLS state or losing the sender's local message projection.
+
+Membership is mutable and capped at 128. An owner can create a group alone and
+add members later. The immutable
+owner identity is always an admin and cannot be removed or demoted. Authenticated
+policy commits enforce admin membership changes, owner-only name/relay/mesh
+changes, member leave, and owner dissolve. Dissolution is terminal: after the
+dissolution commit is appended, the owner revokes the group at the relay, which
+immediately refuses further appends, coordinator submissions, and capability
+changes but keeps read access and the signed coordinator log for one group TTL
+so offline members can still receive the terminal commit. Each roster mutation advances the MLS
+epoch: joiners receive no pre-join message keys, and former members receive no
+post-removal epoch keys.
+
+Each group selects one relay deployment. Its group endpoint provides both the
+opaque ciphertext mailbox and a coordinator that serializes concurrent MLS
+commits. Coordinator receipts are Ed25519-signed and bound into the group policy.
+The coordinator is untrusted for confidentiality and authorization: clients
+validate receipts, MLS commits, and policy transitions. A malicious coordinator
+can delay, drop, replay, or withhold progress, but should not be able to forge a
+valid transition or decrypt content. Pairwise Olm control messages carry join
+requests, join material, and welcomes before a new member can authenticate to
+the group mailbox. They also carry a member's signed leave proposal to current
+admins, allowing any online admin to commit the leave without owner availability.
+The core rejects signed addressed controls received outside their
+authenticated pairwise wrapper and withholds pending controls until a
+pairwise contact can carry them. Normal group messages are encrypted once
+with MLS, not fanned out.
+
+Clients persist a coordinator receipt sequence independently from the group
+message cursor. A wake drains both bounded streams until empty. A correctly
+signed receipt whose opaque candidate fails MLS or policy validation is consumed
+transactionally and emits a security-warning event; this prevents a malformed
+entry from wedging every later sequence without treating it as valid group state.
+
+Group delivery uses the selected relay. The app does not send or accept group
+messages over the local mesh; pairwise chats can still use local transports.
+
+Group delivery receipts are MLS application messages, so only members can read
+which messages they acknowledge. A member queues receipts durably and sends them
+as one batched acknowledgement per group after an interval that grows with group
+size (2 seconds, or half a second per member, whichever is longer), or as soon
+as 128 are queued. The relay sees each batch as one more opaque group entry from
+that member's capability; batching limits both mailbox growth and how precisely
+the relay can time when each member read the group.
+
+Every roster entry authenticates that member's Pigeon root identity, MLS
+signature key, relay-capability key, and recovery key in the MLS group-context
+policy. Membership commits replace the relay's complete capability set rather
+than editing individual grants. The app does not surface the membership event
+until the selected relay confirms that canonical replacement, so a removed
+member's old read/append capability is revoked before the removal is presented
+as complete.
+
+If the selected coordinator is unavailable, any current admin may propose a
+replacement relay/coordinator binding. The proposal commits to the exact group,
+MLS epoch, policy revision and hash, roster hash, last coordinator receipt, and
+the replacement capability-set hash. When delegated admins exist, a strict
+majority of those non-owner admins must sign with their policy-bound recovery
+keys; the permanent owner is the sole endorser only when no delegated admin
+exists. Proposals and endorsements travel as application data inside the
+existing MLS group over its current group mailbox. Recovery can proceed without
+the owner while that relay remains reachable; a relay outage blocks proposal
+delivery until connectivity returns. The result is an ordinary MLS epoch
+transition, and stale, replayed, minority, or removed-member certificates fail
+closed. Recovery restores coordination authority, not connectivity.
+
 ---
 
 ## 6. Transport & Mesh
@@ -295,9 +397,9 @@ once.
   prekey path has its own replay/exhaustion considerations, handled inside Olm's
   one-time-key accounting (see §5.7).
 
-### 6.1 Relay transport (remote delivery) — opt-in
+### 6.1 Relay transport (remote delivery) — on by default, user-controllable
 
-![Federated relay flow](diagrams/pigeon_04_relay.png)
+![Federated relay flow](diagrams/pigeon_04_relay.svg)
 
 Two devices that are out of Bluetooth/local-Wi-Fi range and on different networks
 (e.g. both on cellular) **cannot connect directly**: behind NAT/CGNAT a phone can
@@ -314,7 +416,7 @@ Pigeon keeps the trust cost minimal:
   ratchet ciphertext — **it cannot read messages**, and confidentiality,
   authentication, integrity, forward secrecy, and the safety-number trust check
   are all unchanged and enforced end-to-end below it.
-- It is **opt-in** and **self-hostable** (run your own; a homelab/Kubernetes or
+- It is **on by default, user-controllable**, and **self-hostable** (run your own; a homelab/Kubernetes or
   small VPS deployment is sufficient). The design is **federated** — each user
   advertises the relay(s) they can be reached at in their ContactCard, and a
   sender deposits only on *that recipient's* relays. Independent relays, chosen
@@ -333,6 +435,13 @@ Pigeon keeps the trust cost minimal:
   timing, message sizes, and that *some* sender is delivering to recipient key X.
   Mitigations (sealed-sender addressing, padding, and routing over **Tor** to hide
   IPs) are planned, not yet implemented.
+- Pairwise queues are transient and memory-only. Group authorization,
+  ciphertext, cursors/tombstones, and signed coordinator receipt chains are
+  committed to local SQLite before acknowledgement so a restart cannot forget a
+  revocation or reuse a coordinator sequence. The durable database contains no
+  plaintext or private client keys, but it does retain group-level metadata and
+  opaque content until TTL/cursor reclamation. Startup fails closed if the
+  configured coordinator signing key does not match the stored log identity.
 - **Relay compatibility is negotiated before mailbox access.** The app and relay
   exchange inclusive minimum/maximum relay-protocol versions before publish,
   subscribe, authentication, acknowledgement, or push registration. Both select
@@ -376,7 +485,10 @@ traverses Apple.**
 The cost is **metadata, not confidentiality**. This centralizes the *wake signal*:
 the official gateway learns `device token ↔ "this mailbox has mail at time T"`, and
 Apple sees push-delivery metadata — more than the blind relay alone. Pushes are
-coalesced per mailbox to blunt deposit-driven timing leakage. This is a deliberate,
+coalesced per mailbox to blunt deposit-driven timing leakage. Group chats extend
+the same wake signal to group readers: the gateway learns `device token ↔ "this
+group has a new entry, coordinator receipt, or dissolution at time T"`, which
+also reveals which registered tokens read the same group. This is a deliberate,
 documented exception to the project's "no new network services beyond the relay"
 rule and to the relay's "learns only public keys" property (now also a device
 token, on the official deployment only). A future Notification Service Extension
@@ -384,137 +496,4 @@ for richer (decrypted) notifications would require loosening the biometric vault
 and is explicitly out of scope.
 
 ---
-
-## 7. Attacker Model
-
-**Assume an attacker can:**
-- Observe, record, replay, delay, drop, and reorder Bluetooth traffic.
-- Operate or compromise relay devices in the mesh.
-- **Operate or compromise an internet relay server** (if the user enables relay
-  delivery): observe connection metadata — client IP/endpoints, timing, sizes,
-  and that a sender is delivering to recipient key X — and drop, delay, or replay
-  ciphertext. The relay **cannot** read content, impersonate a peer, or forge a
-  trusted session.
-- Attempt pairing/identity impersonation and MITM.
-- Tamper with any unauthenticated protocol field.
-- Read app logs, crash reports, and unprotected on-disk state.
-- Perform traffic analysis (timing, sizes, presence) on local radio.
-
-**Assume an attacker cannot:**
-- Break CryptoKit primitives (X25519, AES-GCM, ChaCha20-Poly1305, SHA-256, HMAC).
-- Extract Keychain items from an uncompromised, locked device.
-- Recover plaintext from a non-compromised endpoint after decryption.
-- Defeat an out-of-band safety-number comparison performed honestly by users.
-
----
-
-## 8. Known Limitations
-
-- **Metadata is exposed.** BLE advertisements, packet timing, sizes, and mesh
-  routing reveal communication patterns. No padding/cover traffic yet.
-- **Relay metadata (if enabled).** An internet relay sees endpoints, timing,
-  sizes, and sender→recipient-key mappings — never content. Sealed-sender,
-  padding, and Tor routing to blunt this are planned, not implemented. Local
-  transports avoid relay metadata; relay transports provide remote reach.
-- **Endpoint trust.** A compromised/unlocked device defeats all guarantees.
-- **No audit** (see below).
-- **Key zeroization is limited at the FFI seam.** Ratchet and message keys live
-  inside `vodozemac`, which zeroizes its own secrets on drop; but the seed and
-  Olm account pickle cross the UniFFI boundary as plain bytes before being sealed
-  at rest, and those transient copies are not yet explicitly wiped (§5.6).
-
----
-
-## Audit Readiness — Pre-Audit Notes
-
-**Pigeon has NOT undergone an independent security audit.** No "secure" or
-"private" claim should be treated as verified until it has. This section lists
-what an auditor should examine and what must be resolved first. It is the
-authoritative to-do list for reaching audit readiness.
-
-### Must-fix before an audit is meaningful
-1. ~~**Bind the Olm identity key ↔ Ed25519 identity.**~~ ✅ **Implemented.**
-   `IdentityBundle` carries Olm's Curve25519 identity key signed by the Ed25519
-   identity; the QR payload is the signed bundle; `pigeon-core` rejects any
-   established session whose Olm identity key does not equal the verified bundle's
-   key. (Still subject to overall audit, but the gap is closed.)
-2. **Audit the FFI/wire seam, not the ratchet primitives.** The Double Ratchet,
-   session establishment, and message format are Olm as implemented by the
-   audited `vodozemac` crate, so the audit target is Pigeon's *use* of it: the
-   `pigeon-core` ↔ `vodozemac` boundary, the protobuf wire encode/decode in
-   `wire.rs`, and the UniFFI bridge — not a re-audit of Olm itself.
-3. ~~**Prekey replay / freshness.**~~ ✅ **Implemented.** Core tests record that
-   one-time-key replay fails while fallback-key replay succeeds at the Olm layer.
-   The app's encrypted, persistent initiation-digest ledger prevents an older
-   accepted fallback initiation from replacing a newer live session, including
-   across relaunch; fresh recovery initiations remain accepted.
-
-### Should-address
-4. **Skipped-key DoS bound.** Review Olm's bound on stored skipped message keys
-   and the memory cost under adversarial gaps, as exposed through `pigeon-core`.
-5. **Key lifetime & zeroization.** ⚠️ **Partially addressed** (§5.6): ratchet
-   and message keys live inside `vodozemac`, which zeroizes its own secret
-   material on drop. Still open on the Pigeon side: the seed and Olm account
-   pickle cross the FFI boundary as plain bytes before being sealed at rest, so
-   minimizing and wiping those transient copies remains.
-6. **Constant-time comparisons.** ⚠️ **Partially addressed** (§5.6): Olm message
-   authentication and signature checks are constant-time inside `vodozemac`.
-   Remaining identity/public-key equality checks (the binding check) are over
-   public values and left as ordinary comparisons (documented).
-7. **Logging discipline.** Guarantee no key material, plaintext, or
-   safety-relevant state reaches logs, crash reports, previews, or test output.
-8. **Keychain access control.** Consider biometric/passcode gating
-   (`SecAccessControl`) for identity-key use.
-9. **At-rest storage.** Encryption key derivation, ephemeral-mode guarantees,
-   and secure deletion.
-
-### Metadata / traffic analysis (design-level)
-10. **Padding & cover traffic** to blunt size/timing analysis.
-11. **Advertisement/identifier rotation** to limit device tracking over BLE.
-12. **Relay metadata minimization.** Sealed-sender addressing (so the relay
-    cannot see the sender), uniform padding, and optional Tor routing to hide
-    client IPs.
-
-### Relay transport (new surface; only when remote delivery is enabled)
-13. **Relay stays zero-knowledge.** Verify the relay only ever handles opaque
-    ciphertext addressed by recipient key, with no field it can use to read,
-    link, or tamper with content beyond drop/delay/replay.
-14. **Replay/freshness across the relay.** Store-and-forward over a relay must
-    not widen the prekey/message replay surface (ties to item 3).
-15. **Relay abuse & retention.** ⚠️ **Partially addressed.** Storage is now
-    bounded on every axis: per-envelope size, per-mailbox queue depth, mailbox
-    count (`PIGEON_RELAY_MAX_MAILBOXES`), a global ciphertext ceiling
-    (`PIGEON_RELAY_MAX_TOTAL_BYTES`, enforced by evicting from the *largest*
-    mailbox so a flooder pays for its own pressure), age expiry, a bounded
-    per-subscriber outbound channel (a backed-up reader is skipped, never
-    buffered), and per-mailbox / total caps on registered push tokens. Still
-    open: mailboxes remain
-    authentication-free by design, so there is no per-sender rate limit — a
-    flooder can still consume its own share of the ceiling and force eviction
-    churn. No plaintext, keys, or linkable logs server-side.
-16. **Transport authenticity.** A malicious relay must not be able to forge
-    "delivered" state or inject packets that bypass mesh dedup/auth.
-
-### What an auditor should focus on
-- Pigeon's *use* of Olm via `vodozemac`: the `pigeon-core` session API, the
-  protobuf wire encode/decode, and the UniFFI bridge — rather than re-auditing
-  the Olm ratchet primitives themselves.
-- Domain separation of Pigeon's own derived values (identity binding signature,
-  safety-number derivation).
-- The identity ↔ Olm Curve25519 binding (item 1) and the trust-establishment UX.
-- That every field influencing decryption, trust, routing, or replay is
-  authenticated.
-
----
-
-## Contributor Review Checklist
-
-- Are all fields influencing decryption, trust, routing, or replay authenticated?
-- Are all derived keys domain-separated by protocol context?
-- Is any private material logged, serialized, previewed, or emitted in tests?
-- Does the change preserve identity continuity and keep resets explicit?
-- Are replay, out-of-order, and dropped-message paths tested?
-- Does the UI avoid implying a peer is verified before safety-number comparison?
-- Does transport/mesh code treat all Bluetooth metadata as public?
-- Does new crypto compose CryptoKit primitives rather than reimplement them?
-```
+Continue with the [attacker model, known limitations, and audit readiness](SECURITY_REVIEW.md).

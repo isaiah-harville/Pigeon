@@ -19,9 +19,16 @@ repos:
       - id: swiftformat
         name: SwiftFormat
         language: system
-        entry: swift-format format --recursive --in-place .
+        entry: bash -c 'git ls-files -z -- "*.swift" | xargs -0 swift-format format --in-place'
         pass_filenames: false
         types: [swift]
+
+      - id: generated-artifact-integrity
+        name: Generated FFI artifact integrity
+        language: system
+        entry: sh .github/scripts/check-generated-artifact-integrity.sh
+        pass_filenames: false
+        always_run: true
 
       - id: swiftlint-fix
         name: SwiftLint (Fix)

@@ -125,6 +125,8 @@ pub enum EnvelopeType {
     Ack,
     Control,
     X3dhInit,
+    Pairwise,
+    GroupMls,
 }
 
 impl From<core_env::EnvelopeType> for EnvelopeType {
@@ -136,6 +138,8 @@ impl From<core_env::EnvelopeType> for EnvelopeType {
             core_env::EnvelopeType::Ack => EnvelopeType::Ack,
             core_env::EnvelopeType::Control => EnvelopeType::Control,
             core_env::EnvelopeType::X3dhInit => EnvelopeType::X3dhInit,
+            core_env::EnvelopeType::Pairwise => EnvelopeType::Pairwise,
+            core_env::EnvelopeType::GroupMls => EnvelopeType::GroupMls,
         }
     }
 }
@@ -149,6 +153,8 @@ impl From<EnvelopeType> for core_env::EnvelopeType {
             EnvelopeType::Ack => core_env::EnvelopeType::Ack,
             EnvelopeType::Control => core_env::EnvelopeType::Control,
             EnvelopeType::X3dhInit => core_env::EnvelopeType::X3dhInit,
+            EnvelopeType::Pairwise => core_env::EnvelopeType::Pairwise,
+            EnvelopeType::GroupMls => core_env::EnvelopeType::GroupMls,
         }
     }
 }
@@ -274,7 +280,7 @@ impl MeshRouter {
             .into()
     }
 
-    /// Processes an inbound packet; duplicates yield neither delivery nor relay.
+    /// Processes an inbound packet; retryable duplicates deliver locally only.
     pub fn ingest(&self, packet: MeshPacket) -> Reception {
         let r = self
             .inner
@@ -285,6 +291,14 @@ impl MeshRouter {
             deliver: r.deliver,
             relay: r.relay.map(Into::into),
         }
+    }
+
+    /// Reports whether the local consumer needs redelivery before it can ack.
+    pub fn set_delivery_retryable(&self, packet_id: Vec<u8>, retryable: bool) {
+        self.inner
+            .lock()
+            .expect("mesh router poisoned")
+            .set_delivery_retryable(&packet_id, retryable);
     }
 }
 
@@ -331,7 +345,8 @@ pub struct Reassembler {
 
 #[uniffi::export]
 impl Reassembler {
-    /// A reassembler with the default bounds (256 KiB / 64 concurrent messages).
+    /// A reassembler with the default bounds (256 KiB per message, 64
+    /// concurrent messages, and 4 MiB buffered fragment payload total).
     #[uniffi::constructor]
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
@@ -365,5 +380,74 @@ impl Reassembler {
             .lock()
             .expect("reassembler poisoned")
             .pending_count() as u32
+    }
+
+    pub fn pending_bytes(&self) -> u64 {
+        self.inner
+            .lock()
+            .expect("reassembler poisoned")
+            .pending_bytes() as u64
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn core_owned_pairwise_envelope_round_trips_across_ffi() {
+        let envelope = SessionEnvelope {
+            kind: EnvelopeType::Pairwise,
+            sender: vec![0x31; 32],
+            recipient: vec![0x42; 32],
+            payload: b"opaque core ciphertext".to_vec(),
+        };
+
+        let decoded = decode_session_envelope(encode_session_envelope(envelope)).unwrap();
+
+        assert!(matches!(decoded.kind, EnvelopeType::Pairwise));
+        assert_eq!(decoded.sender, vec![0x31; 32]);
+        assert_eq!(decoded.recipient, vec![0x42; 32]);
+        assert_eq!(decoded.payload, b"opaque core ciphertext");
+    }
+
+    #[test]
+    fn core_owned_group_envelope_round_trips_across_ffi() {
+        let envelope = SessionEnvelope {
+            kind: EnvelopeType::GroupMls,
+            sender: vec![0x51; 32],
+            recipient: vec![0x62; 32],
+            payload: b"opaque MLS ciphertext".to_vec(),
+        };
+
+        let decoded = decode_session_envelope(encode_session_envelope(envelope)).unwrap();
+
+        assert!(matches!(decoded.kind, EnvelopeType::GroupMls));
+        assert_eq!(decoded.sender, vec![0x51; 32]);
+        assert_eq!(decoded.recipient, vec![0x62; 32]);
+        assert_eq!(decoded.payload, b"opaque MLS ciphertext");
+    }
+
+    #[test]
+    fn router_preserves_retryable_delivery_across_ffi() {
+        let router = MeshRouter::with_config(3, 8);
+        let inbound = MeshPacket {
+            packet_id: mesh_packet_random_id(),
+            ttl: 3,
+            payload: b"inbound".to_vec(),
+        };
+        let first = router.ingest(inbound.clone());
+        assert_eq!(first.deliver.as_deref(), Some(&b"inbound"[..]));
+        assert!(first.relay.is_some());
+
+        router.set_delivery_retryable(inbound.packet_id.clone(), true);
+        let retry = router.ingest(inbound.clone());
+        assert_eq!(retry.deliver.as_deref(), Some(&b"inbound"[..]));
+        assert!(retry.relay.is_none());
+
+        router.set_delivery_retryable(inbound.packet_id.clone(), false);
+        let consumed = router.ingest(inbound);
+        assert!(consumed.deliver.is_none());
+        assert!(consumed.relay.is_none());
     }
 }

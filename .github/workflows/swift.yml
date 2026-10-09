@@ -34,7 +34,7 @@ jobs:
 
       - name: Check formatting
         run: |
-          git ls-files -z '*.swift' | xargs -0 swift-format lint --parallel
+          git ls-files -z '*.swift' | xargs -0 swift-format lint --parallel --strict
           if [ $? -ne 0 ]; then
             echo "Run swift-format on the reported tracked Swift files locally to fix."
             exit 1
@@ -132,5 +132,4 @@ jobs:
           xcodebuild test \
             -project Pigeon/Pigeon.xcodeproj \
             -scheme Pigeon \
-            -destination 'platform=iOS Simulator,name=iPhone 17' \
-            CODE_SIGNING_ALLOWED=NO
+            -destination 'platform=iOS Simulator,name=iPhone 17'

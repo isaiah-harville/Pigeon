@@ -69,6 +69,10 @@ struct UnlockView: View {
       } catch is SessionPersistenceError {
         self.error =
           "Stored data couldn't be opened. Pigeon did not reset it; restart and try again."
+      } catch VaultError.missingStoredKey {
+        self.error =
+          "The storage key is missing. Pigeon preserved your identity and did not create an "
+          + "empty message history."
       } catch {
         self.error = "Couldn't unlock. Please try again."
       }

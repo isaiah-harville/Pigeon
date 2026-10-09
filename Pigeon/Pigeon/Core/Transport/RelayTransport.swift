@@ -24,10 +24,6 @@
 import Foundation
 import Network
 
-// Socket lifecycle, framing, and routing stay together so relay state changes
-// can be audited without chasing cross-file private state.
-// swiftlint:disable file_length
-
 @MainActor
 @Observable
 final class RelayTransport: Transport {
@@ -96,18 +92,18 @@ final class RelayTransport: Transport {
   /// it. Never sent on publish-only contact relays — only relays we authenticate
   /// to (which already know our mailbox) ever see it. Relays without a push
   /// gateway reply with an error we ignore (best-effort, exactly as before).
-  private(set) var pushToken: String?
+  var pushToken: String?
   private(set) var isEnabled: Bool
 
   /// Our own relays — where we subscribe to receive. We advertise these to
   /// contacts so they can deposit to us.
-  private var myRelays: [URL] = []
+  var myRelays: [URL] = []
 
   private let urlSession = URLSession(configuration: .default)
-  private var connections: [URL: Connection] = [:]
+  var connections: [URL: Connection] = [:]
 
-  /// Outbound deposits that found no *ready* relay when first attempted, held for
-  /// re-send the instant a usable relay link comes up).
+  /// Outbound deposits without a positive relay receipt, held for re-send when
+  /// a usable relay link comes up.
   /// Without this an envelope generated while our publish-only
   /// socket to the recipient's relay isn't ready yet — notably a delivery ack a
   /// freshly relaunched device emits before its links are up — is dropped and
@@ -116,20 +112,22 @@ final class RelayTransport: Transport {
   /// acks and control envelopes aren't pending; this covers them too. The mesh's
   /// UUID/`SeenCache` dedup keeps any resulting duplicate harmless. Bounded so a
   /// peer that stays unreachable can't grow it without limit.
-  private var pendingDeposits = DepositQueue(bound: 256)
+  var pendingDeposits = DepositQueue(bound: 256)
+  var unconfirmedDepositCount = 0
+  @ObservationIgnored var depositRetryTask: Task<Void, Never>?
 
   /// Watches the OS network path so relays reconnect the instant connectivity
   /// returns (Wi-Fi ↔ cellular, airplane mode off), rather than waiting out the
   /// supervise backoff. `@ObservationIgnored` — it drives reconnects, not UI.
-  @ObservationIgnored private let pathMonitor = NWPathMonitor()
+  @ObservationIgnored let pathMonitor = NWPathMonitor()
   /// Whether the OS last reported a usable path. Tracked so we react only to the
   /// *transition* back to reachable, ignoring interface flaps while already up.
-  @ObservationIgnored private var networkAvailable = true
+  @ObservationIgnored var networkAvailable = true
 
   /// One relay endpoint: its socket plus the supervising reconnect task.
   /// `authenticate` is true for our own relays (we subscribe + prove ownership
   /// to read); false for contacts' relays we only deposit to.
-  private final class Connection {
+  final class Connection {
     let authenticate: Bool
     var socket: URLSessionWebSocketTask?
     var task: Task<Void, Never>?
@@ -161,7 +159,9 @@ final class RelayTransport: Transport {
       refreshLinkState()
       return
     }
-    let contactRelays = recipients().flatMap { relaysForRecipient($0) }
+    // Disabling every receiving relay is the user's global serverless choice.
+    // Do not keep publish-only sockets to contacts' relays in that state.
+    let contactRelays = myRelays.isEmpty ? [] : recipients().flatMap { relaysForRecipient($0) }
     let wanted = Self.wantedConnections(myRelays: myRelays, contactRelays: contactRelays)
     let previousIncompatible = incompatibleRelayURLs
     incompatibleRelayURLs = Self.retainedIncompatibleRelays(
@@ -233,7 +233,7 @@ extension RelayTransport {
 
   /// Keeps one relay connected, reconnecting with capped backoff until the
   /// endpoint is removed (the task is cancelled).
-  private func supervise(_ url: URL) async {
+  func supervise(_ url: URL) async {
     var backoff = 1.0
     while !Task.isCancelled {
       do {
@@ -294,8 +294,21 @@ extension RelayTransport {
       switch Self.classifyInbound(message) {
       case .envelope(let envelope):
         consume(envelope, from: url, over: socket)
-      case .error:
+      case .published(let requestID):
+        if pendingDeposits.acknowledge(requestID: requestID) {
+          unconfirmedDepositCount = pendingDeposits.count
+          if pendingDeposits.isEmpty {
+            depositRetryTask?.cancel()
+            depositRetryTask = nil
+          }
+        }
+      case .error(_, let requestID):
         note(.relayError)
+        if let requestID,
+          pendingDeposits.deposits.contains(where: { $0.requestID == requestID })
+        {
+          scheduleDepositRetry()
+        }
       case .ignored:
         break
       }
@@ -335,7 +348,7 @@ extension RelayTransport {
 
   // MARK: - Framing
 
-  private func send(_ socket: URLSessionWebSocketTask, _ object: [String: Any]) {
+  func send(_ socket: URLSessionWebSocketTask, _ object: [String: Any]) {
     guard let data = try? JSONSerialization.data(withJSONObject: object) else { return }
     guard let text = String(bytes: data, encoding: .utf8) else { return }
     Task { try? await socket.send(.string(text)) }
@@ -415,204 +428,11 @@ extension RelayTransport {
     onCompatibilityChange?(incompatibleRelayURLs)
   }
 
-  private func note(_ event: DiagnosticEvent) {
+  func note(_ event: DiagnosticEvent) {
     DiagnosticLog.record(event, in: &log, limit: 100)
   }
 
-  private static func hex(_ data: Data) -> String {
+  static func hex(_ data: Data) -> String {
     data.map { String(format: "%02x", $0) }.joined()
-  }
-}
-
-// MARK: - Reachability & post-unlock re-flush
-
-extension RelayTransport {
-
-  /// Whether a message addressed to a contact who advertises `recipientRelays`
-  /// can actually be deposited right now: we hold a ready connection to at least
-  /// one relay they advertise. Mirrors `broadcast`'s target selection (any
-  /// advertised relay that's ready), so the chat header's "reachable" cue
-  /// reflects reaching the *recipient's* mailbox rather than merely our own
-  /// relay being online. Empty `recipientRelays` ⇒ unreachable over the relay.
-  func canReach(recipientRelays: [URL]) -> Bool {
-    recipientRelays.contains { readyRelayURLs.contains($0) }
-  }
-
-  /// Reconnects our own (authenticated) relays so their mailbox queues are
-  /// re-flushed. Called right after unlock: an envelope that arrived while we
-  /// were locked was surfaced for notification but deliberately not acked (we
-  /// couldn't durably consume it), so the relay still holds it. A live socket
-  /// won't re-send on its own, so we re-subscribe to pull the retained copy now
-  /// that we can process and ack it — instead of leaving it in the mailbox until
-  /// some future reconnect. Publish-only contact relays are left untouched.
-  func resubscribeOwnRelays() {
-    guard isEnabled else { return }
-    for (url, connection) in connections where connection.authenticate {
-      connection.task?.cancel()
-      connection.socket?.cancel(with: .goingAway, reason: nil)
-      let fresh = Connection(authenticate: true)
-      connections[url] = fresh
-      fresh.task = Task { [weak self] in await self?.supervise(url) }
-    }
-  }
-}
-
-// MARK: - Network path (proactive reconnect)
-
-extension RelayTransport {
-
-  /// Starts watching the OS network path; a transition back to a usable path
-  /// reconnects any relay that's currently down.
-  func startPathMonitor() {
-    pathMonitor.pathUpdateHandler = { [weak self] path in
-      let available = path.status == .satisfied
-      Task { @MainActor [weak self] in self?.handlePathChange(available: available) }
-    }
-    pathMonitor.start(queue: DispatchQueue(label: "com.isaiah-harville.Pigeon.relay.path"))
-  }
-
-  private func handlePathChange(available: Bool) {
-    defer { networkAvailable = available }
-    // Act only on the down→up transition; an interface change while already
-    // online doesn't warrant tearing healthy sockets down.
-    guard isEnabled, available, !networkAvailable else { return }
-    reconnectStalled()
-  }
-
-  /// Immediately restarts the supervise loop for every relay that isn't currently
-  /// connected, so a returning network reconnects now instead of after backoff.
-  /// Healthy connections are left untouched. Keys are snapshotted first so the
-  /// dictionary isn't mutated mid-iteration.
-  private func reconnectStalled() {
-    let stalled = connections.filter { !$0.value.ready }.map { ($0.key, $0.value.authenticate) }
-    guard !stalled.isEmpty else { return }
-    for (url, authenticate) in stalled {
-      connections[url]?.task?.cancel()
-      connections[url]?.socket?.cancel(with: .goingAway, reason: nil)
-      let fresh = Connection(authenticate: authenticate)
-      connections[url] = fresh
-      fresh.task = Task { [weak self] in await self?.supervise(url) }
-    }
-    note(.networkRestored)
-  }
-}
-
-// MARK: - Heartbeat
-
-extension RelayTransport {
-
-  /// Periodically pings a live socket; a missed pong cancels it so the blocking
-  /// `receive()` in `serve` throws and `supervise` reconnects. This is what
-  /// rescues a connection silently killed mid-stream (the airplane-mode case)
-  /// rather than leaving it "ready" with every deposit dropped on the floor.
-  func keepAlive(_ socket: URLSessionWebSocketTask) async {
-    while !Task.isCancelled {
-      try? await Task.sleep(for: .seconds(15))
-      guard !Task.isCancelled else { return }
-      if await Self.isAlive(socket) { continue }
-      socket.cancel(with: .goingAway, reason: nil)  // unblock receive() → reconnect
-      return
-    }
-  }
-
-}
-
-// MARK: - Push wake-up registration
-
-extension RelayTransport {
-
-  /// Best-effort removal of the APNs token from every reachable authenticated
-  /// mailbox before an identity is retired. Awaiting each socket write ensures
-  /// teardown does not cancel a merely queued unregister frame. Offline relays
-  /// cannot be reached here and must expire stale registrations server-side.
-  func unregisterPushForCleanSlate() async {
-    guard let token = pushToken else { return }
-    pushToken = nil
-    for connection in connections.values where connection.authenticate && connection.ready {
-      guard let socket = connection.socket,
-        let data = try? JSONSerialization.data(
-          withJSONObject: ["type": "unregister_push", "token": token]),
-        let text = String(bytes: data, encoding: .utf8)
-      else { continue }
-      try? await socket.send(.string(text))
-    }
-  }
-
-  /// Sets (or clears) our APNs device token and reconciles it across our live,
-  /// authenticated relay connections: a rotated or cleared token is unregistered
-  /// and the new one registered. New connections pick the current token up at
-  /// auth time in `serve`. Only authenticated (own-mailbox) relays are touched.
-  func setPushToken(_ token: String?) {
-    let old = pushToken
-    guard old != token else { return }
-    pushToken = token
-    for connection in connections.values where connection.authenticate && connection.ready {
-      guard let socket = connection.socket else { continue }
-      if let old { send(socket, ["type": "unregister_push", "token": old]) }
-      if let token { send(socket, ["type": "register_push", "token": token]) }
-    }
-  }
-}
-
-// MARK: - Send (deposit + send-side store-and-forward)
-
-extension RelayTransport {
-
-  func broadcast(_ message: Data, to recipient: Data?) {
-    guard isEnabled else { return }
-    // Only directly-addressed messages go over the relay; flood packets don't.
-    guard let recipient else { return }
-    // No ready relay for this recipient yet: hold the deposit and retry on the
-    // next connectivity event rather than dropping it.
-    guard attemptDeposit(message, to: recipient) else {
-      enqueueDeposit(message, to: recipient)
-      return
-    }
-  }
-
-  /// Tries to deposit `message` to a recipient's reachable relays right now.
-  /// Returns `true` if it was published to at least one ready relay, `false` if
-  /// none were ready (so the caller can queue it for later).
-  @discardableResult
-  private func attemptDeposit(_ message: Data, to recipient: Data) -> Bool {
-    let preferred = preferredRelayForRecipient(recipient)
-    let targets = Self.deliveryTargets(
-      preferred: preferred, advertised: relaysForRecipient(recipient))
-    let ready = targets.filter { connections[$0]?.ready == true && connections[$0]?.socket != nil }
-    guard !ready.isEmpty else { return false }
-
-    // Honor an explicitly chosen relay when it's reachable; otherwise fan out to
-    // every reachable relay so a dead one doesn't strand the message.
-    let chosen: [URL]
-    if let preferred, ready.contains(preferred) {
-      chosen = [preferred]
-    } else {
-      chosen = ready
-    }
-
-    let ciphertext = message.base64EncodedString()
-    let recipientHex = Self.hex(recipient)
-    var published = false
-    for url in chosen {
-      guard let socket = connections[url]?.socket else { continue }
-      send(socket, ["type": "publish", "recipient": recipientHex, "ciphertext": ciphertext])
-      published = true
-    }
-    return published
-  }
-
-  /// Holds a deposit that found no ready relay, dropping the oldest once the
-  /// bound is reached so an unreachable recipient can't grow the queue without
-  /// limit. Re-driven by `flushPendingDeposits` on the next connectivity event.
-  private func enqueueDeposit(_ message: Data, to recipient: Data) {
-    pendingDeposits.enqueue(.init(recipient: recipient, message: message))
-  }
-
-  /// Re-attempts every queued deposit, keeping the ones that still find no ready
-  /// relay. Called from `serve` when a relay link comes up, so acks and control
-  /// envelopes deposited while offline are delivered the moment a usable link
-  /// appears — mirroring the session layer's `pending`-message re-drive.
-  func flushPendingDeposits() {
-    pendingDeposits.flush { attemptDeposit($0.message, to: $0.recipient) }
   }
 }

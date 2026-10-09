@@ -2,8 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -17,12 +15,12 @@
 			</array>
 		</dict>
 	</array>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Pigeon uses the local network to discover nearby devices and exchange end-to-end encrypted messages over Wi-Fi when you're on the same network.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_pigeon-mesh._tcp</string>
 		<string>_pigeon-mesh._udp</string>
+		<string>_pigeon-move._tcp</string>
+		<string>_pigeon-move._udp</string>
 	</array>
 	<key>UIBackgroundModes</key>
 	<array>

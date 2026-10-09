@@ -2,14 +2,11 @@
 //  ReassemblyPool.swift
 //  Pigeon
 //
-//  Per-source fragment reassemblers for the BLE transport, with a bound on how
-//  many sources are tracked at once.
+//  Per-source fragment reassemblers for the BLE transport, with a bound on
+//  retained payload across all sources.
 //
-//  Each `Reassembler` is itself bounded (64 in-flight messages, 256 KiB each),
-//  but the number of *sources* was not: a peer that churns identifiers — or
-//  centrals that write to us and never unsubscribe — could otherwise accumulate
-//  reassemblers without limit. Extracted from PeerTransport so the bound is one
-//  small, testable unit.
+//  Each `Reassembler` is bounded to 64 messages and 256 KiB per message. The
+//  pool also caps source count and total retained fragment payload at 4 MiB.
 //
 
 import Foundation
@@ -21,6 +18,7 @@ struct ReassemblyPool {
   /// Upper bound on concurrently tracked sources. Comfortably above the number
   /// of simultaneous BLE links CoreBluetooth maintains.
   static let maxSources = 16
+  static let maxPendingBytes: UInt64 = 4 * 1024 * 1024
 
   private var reassemblers: [UUID: Reassembler] = [:]
   /// Sources in least-recently-used order (oldest first).
@@ -28,6 +26,15 @@ struct ReassemblyPool {
 
   /// Number of sources currently tracked.
   var count: Int { reassemblers.count }
+  var pendingBytes: UInt64 { reassemblers.values.reduce(0) { $0 + $1.pendingBytes() } }
+
+  mutating func ingest(_ fragment: Fragment, from source: UUID) throws -> Data? {
+    let message = try reassembler(for: source).ingest(fragment)
+    while pendingBytes > Self.maxPendingBytes, let oldest = order.first {
+      drop(oldest)
+    }
+    return message
+  }
 
   /// Returns this source's reassembler, creating one if needed and retiring the
   /// least-recently-used source once the bound is reached. Retiring one only

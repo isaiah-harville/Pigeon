@@ -28,12 +28,10 @@ protocol IdentityInitializationStore {
 }
 
 private struct UserDefaultsIdentityInitializationStore: IdentityInitializationStore {
-  private let key = "pigeon.identity.initialized"
-
-  var wasInitialized: Bool { UserDefaults.standard.bool(forKey: key) }
+  var wasInitialized: Bool { IdentityManager.hasContainerEvidence }
 
   func markInitialized() {
-    UserDefaults.standard.set(true, forKey: key)
+    IdentityManager.markContainerInitialized()
   }
 }
 
@@ -42,8 +40,7 @@ private struct UserDefaultsIdentityInitializationStore: IdentityInitializationSt
 ///
 /// This is deliberately the *only* long-term key the app manages directly: the
 /// Olm account (its Curve25519 identity key, one-time keys, and fallback key)
-/// lives in `pigeon-core`'s `PigeonAccount`, which `SessionManager` builds from
-/// this identity's seed after unlock and persists (sealed) in the vault. Keeping
+/// lives inside pigeon-core's transactional checkpoint. Keeping
 /// the Ed25519 seed here lets locked-time work — the relay-auth signature and
 /// the device's public id — run via CryptoKit without needing the Olm account
 /// (which requires the unlocked vault).
@@ -56,6 +53,19 @@ private struct UserDefaultsIdentityInitializationStore: IdentityInitializationSt
 final class IdentityManager {
 
   private static let identityAccount = "identity.ed25519.private"
+  private static let initializedKey = "pigeon.identity.initialized"
+
+  static var hasContainerEvidence: Bool {
+    UserDefaults.standard.bool(forKey: initializedKey)
+  }
+
+  static func storedIdentityExists() throws -> Bool {
+    try KeychainStore(account: identityAccount).get() != nil
+  }
+
+  static func markContainerInitialized() {
+    UserDefaults.standard.set(true, forKey: initializedKey)
+  }
 
   private let store: any KeyStore
   private var privateKey: Curve25519.Signing.PrivateKey
@@ -65,9 +75,8 @@ final class IdentityManager {
     IdentityPublicKey(signingKey: privateKey.publicKey)
   }
 
-  /// The 32-byte private identity seed, used only in-process to build the Olm
-  /// `PigeonAccount` bound to this identity. Secret — never logged or persisted
-  /// outside the Keychain.
+  /// The 32-byte private identity seed, used only for Clean Slate staging and
+  /// identity replacement. Secret — never logged or persisted outside the Keychain.
   var identitySeed: Data { privateKey.rawRepresentation }
 
   /// Loads the existing identity key, generating and persisting one if missing.
@@ -134,8 +143,8 @@ final class IdentityManager {
   }
 
   /// Destroys the current identity and generates a fresh one. Irreversible: all
-  /// existing trust relationships become invalid. The caller must also rebuild
-  /// the Olm `PigeonAccount` (which is bound to this identity) from the new seed.
+  /// existing trust relationships become invalid. The caller must also destroy
+  /// the old pigeon-core checkpoint so the next unlock creates bound state.
   func resetIdentity() throws {
     let fresh = Curve25519.Signing.PrivateKey()
     try replaceIdentity(with: fresh.rawRepresentation)

@@ -9,14 +9,15 @@
 import SwiftUI
 
 #if os(iOS)
-  import Combine
   import UIKit
 
   struct ScreenCaptureShield: ViewModifier {
-    @State private var isCaptured = UIScreen.main.isCaptured
+    // Wait for the attached scene's capture state before showing sensitive content.
+    @State private var isCaptured = true
 
     func body(content: Content) -> some View {
       content
+        .background(CaptureStateObserver(isCaptured: $isCaptured))
         .overlay {
           if isCaptured {
             ZStack {
@@ -26,11 +27,44 @@ import SwiftUI
             }
           }
         }
-        .onReceive(
-          NotificationCenter.default.publisher(for: UIScreen.capturedDidChangeNotification)
-        ) { _ in
-          isCaptured = UIScreen.main.isCaptured
-        }
+    }
+  }
+
+  private struct CaptureStateObserver: UIViewRepresentable {
+    @Binding var isCaptured: Bool
+
+    func makeUIView(context: Context) -> CaptureStateView {
+      let view = CaptureStateView()
+      updateUIView(view, context: context)
+      return view
+    }
+
+    func updateUIView(_ view: CaptureStateView, context _: Context) {
+      view.onChange = { captured in
+        Task { @MainActor in isCaptured = captured }
+      }
+    }
+  }
+
+  final class CaptureStateView: UIView {
+    var onChange: ((Bool) -> Void)?
+
+    override init(frame: CGRect) {
+      super.init(frame: frame)
+      registerForTraitChanges([UITraitSceneCaptureState.self]) { (view: CaptureStateView, _) in
+        view.reportCaptureState()
+      }
+    }
+
+    required init?(coder _: NSCoder) { nil }
+
+    override func didMoveToWindow() {
+      super.didMoveToWindow()
+      reportCaptureState()
+    }
+
+    private func reportCaptureState() {
+      onChange?(traitCollection.sceneCaptureState == .active)
     }
   }
 

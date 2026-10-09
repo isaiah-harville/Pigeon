@@ -1,0 +1,158 @@
+syntax = "proto3";
+
+package pigeon.wire.v1;
+
+message IdentityBundle {
+  bytes identity_key = 1;
+  bytes curve_identity_key = 2;
+  bytes binding_signature = 3;
+}
+
+message PrekeyBundle {
+  IdentityBundle identity = 1;
+  bytes prekey = 2;
+  bytes prekey_signature = 3;
+  bool one_time = 4;
+}
+
+message MlsIdentityBinding {
+  uint32 version = 1;
+  uint32 ciphersuite = 2;
+  bytes root_public_key = 3;
+  bytes mls_public_key = 4;
+  bytes signature = 5;
+}
+
+message ReservedKeyPackage {
+  MlsIdentityBinding binding = 1;
+  bytes intended_consumer = 2;
+  bytes key_package = 3;
+  bytes package_hash = 4;
+  bytes reservation_signature = 5;
+}
+
+message GroupMemberKeys {
+  uint32 version = 1;
+  bytes group_id = 2;
+  reserved 3;
+  reserved "coordination_id";
+  bytes intended_creator = 4;
+  bytes member_identity = 5;
+  bytes capability_public_key = 6;
+  bytes recovery_public_key = 7;
+  bytes binding_signature = 8;
+}
+
+message GroupJoinMaterial {
+  uint32 version = 1;
+  bytes group_id = 2;
+  bytes coordination_id = 3;
+  bytes reserved_key_package = 4;
+  GroupMemberKeys member_keys = 5;
+}
+
+message GroupJoinRequest {
+  uint32 version = 1;
+  bytes group_id = 2;
+  bytes coordination_id = 3;
+  bytes requester_identity = 4;
+  string relay_url = 5;
+  bytes signature = 6;
+  bytes owner_identity = 7;
+}
+
+// A bearer invitation is placed in a URL fragment or QR payload, never in a
+// relay URL query. The issuer's long-term identity is deliberately absent.
+message GroupInviteTicket {
+  uint32 version = 1;
+  bytes group_id = 2;
+  bytes coordination_id = 3;
+  bytes coordinator_public_key = 4;
+  string relay_url = 5;
+  bytes inbox_address = 6;
+  bytes inbox_curve_identity_key = 7;
+  bytes inbox_fallback_prekey = 8;
+  bytes bearer_secret = 9;
+  int64 expires_at_ms = 10;
+  GroupInviteMode mode = 11;
+}
+
+enum GroupInviteMode {
+  GROUP_INVITE_MODE_UNSPECIFIED = 0;
+  GROUP_INVITE_MODE_PUBLIC = 1;
+  GROUP_INVITE_MODE_PRIVATE = 2;
+}
+
+// This message is carried only inside the encrypted invite initiation.
+message GroupInviteIntent {
+  uint32 version = 1;
+  bytes ticket_digest = 2;
+  bytes requester_identity = 3;
+  bytes request_id = 4;
+  bytes reply_prekey = 5;
+  bytes signature = 6;
+  bytes reply_address = 7;
+  bytes reply_curve_identity_key = 8;
+}
+
+// Sent to the invite inbox. The root identity and request body are encrypted.
+message GroupInviteCiphertext {
+  uint32 version = 1;
+  bytes sender_curve_identity_key = 2;
+  bytes olm_message = 3;
+}
+
+// Stored only inside the client's sealed checkpoint.
+message GroupInviteInboxState {
+  uint32 version = 1;
+  bytes ticket_digest = 2;
+  bytes olm_pickle = 3;
+  repeated bytes consumed_request_ids = 4;
+  bytes mailbox_signing_seed = 5;
+}
+
+enum GroupInviteReplyStatus {
+  GROUP_INVITE_REPLY_STATUS_UNSPECIFIED = 0;
+  GROUP_INVITE_REPLY_STATUS_APPROVED = 1;
+  GROUP_INVITE_REPLY_STATUS_REJECTED = 2;
+  GROUP_INVITE_REPLY_STATUS_EXPIRED = 3;
+  GROUP_INVITE_REPLY_STATUS_FULL = 4;
+}
+
+// Signed by the invite mailbox key pinned in the ticket, then encrypted to the
+// joiner's ephemeral reply inbox.
+message GroupInviteReply {
+  uint32 version = 1;
+  bytes ticket_digest = 2;
+  bytes request_id = 3;
+  GroupInviteReplyStatus status = 4;
+  bytes group_join_request = 5;
+  bytes signature = 6;
+}
+
+message GroupInviteReplyInboxState {
+  uint32 version = 1;
+  bytes ticket_digest = 2;
+  bytes request_id = 3;
+  bytes olm_pickle = 4;
+  bytes mailbox_signing_seed = 5;
+  bool consumed = 6;
+  bytes fallback_prekey = 7;
+}
+
+message GroupInviteMaterial {
+  uint32 version = 1;
+  bytes ticket_digest = 2;
+  bytes request_id = 3;
+  bytes material = 4;
+}
+
+message ContactCard {
+  uint32 version = 1;
+  IdentityBundle identity = 2;
+  string name = 3;
+  repeated string relay_urls = 4;
+  bytes relay_signature = 5;
+  bytes prekey_bundle = 6;
+  bytes pairwise_control_prekey_bundle = 7;
+}

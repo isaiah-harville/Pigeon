@@ -1,0 +1,373 @@
+import CryptoKit
+import Foundation
+import PigeonFFI
+import XCTest
+
+@testable import Pigeon
+
+@MainActor
+final class SessionCoreIntegrationTests: XCTestCase {
+  private enum InjectedFailure: Error {
+    case write
+  }
+
+  func testAttachStoreBuildsTransactionalCoreBeforeUnlockCompletes() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+
+    try fixture.manager.attachStore(fixture.store)
+
+    XCTAssertTrue(fixture.manager.isUnlocked)
+    XCTAssertEqual(try fixture.manager.coreClient?.checkpointGeneration(), 1)
+    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, 1)
+    XCTAssertEqual(fixture.manager.groups, [])
+    XCTAssertFalse(
+      try XCTUnwrap(fixture.manager.coreClient?.stateSnapshot())
+        .pairwisePrekeyBundle.isEmpty)
+  }
+
+  func testShareCardUsesOneCoreOwnedPairwiseIdentity() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    try fixture.manager.attachStore(fixture.store)
+
+    let card = try XCTUnwrap(fixture.manager.myCard)
+
+    XCTAssertEqual(card.prekeyBundle, card.pairwiseControlPrekeyBundle)
+    XCTAssertEqual(card.bundle.curveIdentityKey, card.prekeyBundle?.curveIdentityKey)
+  }
+
+  func testForegroundDuringIdentityMoveDoesNotPoisonSession() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    try fixture.manager.attachStore(fixture.store)
+    fixture.manager.isIdentityMoveFrozen = true
+
+    fixture.manager.setAppActive(true)
+
+    XCTAssertTrue(fixture.manager.isPersistenceHealthy)
+    XCTAssertTrue(fixture.manager.isIdentityMoveFrozen)
+    fixture.manager.cancelIdentityMove()
+    XCTAssertTrue(fixture.manager.isPersistenceHealthy)
+  }
+
+  func testPreparedMoveRelaunchKeepsCheckpointFrozenUntilCancellation() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    let journalURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("pigeon-move-test-\(UUID().uuidString).source")
+    let journal = IdentityMoveSourceJournal(url: journalURL)
+    fixture.manager.makeSourceMoveJournal = { journal }
+    defer { try? journal.cancelBeforeRetirement(identity: fixture.manager.identity) }
+    XCTAssertFalse(journal.isPending)
+    try fixture.manager.attachStore(fixture.store)
+    let archive = try fixture.manager.prepareIdentityMoveArchive(transferID: UUID())
+    try journal.prepare(
+      archive: archive,
+      digest: Data(SHA256.hash(data: try archive.encode())),
+      identity: fixture.manager.identity)
+    let generation = try fixture.manager.coreClient?.checkpointGeneration()
+
+    let restored = SessionManager(
+      identity: fixture.manager.identity,
+      mesh: MeshService(transport: SessionCoreNoopTransport()))
+    restored.makeSourceMoveJournal = { journal }
+    try restored.attachStore(fixture.store)
+    restored.setAppActive(true)
+
+    XCTAssertTrue(restored.isIdentityMoveFrozen)
+    XCTAssertTrue(restored.isPersistenceHealthy)
+    XCTAssertEqual(try restored.coreClient?.checkpointGeneration(), generation)
+    XCTAssertThrowsError(
+      try restored.executeCore(
+        PigeonCoreCommand(
+          id: "must-not-advance", body: .ensurePairwiseAccount)))
+
+    try journal.cancelBeforeRetirement(identity: fixture.manager.identity)
+    restored.cancelIdentityMove()
+    XCTAssertFalse(restored.isIdentityMoveFrozen)
+  }
+
+  func testUnreadablePreparedMoveRecordBlocksSessionRestore() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("pigeon-move-corrupt-\(UUID().uuidString).source")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try Data("corrupt move record".utf8).write(to: url)
+    fixture.manager.makeSourceMoveJournal = { IdentityMoveSourceJournal(url: url) }
+
+    XCTAssertThrowsError(try fixture.manager.attachStore(fixture.store))
+    XCTAssertFalse(fixture.manager.isUnlocked)
+  }
+
+  func testCoreSnapshotAtomicallyReplacesGroupProjectionAndRejectsRollback() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    let current = groupState(name: "Birds", revision: 2)
+
+    fixture.manager.applyCoreSnapshot(
+      PigeonCoreSnapshot(
+        checkpointGeneration: 5, groups: [current]))
+    fixture.manager.applyCoreSnapshot(
+      PigeonCoreSnapshot(
+        checkpointGeneration: 4, groups: [groupState(name: "Stale", revision: 1)]))
+
+    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, 5)
+    XCTAssertEqual(fixture.manager.groups, [current])
+  }
+
+  func testExecutingCoreCommandRefreshesDurableSnapshot() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    try fixture.manager.attachStore(fixture.store)
+    let initialGeneration = fixture.manager.coreSnapshotGeneration
+
+    let output = try fixture.manager.executeCore(
+      PigeonCoreCommand(
+        id: "ack-empty-effects",
+        body: .acknowledgeEffects(PigeonAcknowledgeEffects())))
+
+    XCTAssertEqual(output.checkpointGeneration, initialGeneration + 1)
+    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, initialGeneration + 1)
+  }
+
+  func testInvalidGroupRelayMessageIsDurablyClassifiedOnce() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    try fixture.manager.attachStore(fixture.store)
+    let initialGeneration = fixture.manager.coreSnapshotGeneration
+
+    XCTAssertEqual(
+      fixture.manager.consumeGroupRelayMessage(
+        Data("not an MLS message".utf8), requestID: "relay-entry-1"), .rejected)
+    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, initialGeneration + 1)
+    XCTAssertEqual(
+      fixture.manager.consumeGroupRelayMessage(
+        Data("not an MLS message".utf8), requestID: "relay-entry-1"), .accepted)
+    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, initialGeneration + 1)
+  }
+
+  func testCoreEventIsAcknowledgedOnlyAfterGroupHistoryPersists() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    try fixture.manager.attachStore(fixture.store)
+    let initialGeneration = fixture.manager.coreSnapshotGeneration
+    let groupID = Data(repeating: 41, count: 32)
+    let event = PigeonCoreEvent(
+      id: "created-event",
+      body: .groupCreated(
+        PigeonGroupCreatedEvent(
+          groupID: groupID,
+          ownerIdentity: fixture.manager.myID,
+          name: "Birds",
+          relayURL: "https://relay.example",
+          meshEnabled: false,
+          epoch: 1,
+          policyRevision: 1)))
+
+    try fixture.manager.absorbCoreEvents([event])
+
+    XCTAssertEqual(fixture.manager.groupConversations[groupID]?.messages.count, 1)
+    XCTAssertEqual(fixture.manager.coreSnapshotGeneration, initialGeneration + 1)
+
+    let restored = SessionManager(
+      identity: fixture.manager.identity,
+      mesh: MeshService(transport: SessionCoreNoopTransport()))
+    try restored.attachStore(fixture.store)
+    XCTAssertEqual(restored.groupConversations[groupID]?.messages.count, 1)
+  }
+
+  func testCoreEventRemainsUnacknowledgedWhenGroupHistorySaveFails() throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("pigeon-core-event-failure-\(UUID().uuidString).store")
+    let key = SymmetricKey(size: .bits256)
+    var failWrites = false
+    let store = EncryptedStore(
+      key: key,
+      url: url,
+      io: EncryptedStoreIO(
+        write: { data, destination, options in
+          if failWrites { throw InjectedFailure.write }
+          try data.write(to: destination, options: options)
+        },
+        remove: { try FileManager.default.removeItem(at: $0) }))
+    let identity = try IdentityManager(
+      store: InMemoryKeyStore(seed: Data(repeating: 29, count: 32)))
+    let manager = SessionManager(
+      identity: identity,
+      mesh: MeshService(transport: SessionCoreNoopTransport()))
+    defer { wipe(store) }
+    try manager.attachStore(store)
+    let initialGeneration = try manager.coreClient?.checkpointGeneration()
+    let event = PigeonCoreEvent(
+      id: "must-remain-pending",
+      body: .groupCreated(
+        PigeonGroupCreatedEvent(
+          groupID: Data(repeating: 42, count: 32),
+          ownerIdentity: manager.myID,
+          name: "Birds",
+          relayURL: "https://relay.example",
+          meshEnabled: false,
+          epoch: 1,
+          policyRevision: 1)))
+
+    failWrites = true
+    XCTAssertThrowsError(try manager.absorbCoreEvents([event]))
+    XCTAssertEqual(try manager.coreClient?.checkpointGeneration(), initialGeneration)
+  }
+
+  func testCorruptCoreCheckpointKeepsSessionLocked() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    let coreStore = fixture.store.companion(suffix: CoreCheckpointStore.companionSuffix)
+    XCTAssertTrue(
+      coreStore.save(
+        PersistedCoreCheckpoint(
+          generation: 1,
+          bytes: Data("corrupt core".utf8),
+          sha256: Data(repeating: 0, count: 32))))
+
+    XCTAssertThrowsError(try fixture.manager.attachStore(fixture.store))
+    XCTAssertFalse(fixture.manager.isUnlocked)
+    XCTAssertNil(fixture.manager.coreClient)
+  }
+
+  func testPairwiseAccountPersistenceFailureKeepsSessionLocked() throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("pigeon-core-account-failure-\(UUID().uuidString).store")
+    let store = EncryptedStore(
+      key: SymmetricKey(size: .bits256),
+      url: url,
+      io: EncryptedStoreIO(
+        write: { _, _, _ in throw InjectedFailure.write },
+        remove: { try FileManager.default.removeItem(at: $0) }))
+    let identity = try IdentityManager(
+      store: InMemoryKeyStore(seed: Data(repeating: 30, count: 32)))
+    let manager = SessionManager(
+      identity: identity,
+      mesh: MeshService(transport: SessionCoreNoopTransport()))
+    defer { wipe(store) }
+
+    XCTAssertThrowsError(try manager.attachStore(store))
+    XCTAssertFalse(manager.isUnlocked)
+    XCTAssertNil(manager.coreClient)
+  }
+
+  func testMalformedCorePairwiseEnvelopeIsRetainedForRetryWithoutAdvancingState() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    try fixture.manager.attachStore(fixture.store)
+    let initialGeneration = try fixture.manager.coreClient?.checkpointGeneration()
+    let peer = try makeCorePeer(seedByte: 31)
+    fixture.manager.contacts = [Contact(bundle: peer.bundle, displayName: "Peer")]
+    let envelope = SessionEnvelope(
+      type: .pairwise,
+      sender: peer.bundle.identityKey,
+      recipient: fixture.manager.myID,
+      payload: Data("malformed pairwise ciphertext".utf8))
+
+    let disposition = fixture.manager.handleInbound(envelope.encoded(), channel: .bluetooth)
+
+    XCTAssertEqual(disposition, .retryAfterRestart)
+    XCTAssertEqual(try fixture.manager.coreClient?.checkpointGeneration(), initialGeneration)
+  }
+
+  func testGroupCiphertextFromBluetoothIsIgnored() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    try fixture.manager.attachStore(fixture.store)
+    let generation = try fixture.manager.coreClient?.checkpointGeneration()
+    let envelope = SessionEnvelope(
+      type: .groupMls, sender: Data(repeating: 7, count: 32),
+      recipient: Data(repeating: 8, count: 32), payload: Data([1, 2, 3]))
+
+    XCTAssertEqual(
+      fixture.manager.handleInbound(envelope.encoded(), channel: .bluetooth), .consumed)
+    XCTAssertEqual(try fixture.manager.coreClient?.checkpointGeneration(), generation)
+  }
+
+  func makeFixture() throws -> (manager: SessionManager, store: EncryptedStore) {
+    let identity = try IdentityManager(
+      store: InMemoryKeyStore(seed: Data(repeating: 23, count: 32)))
+    let manager = SessionManager(
+      identity: identity,
+      mesh: MeshService(transport: SessionCoreNoopTransport()))
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("pigeon-session-core-\(UUID().uuidString).store")
+    return (manager, EncryptedStore(key: SymmetricKey(size: .bits256), url: url))
+  }
+
+  func groupState(name: String, revision: UInt64) -> PigeonGroupState {
+    PigeonGroupState(
+      groupID: Data(repeating: 1, count: 32),
+      ownerIdentity: Data(repeating: 2, count: 32),
+      adminIdentities: [Data(repeating: 2, count: 32)],
+      memberIdentities: [
+        Data(repeating: 2, count: 32), Data(repeating: 3, count: 32),
+        Data(repeating: 4, count: 32),
+      ],
+      name: name, relayURL: "https://relay.example",
+      coordinationID: Data(repeating: 5, count: 32), meshEnabled: false,
+      epoch: 3, policyRevision: revision, dissolved: false,
+      capabilityPublicKey: Data(repeating: 6, count: 32),
+      capabilityID: Data(repeating: 8, count: 32),
+      coordinatorPublicKey: Data(repeating: 7, count: 32))
+  }
+
+  func wipe(_ store: EncryptedStore) {
+    store.wipe()
+    store.companion(suffix: ".crypto").wipe()
+    store.companion(suffix: ".transaction").wipe()
+    store.companion(suffix: CoreCheckpointStore.companionSuffix).wipe()
+  }
+}
+
+extension SessionCoreIntegrationTests {
+  func testDirectAcknowledgementEventUpdatesDurableDeliveryBeforeCoreAck() throws {
+    let fixture = try makeFixture()
+    defer { wipe(fixture.store) }
+    try fixture.manager.attachStore(fixture.store)
+    let peer = try makeCorePeer(seedByte: 61)
+    let contact = Contact(bundle: peer.bundle, displayName: "Peer")
+    fixture.manager.contacts = [contact]
+    let contactID = contact.id
+    var message = ChatMessage(mine: true, text: "hello", pending: true)
+    message.id = try XCTUnwrap(UUID(uuidString: "11111111-1111-1111-1111-111111111111"))
+    fixture.manager.conversationStore.record(message, for: contactID, ephemeral: false)
+    XCTAssertTrue(fixture.manager.persist())
+    let event = PigeonCoreEvent(
+      id: "direct-ack-event",
+      body: .directApplicationReceived(
+        PigeonDirectApplicationReceivedEvent(
+          senderIdentity: contactID,
+          application: PigeonDirectApplication(
+            id: "22222222-2222-2222-2222-222222222222",
+            body: .acknowledgement(messageID: message.id.uuidString)))))
+
+    try fixture.manager.absorbCoreEvents([event])
+
+    XCTAssertEqual(
+      fixture.manager.conversationStore.delivery(messageID: message.id, contactID: contactID),
+      .delivered)
+    let restored = SessionManager(
+      identity: fixture.manager.identity,
+      mesh: MeshService(transport: SessionCoreNoopTransport()))
+    try restored.attachStore(fixture.store)
+    XCTAssertEqual(
+      restored.conversationStore.delivery(messageID: message.id, contactID: contactID),
+      .delivered)
+  }
+}
+
+@MainActor
+private final class SessionCoreNoopTransport: Transport {
+  let kind: TransportKind? = .relay
+  var status: TransportStatus = .idle
+  var connectedPeerCount = 0
+  var log: [String] = []
+  var onMessage: ((Data, String) -> TransportMessageDisposition)?
+  var onConnectivity: (() -> Void)?
+
+  func broadcast(_: Data, to _: Data?) {}
+}

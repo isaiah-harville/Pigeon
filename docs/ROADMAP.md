@@ -1,6 +1,7 @@
 # Pigeon — Roadmap
 
-Pigeon is an open-source messenger built for **extreme privacy and security**
+Pigeon is a source-available messenger with open-source protocol, mesh, and relay
+packages, built for **extreme privacy and security**
 across offline-capable local transports and federated server transports.
 Messages can travel end-to-end encrypted over a **Bluetooth Low Energy mesh**,
 or over an **optional zero-knowledge relay** for peers out of local range on
@@ -20,13 +21,14 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 - **Topology:** transport-flexible encrypted mesh — BLE today, relays in
   progress, and other links later. Every transport forwards ciphertext it cannot
   read.
-- **Remote delivery:** opt-in, self-hostable **zero-knowledge relay** (blind
+- **Remote delivery:** on by default and user-controllable, self-hostable **zero-knowledge relay** (blind
   ciphertext mailbox; federation-friendly) for peers out of local range. Relays
   are a first-class transport option but are never trusted for confidentiality,
   authentication, or integrity.
 - **Crypto:** Signal-grade end-to-end encryption via **Olm** (the audited
   `vodozemac` crate) in the Rust `pigeon-core`, with Pigeon's own long-term
-  Ed25519 identity binding layered on top. Migrated (#79–#83) from the original
+  Ed25519 identity binding layered on top; group chats use MLS (RFC 9420)
+  through OpenMLS in the same core. Migrated (#79–#83) from the original
   clean-room Swift `PigeonCrypto` (Noise XX + Double Ratchet over CryptoKit),
   which has been removed. libsignal was rejected (AGPL/App-Store conflict,
   server-coupled design); a Rust core keeps the protocol portable across future
@@ -43,9 +45,10 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 
 ## Module layout
 
-- `pigeon-core/` — Rust crate (AGPL): the pairwise messaging core over Olm/
-  `vodozemac` — identity binding, account/prekeys, sessions, the protobuf wire
-  format. Reached from the app through the UniFFI bridge.
+- `pigeon-core/` — Rust crate (AGPL): the transactional messaging core —
+  identity binding, pairwise Olm/`vodozemac` sessions, MLS groups, checkpointed
+  state, and the protobuf wire format. Reached from the app through the UniFFI
+  bridge.
 - `pigeon-ffi/` — UniFFI crate: builds the XCFramework and generates the Swift
   bindings vended by the `PigeonFFI` package (the app's crypto/mesh facade).
 - `pigeon-mesh/` — Rust crate: Fragmentation, MeshPacket (dedup/TTL/relay),
@@ -81,7 +84,7 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 - **Delivery confidence** — an honest **Sent → Delivered** status under each
   outbound message (Delivered only on the recipient's end-to-end ack), with a
   "Not delivered" + resend affordance when a message genuinely couldn't be dispatched.
-- **Relay transport (remote delivery)** — opt-in `RelayTransport` + a self-hostable
+- **Relay transport (remote delivery)** — enabled on a fresh install, with a user-controlled `RelayTransport` + a self-hostable
   zero-knowledge mailbox server (Rust, axum/tokio, Docker→GHCR). Carries the same
   E2E ciphertext to peers out of local range: per-recipient **addressed** delivery
   (no fan-out), **federation** (each peer advertises their relays in the QR card and
@@ -96,11 +99,11 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
   deterministic invite tie-break avoids forming two sessions per pair. Foreground-only
   (background reach is the relay's job); needs the local-network/Bonjour Info.plist
   entries. **Wi-Fi Aware** stays a Horizon item (Multipeer already covers same-network).
-- **Push wake-up (APNs via the official relay)** — opt-in, content-free push that
+- **Push wake-up (APNs via the official relay)** — enabled on a fresh install, with user-controllable content-free push that
   wakes a backgrounded app to drain its mailbox (decrypt still happens on unlock).
   Relay token registration over the authenticated `/ws` handshake, a config-gated
   APNs gateway that fires the content-free alert on deposit (coalesced, 410 token
-  eviction), and app-side opt-in. Only the app publisher can hold the APNs key, so
+  eviction), and app-side opt-out. Only the app publisher can hold the APNs key, so
   this can't be federated; self-hosted/third-party relays simply don't push. The
   payload is empty, so **confidentiality is untouched**; it does expose wake metadata
   (device token ↔ "has mail at time T") to the gateway and Apple — a deliberate,
@@ -118,6 +121,26 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 
 ### 🟡 In progress
 
+- **Group chats (1.4.0)** — OpenMLS-based group encryption and authenticated
+  mutable policy live in `pigeon-core`; the selected relay hosts the opaque group
+  mailbox and signed commit coordinator. Groups support 1–128 members, a
+  permanent owner, delegated admins, post-join history, owner-controlled name,
+  owner-controlled explicit mesh opt-in, member leave, and permanent dissolve.
+  Shareable link/QR invites for up to 128 members use anonymous, encrypted relay
+  inboxes: public links are handled automatically by an online admin, while
+  private links require admin approval. Neither mode requires an account.
+  The implementation includes adversarial state-machine tests, authenticated
+  coordinator failover without owner availability, atomic capability rotation,
+  and transactional crash recovery. Physical multi-device and locked-delivery
+  validation remain release gates. Metadata minimization and independent
+  cryptographic review remain audit-readiness work; do not describe Pigeon as
+  audited or production-secure without that evidence.
+- **Identity move (1.4.0)** — a local, owner-confirmed move transfers the
+  identity keys, current pairwise and MLS checkpoint, and group registration
+  state to a new phone without saved messages. The old phone rotates its
+  identity after the destination durably stages the archive. Reinstall with a
+  surviving Keychain identity requires an explicit fresh start. Physical
+  two-phone interruption and locked-delivery checks remain release gates.
 - **UI polish** — ongoing refinement of chat/contacts.
 - **Security hardening / audit prep** — work toward the audit blockers below:
   traffic-analysis resistance (padding/cover traffic), key zeroization,
@@ -130,17 +153,6 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 - **External security audit** — required before any real-world "secure" claim.
 
 ### 🔭 Horizon
-
-**Group chats** (E2E; no central authority for ordering/membership):
-- **A1 — Pairwise fan-out:** encrypt to each member over existing sessions, tagged
-  with a `groupID`. Reuses everything; O(n) bandwidth; good for small groups.
-- **A2 — Sender keys (WhatsApp/Signal model):** each member distributes a sender
-  key once; O(1) per message. The practical mid-term target.
-- **A3 — MLS (RFC 9420):** TreeKEM, log(n) membership changes; the modern standard
-  but a large surface — needs a vetted/auditable implementation. Long-term.
-- Cross-cutting: signed membership/roster, causal ordering (Lamport/vector clocks,
-  eventual consistency), per-group seen-tracking over the flood mesh.
-- *Path:* A1 → A2, defer A3.
 
 **Long-distance / non-Bluetooth transport** (same E2E ciphertext across local or
 federated paths):
@@ -167,9 +179,13 @@ Several are audit blockers (see [SECURITY_MODEL.md](SECURITY_MODEL.md) → Audit
 
 - **External security audit** — required before any real-world "secure" claim.
   **Audit blocker.** The messaging core is Olm via the audited `vodozemac` crate, but Pigeon's identity binding, wire formats, transports, and storage still need independent review.
-- **Re-handshake DoS** — mesh envelopes are unauthenticated, so a spoofed
-  `rehandshakeRequest`/handshake can force a session reset (no content breach —
-  the binding check holds). *Mitigated:* network-triggered re-handshakes are rate-limited per peer with a cooldown, so a spoofed flood costs at most one teardown per window; user-initiated resets bypass the gate.
+- **Pairwise session loss** — there is no network-triggered re-handshake. Once a
+  peer has confirmed a pairwise session, further initiations from that identity
+  are rejected, so a spoofed or replayed envelope cannot tear a session down.
+  Crossing first messages (both sides initiate before either receives) keep one
+  extra session so neither side is locked out. The trade-off: if one side loses
+  its pairwise state while keeping its identity, both sides must remove and
+  re-add the contact to re-establish.
 - **Connection topology** — two dual-role devices form *two* central↔peripheral
   links per pair, so each message crosses BLE twice. This is an **efficiency**
   issue only: the mesh dedup layer already drops the duplicate, so no duplicate is
@@ -191,7 +207,7 @@ Several are audit blockers (see [SECURITY_MODEL.md](SECURITY_MODEL.md) → Audit
   relay) and a single content-free notification is posted; they decrypt once the
   user unlocks (the message vault stays biometric-gated — no background
   decryption, deliberately). iOS still *suspends* a backgrounded app, which is why
-  the opt-in **push wake-up** (Shipped) exists to nudge it awake to drain its mailbox.
+  the default-on **push wake-up** (Shipped) exists to nudge it awake to drain its mailbox.
 
 *Resolved:* multi-path duplicate delivery (mesh dedup); identity↔Olm-key binding
 (the Ed25519 identity signs Olm's Curve25519 identity key); one-sided-restart

@@ -24,10 +24,6 @@ import CoreBluetooth
 import Foundation
 import PigeonFFI
 
-// The central and peripheral delegates intentionally live beside the state they
-// mutate so the radio lifecycle remains auditable as one unit.
-// swiftlint:disable file_length
-
 /// The BLE implementation of `Transport`. Drives Bluetooth discovery and
 /// messaging and publishes observable state for the UI. Runs on the main actor;
 /// CoreBluetooth callbacks are delivered on the main queue.
@@ -36,7 +32,7 @@ import PigeonFFI
 final class PeerTransport: NSObject, Transport {
 
   let kind: TransportKind? = .bluetooth
-  private(set) var status: TransportStatus = .idle
+  var status: TransportStatus = .idle
   /// Number of peers we are currently connected to (as central).
   private(set) var connectedPeerCount = 0
   /// Recent activity, newest last, surfaced by the app's diagnostics UI.
@@ -53,14 +49,14 @@ final class PeerTransport: NSObject, Transport {
   @ObservationIgnored private var centralRef: CBCentralManager?
   @ObservationIgnored private var peripheralManagerRef: CBPeripheralManager?
 
-  private var central: CBCentralManager {
+  var central: CBCentralManager {
     guard let centralRef else {
       preconditionFailure("CBCentralManager used before initialization")
     }
     return centralRef
   }
 
-  private var peripheralManager: CBPeripheralManager {
+  var peripheralManager: CBPeripheralManager {
     guard let peripheralManagerRef else {
       preconditionFailure("CBPeripheralManager used before initialization")
     }
@@ -68,21 +64,21 @@ final class PeerTransport: NSObject, Transport {
   }
 
   // Peripheral (server) side.
-  private var outboundCharacteristic: CBMutableCharacteristic?
-  private var subscribedCentrals: [CBCentral] = []
+  var outboundCharacteristic: CBMutableCharacteristic?
+  var subscribedCentrals: [CBCentral] = []
 
   // Central (client) side: retained connections and their inbound characteristic.
-  private var peripherals: [UUID: CBPeripheral] = [:]
-  private var inboundCharacteristics: [UUID: CBCharacteristic] = [:]
+  var peripherals: [UUID: CBPeripheral] = [:]
+  var inboundCharacteristics: [UUID: CBCharacteristic] = [:]
 
   // Outbound fragmenter + per-source reassemblers.
   private var fragmenter = Fragmenter()
-  private var reassembly = ReassemblyPool()
+  var reassembly = ReassemblyPool()
   private var sweepTimer: Timer?
   /// Notifications waiting for the peripheral transmit queue to drain.
   private var pendingNotifications: [Data] = []
   /// Whether our GATT service has been added (or restored), so we don't re-add it.
-  private var didAddService = false
+  var didAddService = false
 
   override convenience init() {
     self.init(enabled: true)
@@ -244,11 +240,11 @@ final class PeerTransport: NSObject, Transport {
 
   // MARK: - Helpers
 
-  private func note(_ event: DiagnosticEvent) {
+  func note(_ event: DiagnosticEvent) {
     DiagnosticLog.record(event, in: &log, limit: 200)
   }
 
-  private func updateConnectedCount() {
+  func updateConnectedCount() {
     connectedPeerCount = peripherals.values.filter { $0.state == .connected }.count
   }
 
@@ -259,7 +255,7 @@ final class PeerTransport: NSObject, Transport {
     flushNotifications()
   }
 
-  private func flushNotifications() {
+  func flushNotifications() {
     guard let characteristic = outboundCharacteristic else { return }
     while let next = pendingNotifications.first {
       if peripheralManager.updateValue(next, for: characteristic, onSubscribedCentrals: nil) {
@@ -271,11 +267,11 @@ final class PeerTransport: NSObject, Transport {
   }
 
   /// Decodes a fragment from raw BLE bytes and delivers a completed message.
-  private func receive(_ data: Data, from source: UUID) {
+  func receive(_ data: Data, from source: UUID) {
     guard isEnabled else { return }
     do {
       let fragment = try Fragment(decoding: data)
-      if let message = try reassembly.reassembler(for: source).ingest(fragment) {
+      if let message = try reassembly.ingest(fragment, from: source) {
         note(.transportReceived)
         _ = onMessage?(message, source.uuidString)
       }
@@ -284,7 +280,7 @@ final class PeerTransport: NSObject, Transport {
     }
   }
 
-  private func startScanningIfReady() {
+  func startScanningIfReady() {
     guard isEnabled else { return }
     guard central.state == .poweredOn else { return }
     central.scanForPeripherals(
@@ -292,249 +288,5 @@ final class PeerTransport: NSObject, Transport {
       options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
     status = .scanning
     note(.transportScanning)
-  }
-}
-
-// MARK: - CBCentralManagerDelegate
-
-extension PeerTransport: CBCentralManagerDelegate {
-  func centralManagerDidUpdateState(_ manager: CBCentralManager) {
-    guard isEnabled else {
-      status = .idle
-      return
-    }
-    switch manager.state {
-    case .poweredOn: startScanningIfReady()
-    case .unauthorized: status = .unauthorized
-    case .poweredOff: status = .poweredOff
-    default: status = .idle
-    }
-  }
-
-  func centralManager(_ manager: CBCentralManager, willRestoreState dict: [String: Any]) {
-    guard let restored = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] else {
-      return
-    }
-    guard isEnabled else {
-      for peripheral in restored { manager.cancelPeripheralConnection(peripheral) }
-      return
-    }
-    // Reattach to peripherals iOS restored after relaunching us in the background.
-    for peripheral in restored {
-      peripheral.delegate = self
-      peripherals[peripheral.identifier] = peripheral
-      if peripheral.state == .connected {
-        peripheral.discoverServices([BluetoothConstants.service])  // refresh characteristics
-      } else {
-        manager.connect(peripheral, options: nil)
-      }
-    }
-    updateConnectedCount()
-    note(.transportRestored)
-  }
-
-  func centralManager(
-    _ manager: CBCentralManager, didDiscover peripheral: CBPeripheral,
-    advertisementData _: [String: Any], rssi _: NSNumber
-  ) {
-    guard isEnabled else { return }
-    if let existing = peripherals[peripheral.identifier] {
-      // Known peer that dropped (e.g. its app restarted): reconnect.
-      if existing.state != .connected { manager.connect(existing, options: nil) }
-      return
-    }
-    peripherals[peripheral.identifier] = peripheral  // retain before connecting
-    note(.peerDiscovered)
-    manager.connect(peripheral, options: nil)
-  }
-
-  func centralManager(_ manager: CBCentralManager, didConnect peripheral: CBPeripheral) {
-    guard isEnabled else {
-      manager.cancelPeripheralConnection(peripheral)
-      return
-    }
-    peripheral.delegate = self
-    peripheral.discoverServices([BluetoothConstants.service])
-    updateConnectedCount()
-    note(.peerConnected)
-  }
-
-  func centralManager(
-    _ manager: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral,
-    error _: Error?
-  ) {
-    inboundCharacteristics[peripheral.identifier] = nil
-    reassembly.drop(peripheral.identifier)
-    updateConnectedCount()
-    note(.peerDisconnected)
-    guard isEnabled else { return }
-    // Keep the peripheral retained and issue a pending connect: CoreBluetooth
-    // reconnects automatically when the peer returns (e.g. after an app restart).
-    manager.connect(peripheral, options: nil)
-    startScanningIfReady()
-  }
-
-  func centralManager(
-    _ manager: CBCentralManager, didFailToConnect peripheral: CBPeripheral,
-    error _: Error?
-  ) {
-    note(.peerConnectionFailed)
-    guard isEnabled else { return }
-    manager.connect(peripheral, options: nil)  // stay pending until available
-  }
-}
-
-// MARK: - CBPeripheralDelegate (central-side: talking to a remote peripheral)
-
-extension PeerTransport: CBPeripheralDelegate {
-  func peripheral(_ peripheral: CBPeripheral, didDiscoverServices _: Error?) {
-    guard isEnabled else { return }
-    for service in peripheral.services ?? [] where service.uuid == BluetoothConstants.service {
-      peripheral.discoverCharacteristics(
-        [BluetoothConstants.inbound, BluetoothConstants.outbound],
-        for: service)
-    }
-  }
-
-  func peripheral(
-    _ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService,
-    error _: Error?
-  ) {
-    guard isEnabled else { return }
-    for characteristic in service.characteristics ?? [] {
-      switch characteristic.uuid {
-      case BluetoothConstants.inbound:
-        inboundCharacteristics[peripheral.identifier] = characteristic
-        note(.writeChannelReady)
-        onConnectivity?()  // can write to this peer now — flush pending work
-      case BluetoothConstants.outbound:
-        peripheral.setNotifyValue(true, for: characteristic)  // receive peer → us
-        note(.peerSubscribed)
-      default:
-        break
-      }
-    }
-  }
-
-  func peripheral(
-    _ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic,
-    error _: Error?
-  ) {
-    guard isEnabled else { return }
-    guard let data = characteristic.value else { return }
-    note(.transportReceived)
-    receive(data, from: peripheral.identifier)
-  }
-}
-
-// MARK: - CBPeripheralManagerDelegate (peripheral-side: serving remote centrals)
-
-extension PeerTransport: CBPeripheralManagerDelegate {
-  func peripheralManagerDidUpdateState(_ manager: CBPeripheralManager) {
-    guard isEnabled else {
-      manager.stopAdvertising()
-      manager.removeAllServices()
-      return
-    }
-    guard manager.state == .poweredOn else { return }
-    installPeripheralServiceIfReady()
-  }
-
-  private func installPeripheralServiceIfReady() {
-    guard isEnabled, peripheralManager.state == .poweredOn, !didAddService else { return }
-
-    let inbound = CBMutableCharacteristic(
-      type: BluetoothConstants.inbound,
-      properties: [.write],
-      value: nil,
-      permissions: [.writeable])
-    let outbound = CBMutableCharacteristic(
-      type: BluetoothConstants.outbound,
-      properties: [.notify],
-      value: nil,
-      permissions: [.readable])
-    outboundCharacteristic = outbound
-
-    let service = CBMutableService(type: BluetoothConstants.service, primary: true)
-    service.characteristics = [inbound, outbound]
-    peripheralManager.add(service)
-  }
-
-  // MARK: State restoration (relaunched in the background on a BLE event)
-
-  func peripheralManager(
-    _ manager: CBPeripheralManager,
-    willRestoreState dict: [String: Any]
-  ) {
-    guard isEnabled else {
-      manager.stopAdvertising()
-      manager.removeAllServices()
-      return
-    }
-    // Recover our advertised service so we can keep notifying restored centrals.
-    if let services = dict[CBPeripheralManagerRestoredStateServicesKey] as? [CBMutableService] {
-      for service in services where service.uuid == BluetoothConstants.service {
-        for characteristic in service.characteristics ?? []
-        where characteristic.uuid == BluetoothConstants.outbound {
-          outboundCharacteristic = characteristic as? CBMutableCharacteristic
-        }
-        didAddService = true  // already added by the restored session
-      }
-      note(.transportRestored)
-    }
-  }
-
-  func peripheralManager(_ manager: CBPeripheralManager, didAdd _: CBService, error _: Error?) {
-    didAddService = true
-    guard isEnabled else {
-      manager.removeAllServices()
-      didAddService = false
-      return
-    }
-    manager.startAdvertising([
-      CBAdvertisementDataServiceUUIDsKey: [BluetoothConstants.service],
-      CBAdvertisementDataLocalNameKey: "Pigeon",
-    ])
-    note(.transportAdvertising)
-  }
-
-  func peripheralManager(_ manager: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
-    guard isEnabled else {
-      if let first = requests.first { manager.respond(to: first, withResult: .writeNotPermitted) }
-      return
-    }
-    for request in requests {
-      if let value = request.value {
-        note(.transportReceived)
-        receive(value, from: request.central.identifier)
-      }
-    }
-    if let first = requests.first {
-      manager.respond(to: first, withResult: .success)
-    }
-  }
-
-  func peripheralManagerIsReady(toUpdateSubscribers _: CBPeripheralManager) {
-    flushNotifications()
-  }
-
-  func peripheralManager(
-    _: CBPeripheralManager, central: CBCentral,
-    didSubscribeTo _: CBCharacteristic
-  ) {
-    guard isEnabled else { return }
-    if !subscribedCentrals.contains(where: { $0.identifier == central.identifier }) {
-      subscribedCentrals.append(central)
-    }
-    note(.peerSubscribed)
-    onConnectivity?()  // can notify this central now — flush pending work
-  }
-
-  func peripheralManager(
-    _: CBPeripheralManager, central: CBCentral,
-    didUnsubscribeFrom _: CBCharacteristic
-  ) {
-    subscribedCentrals.removeAll { $0.identifier == central.identifier }
-    reassembly.drop(central.identifier)
   }
 }

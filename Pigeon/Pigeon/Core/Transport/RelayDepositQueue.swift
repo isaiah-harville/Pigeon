@@ -19,6 +19,7 @@ extension RelayTransport {
     /// the target relays can be re-resolved at flush time (the recipient's
     /// advertised/preferred relays may have changed since it was queued).
     struct Deposit: Equatable {
+      let requestID: String
       let recipient: Data
       let message: Data
     }
@@ -40,16 +41,21 @@ extension RelayTransport {
       }
     }
 
-    /// Re-attempts each queued deposit in FIFO order via `send` (which returns
-    /// whether it went out), retaining only those still unsendable so they're
-    /// tried again on the next connectivity event.
-    mutating func flush(_ send: (Deposit) -> Bool) {
-      guard !deposits.isEmpty else { return }
-      let queued = deposits
-      deposits.removeAll(keepingCapacity: true)
-      for deposit in queued where !send(deposit) {
-        deposits.append(deposit)
+    /// Removes only a deposit confirmed by the relay. The server-assigned
+    /// envelope ID is distinct from our request ID.
+    @discardableResult
+    mutating func acknowledge(requestID: String) -> Bool {
+      guard let index = deposits.firstIndex(where: { $0.requestID == requestID }) else {
+        return false
       }
+      deposits.remove(at: index)
+      return true
+    }
+
+    /// Re-attempts each queued deposit in FIFO order. A socket write alone
+    /// never removes one; only `acknowledge` does.
+    mutating func flush(_ send: (Deposit) -> Bool) {
+      for deposit in deposits { _ = send(deposit) }
     }
   }
 }

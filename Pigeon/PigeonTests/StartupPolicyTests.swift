@@ -12,6 +12,25 @@ import XCTest
 @MainActor
 final class StartupPolicyTests: XCTestCase {
 
+  func testSurvivingIdentityWithoutContainerEvidenceRequiresExplicitRecovery() {
+    XCTAssertEqual(
+      StartupPolicy.installationState(
+        hasContainerEvidence: false, hasKeychainIdentity: true),
+      .reinstallRecovery)
+    XCTAssertEqual(
+      StartupPolicy.installationState(
+        hasContainerEvidence: false, hasKeychainIdentity: false),
+      .freshInstall)
+    XCTAssertEqual(
+      StartupPolicy.installationState(
+        hasContainerEvidence: true, hasKeychainIdentity: true),
+      .existingInstall)
+    XCTAssertEqual(
+      StartupPolicy.installationState(
+        hasContainerEvidence: true, hasKeychainIdentity: false),
+      .missingIdentity)
+  }
+
   func testUnlockedStartupLoadsFullServices() {
     XCTAssertEqual(
       StartupPolicy.identityCreationPolicy(protectedDataAvailable: true),
@@ -80,6 +99,11 @@ final class StartupPolicyTests: XCTestCase {
     store.wipe()
     store.companion(suffix: ".crypto").wipe()
     store.companion(suffix: ".transaction").wipe()
+    store.companion(suffix: CoreCheckpointStore.companionSuffix).wipe()
+    defer {
+      store.wipe()
+      store.companion(suffix: CoreCheckpointStore.companionSuffix).wipe()
+    }
     try manager.attachStore(store)
 
     XCTAssertTrue(manager.lockedInbox.isEmpty)

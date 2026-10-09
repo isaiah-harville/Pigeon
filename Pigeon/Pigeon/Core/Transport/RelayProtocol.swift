@@ -14,8 +14,8 @@ enum RelayError: Error {
 
 extension RelayTransport {
 
-  nonisolated static let minimumProtocolVersion = 1
-  nonisolated static let maximumProtocolVersion = 1
+  nonisolated static let minimumProtocolVersion = 2
+  nonisolated static let maximumProtocolVersion = 2
 
   struct RelayInfo: Equatable, Sendable {
     enum Compatibility: Equatable, Sendable {
@@ -160,7 +160,8 @@ extension RelayTransport {
   /// A classified inbound server frame. Malformed and unknown frames are ignored.
   enum InboundFrame: Equatable {
     case envelope(Envelope)
-    case error(String)
+    case published(requestID: String)
+    case error(message: String, requestID: String?)
     case ignored
 
     struct Envelope: Equatable {
@@ -178,7 +179,12 @@ extension RelayTransport {
       else { return .ignored }
       return .envelope(InboundFrame.Envelope(id: id, ciphertext: data))
     case "error":
-      return .error(message["message"] as? String ?? "error")
+      return .error(
+        message: message["message"] as? String ?? "error",
+        requestID: message["request_id"] as? String)
+    case "published":
+      guard let requestID = message["request_id"] as? String else { return .ignored }
+      return .published(requestID: requestID)
     default:
       return .ignored
     }

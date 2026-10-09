@@ -4,8 +4,9 @@
 //
 //  Configure the internet relays. The recommended relay is always present and on
 //  by default; tap any relay to enable/disable it, or swipe to delete (the
-//  recommended one can be disabled but not removed). Disabling all relays makes
-//  Pigeon fully serverless again — peers are reached only over Bluetooth. Each
+//  recommended one can be disabled but not removed). Direct-message relay
+//  connections stop when all receiving relays are disabled; existing groups use
+//  their selected group relay independently. Each
 //  relay shows its measured ping and the list sorts fastest-first. See
 //  SECURITY_MODEL §6.1 for the metadata trade-off.
 //
@@ -27,10 +28,12 @@ struct RelaySettingsView: View {
       .navigationBarTitleDisplayMode(.inline)
       .onAppear {
         entries = session.relayEntries
-        pinger.start(urls: entries.map(\.url))
+        pinger.start(urls: entries.filter(\.enabled).map(\.url))
       }
       .onDisappear { pinger.stop() }
-      .onChange(of: entries.map(\.url)) { _, urls in pinger.start(urls: urls) }
+      .onChange(of: entries) { _, updated in
+        pinger.start(urls: updated.filter(\.enabled).map(\.url))
+      }
       .docsBrowser(DocsLink.hostARelay, isPresented: $showHostingDocs)
   }
 
@@ -95,6 +98,11 @@ struct RelaySettingsView: View {
       HStack(spacing: 8) {
         Circle().fill(stateColor).frame(width: 8, height: 8)
         Text(stateText).foregroundStyle(.secondary)
+      }
+      if session.relayUnconfirmedDepositCount > 0 {
+        Text("\(session.relayUnconfirmedDepositCount) deposits awaiting relay confirmation")
+          .font(.footnote)
+          .foregroundStyle(.secondary)
       }
     } header: {
       Text("Status")
@@ -179,9 +187,10 @@ struct RelaySettingsView: View {
 
   private var relaysFooter: String {
     """
-    Pigeon deposits end-to-end-encrypted ciphertext for your contacts on enabled \
-    relays so they can reach you off Bluetooth. Tap to enable or disable a relay; \
-    swipe to delete. A relay never sees message content, but does see connection \
+    Enabled relays receive your direct messages. Sending can also connect to \
+    relays your contacts advertise. Existing groups keep using their selected \
+    group relay. Tap to enable or disable a relay; swipe to delete. A relay \
+    never sees message content, but does see connection \
     metadata. Prefer wss:// — a ws:// relay is flagged, since without TLS that \
     metadata is exposed to the network too.
     """

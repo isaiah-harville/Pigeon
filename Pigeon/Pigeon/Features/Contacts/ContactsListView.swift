@@ -21,6 +21,7 @@ struct ContactsListView: View {
 
   @State private var showAddContact = false
   @State private var contactToRemove: Contact?
+  @State private var pendingAddedChatID: Data?
 
   /// All contacts, sorted by display name (case-insensitive).
   private var contacts: [Contact] {
@@ -35,7 +36,12 @@ struct ContactsListView: View {
         .navigationTitle("Contacts")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
-        .sheet(isPresented: $showAddContact) { AddContactView() }
+        .sheet(isPresented: $showAddContact, onDismiss: openAddedChat) {
+          AddContactView { contactID in
+            pendingAddedChatID = contactID
+            showAddContact = false
+          }
+        }
         .alert(
           "Remove Contact?", isPresented: removeAlertBinding, presenting: contactToRemove
         ) { contact in
@@ -47,6 +53,12 @@ struct ContactsListView: View {
               + "You'll need to scan their QR code again to reach them.")
         }
     }
+  }
+
+  private func openAddedChat() {
+    guard let contactID = pendingAddedChatID else { return }
+    pendingAddedChatID = nil
+    onOpenChat(contactID)
   }
 
   @ViewBuilder

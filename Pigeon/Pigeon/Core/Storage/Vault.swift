@@ -17,6 +17,7 @@ enum VaultError: Error {
   case accessControlFailed
   case keychainFailed(OSStatus)
   case authenticationFailed
+  case missingStoredKey
 }
 
 /// Manages the on-device storage key. Call `unlock()` once (prompts Face ID /
@@ -27,6 +28,7 @@ final class Vault {
 
   nonisolated private static let service = "com.isaiah-harville.Pigeon.vault"
   nonisolated private static let account = "vault.dek"
+  nonisolated private static let initializedKey = "pigeon.vault.initialized"
 
   private(set) var isUnlocked = false
   private(set) var key: SymmetricKey?
@@ -109,14 +111,25 @@ final class Vault {
     switch status {
     case errSecSuccess:
       guard let data = result as? Data else { throw VaultError.keychainFailed(status) }
+      UserDefaults.standard.set(true, forKey: initializedKey)
       return data
     case errSecItemNotFound:
-      return try createKey()
+      // A lost DEK must never silently start a fresh encrypted history under
+      // the existing identity and trust root.
+      try checkNewKeyCreationAllowed(
+        wasInitialized: UserDefaults.standard.bool(forKey: initializedKey))
+      let data = try createKey()
+      UserDefaults.standard.set(true, forKey: initializedKey)
+      return data
     case errSecUserCanceled, errSecAuthFailed:
       throw VaultError.authenticationFailed
     default:
       throw VaultError.keychainFailed(status)
     }
+  }
+
+  nonisolated static func checkNewKeyCreationAllowed(wasInitialized: Bool) throws {
+    if wasInitialized { throw VaultError.missingStoredKey }
   }
 
   nonisolated private static func createKey() throws -> Data {
@@ -147,6 +160,7 @@ final class Vault {
     }
     let stored = try loadOrCreateKeySync(reason: "Finish erasing Pigeon data")
     guard stored == keyData else { throw VaultError.authenticationFailed }
+    UserDefaults.standard.set(true, forKey: initializedKey)
   }
 
   /// Whether this device can enforce a user-presence gate at all — false only

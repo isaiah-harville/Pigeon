@@ -2,20 +2,21 @@
 //  ChatsListView.swift
 //  Pigeon
 //
-//  The app's home: a sleek list of conversations. The leading toolbar button
-//  opens the menu (identity, Bluetooth, activity); the trailing button adds a
-//  contact by scanning their QR code.
+//  The app's home: a list of conversations with a pinned creation menu and
+//  a contacts shortcut in the top-right toolbar.
 //
 
+import PigeonFFI
 import SwiftUI
 
 struct ChatsListView: View {
   @Environment(SessionManager.self) private var session
   @Environment(IdentityManager.self) private var identity
 
-  @State private var showAddContact = false
   @State private var showMenu = false
   @State private var showContacts = false
+  @State private var showCreateGroup = false
+  @State private var showJoinGroup = false
   /// The chat to push in *this* (home) stack. Set when a contact is opened from
   /// the contacts sheet, applied after the sheet dismisses so the chat opens in
   /// the real navigation stack rather than inside the sheet.
@@ -30,18 +31,16 @@ struct ChatsListView: View {
 
   private var content: some View {
     Group {
-      if session.chatContacts.isEmpty && session.incomingMessageRequests.isEmpty {
+      if session.chatContacts.isEmpty && session.incomingMessageRequests.isEmpty
+        && activeGroups.isEmpty
+      {
         emptyState
       } else {
         contactList
       }
     }
-    // The bubble floats over the content, bottom-right. The empty state has its
-    // own add button, so it's only shown when there are chats.
     .overlay(alignment: .bottomTrailing) {
-      if !session.chatContacts.isEmpty || !session.incomingMessageRequests.isEmpty {
-        addContactBubble
-      }
+      newConversationMenu
     }
     .navigationTitle("Pigeon")
     .navigationBarTitleDisplayMode(.inline)
@@ -52,8 +51,13 @@ struct ChatsListView: View {
         ChatView(contact: contact)
       }
     }
-    .sheet(isPresented: $showAddContact) { AddContactView() }
     .sheet(isPresented: $showMenu) { MenuView() }
+    .sheet(isPresented: $showCreateGroup) { CreateGroupView() }
+    .sheet(isPresented: $showJoinGroup) {
+      JoinGroupView { link in
+        (try? session.requestGroupInviteJoin(link)) != nil
+      }
+    }
     .sheet(isPresented: $showContacts, onDismiss: openPendingChat) {
       ContactsListView { contactID in
         pendingChatID = contactID
@@ -98,14 +102,25 @@ struct ChatsListView: View {
     }
   }
 
-  /// The primary "add someone" action: a floating QR bubble in the bottom-right,
-  /// so the toolbar stays to navigation (menu + contacts) and the create action
-  /// reads as the prominent thing it is.
-  private var addContactBubble: some View {
-    Button {
-      showAddContact = true
+  private var newConversationMenu: some View {
+    Menu {
+      Button {
+        showContacts = true
+      } label: {
+        Label("New Chat", systemImage: "bubble.left")
+      }
+      Button {
+        showCreateGroup = true
+      } label: {
+        Label("New Group", systemImage: "person.3.fill")
+      }
+      Button {
+        showJoinGroup = true
+      } label: {
+        Label("Join Group", systemImage: "person.badge.plus")
+      }
     } label: {
-      Image(systemName: "qrcode.viewfinder")
+      Image(systemName: "plus")
         .font(.title2.weight(.semibold))
         .foregroundStyle(.white)
         .frame(width: 56, height: 56)
@@ -114,17 +129,42 @@ struct ChatsListView: View {
     }
     .padding(.trailing, 20)
     .padding(.bottom, 20)
-    .accessibilityLabel("Add contact")
+    .accessibilityLabel("New conversation")
   }
+}
+
+extension ChatsListView {
 
   // MARK: - Contact list
 
   private var contactList: some View {
     List {
       messageRequestsSection
+      PendingGroupInvitesSection()
+      groupRows
       chatRows
     }
     .listStyle(.plain)
+  }
+
+  private var activeGroups: [PigeonGroupState] {
+    session.groups.filter { !$0.dissolved }
+  }
+
+  @ViewBuilder
+  private var groupRows: some View {
+    if !activeGroups.isEmpty {
+      Section("Groups") {
+        ForEach(activeGroups, id: \.groupID) { group in
+          NavigationLink {
+            GroupChatView(groupID: group.groupID)
+          } label: {
+            GroupRow(group: group)
+          }
+          .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+        }
+      }
+    }
   }
 
   @ViewBuilder
@@ -162,8 +202,8 @@ struct ChatsListView: View {
 
   // MARK: - Empty state
 
-  // Two cases: no contacts at all (add one), or contacts exist in the book but no
-  // open conversation (open one).
+  // The empty state distinguishes an empty contacts book from contacts with no
+  // open conversation.
   private var hasContacts: Bool {
     session.contacts.contains { $0.requestState != .incoming }
   }
@@ -178,33 +218,63 @@ struct ChatsListView: View {
           .font(.title3.weight(.semibold))
         Text(
           hasContacts
-            ? "Open a contact from your contacts book to start chatting."
-            : "Scan someone nearby or exchange contact links from anywhere."
+            ? "Tap + to start a chat with a contact."
+            : "Open Contacts to add someone, then tap + to start a chat."
         )
         .font(.callout)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
       }
-      emptyStateButton
     }
     .padding(40)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
-  private var emptyStateButton: some View {
-    Button {
-      if hasContacts { showContacts = true } else { showAddContact = true }
-    } label: {
-      Label(
-        hasContacts ? "Open Contacts" : "Add Contact",
-        systemImage: hasContacts ? "person.2" : "plus"
-      )
-      .font(.body.weight(.semibold))
-      .padding(.horizontal, 8)
+}
+
+private struct GroupRow: View {
+  @Environment(SessionManager.self) private var session
+  let group: PigeonGroupState
+
+  private var latest: GroupChatEntry? {
+    session.groupConversations[group.groupID]?.messages.last
+  }
+
+  var body: some View {
+    HStack(spacing: 14) {
+      GroupAvatar(seed: group.groupID, size: 52)
+      VStack(alignment: .leading, spacing: 3) {
+        HStack {
+          Text(group.name).font(.headline).lineLimit(1)
+          Spacer()
+          if let date = latest?.date {
+            Text(date, style: Calendar.current.isDateInToday(date) ? .time : .date)
+              .font(.caption).foregroundStyle(.secondary)
+          }
+        }
+        HStack(spacing: 5) {
+          Image(systemName: "lock.shield.fill").font(.caption2).foregroundStyle(.green)
+          Text(preview).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+        }
+        if session.groupRelayCapacityLimited.contains(group.groupID) {
+          Text("Relay full · retrying")
+            .font(.caption).foregroundStyle(.orange)
+        } else if session.pendingGroupRegistrationIDs.contains(group.groupID) {
+          Text("Registering with relay")
+            .font(.caption).foregroundStyle(.secondary)
+        }
+      }
     }
-    .buttonStyle(.borderedProminent)
-    .controlSize(.large)
-    .buttonBorderShape(.capsule)
+    .padding(.vertical, 2)
+  }
+
+  private var preview: String {
+    guard let latest else { return "MLS encrypted · \(group.memberIdentities.count) members" }
+    switch latest.content {
+    case .message(let text, _): return (latest.mine ? "You: " : "") + text
+    case .status: return "Group membership updated"
+    case .securityWarning: return "Security warning"
+    }
   }
 }
 
@@ -214,7 +284,7 @@ private struct ContactRow: View {
   @Environment(SessionManager.self) private var session
   let contact: Contact
 
-  private var secure: Bool { session.establishedContactIDs.contains(contact.id) }
+  private var secure: Bool { session.canUseCorePairwise(with: contact) }
 
   var body: some View {
     HStack(spacing: 14) { rowContent }

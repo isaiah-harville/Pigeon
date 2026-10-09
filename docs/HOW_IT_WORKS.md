@@ -30,9 +30,9 @@ channel that someone may be watching.
 
 The simplest encryption uses **one** secret key to both lock and unlock, like a
 physical key that works in both directions. This is **symmetric** encryption.
-Pigeon's symmetric workhorse is **AES-256**, the Advanced Encryption Standard at
-its 256-bit key size ([FIPS 197][fips197]) — the most widely deployed block
-cipher in the world.
+Direct Olm chats use **AES-256**, the Advanced Encryption Standard at its
+256-bit key size ([FIPS 197][fips197]). MLS group chats use the standardized
+AES-128-GCM cipher suite selected by OpenMLS.
 
 But a cipher alone only hides content; it doesn't stop tampering. Every secret
 Pigeon stores or sends is therefore **authenticated** too:
@@ -42,11 +42,12 @@ Pigeon stores or sends is therefore **authenticated** too:
 - **Integrity/authenticity:** if anyone flips even one bit, decryption *fails
   loudly* rather than returning garbage — you cannot tamper undetected.
 
-Two standard constructions provide that second guarantee. Messages between peers
-use **AES-256-CBC encrypt-then-MAC**: encrypt with AES, then stamp the ciphertext
+Standard constructions provide that second guarantee. Direct Olm messages use
+**AES-256-CBC encrypt-then-MAC**: encrypt with AES, then stamp the ciphertext
 with **HMAC-SHA256** (a keyed hash) so any change is detected — the classic
-authenticated-encryption recipe ([Bellare & Namprempre 2000][etm]). At-rest
-storage on the device uses **AES-256-GCM**, a single-pass **AEAD** mode —
+authenticated-encryption recipe ([Bellare & Namprempre 2000][etm]). MLS messages
+use AES-GCM authenticated encryption. At-rest storage on the device uses
+**AES-256-GCM**, a single-pass **AEAD** mode —
 *Authenticated Encryption with Associated Data* ([Rogaway 2002][aead]) — that
 locks content and authenticity together in one operation.
 
@@ -92,10 +93,10 @@ The two operations public keys enable:
    with *the other's public key* and independently arrive at the **same** shared
    secret — without that secret ever crossing the wire (mechanism below).
 
-On every diagram in this doc, the red **"Keychain · private keys"** badge under
-each phone names these keys and their jobs: *Ed25519 identity → sign*, *Curve25519
-key → ECDH*, *ratchet keys → decrypt*. Red is a running reminder: **this material
-never leaves the device.**
+On every diagram in this doc, red identifies private cryptographic state. The
+long-term Ed25519 signing key lives in the Keychain; sealed core checkpoints
+contain Olm and MLS state under the presence-gated vault key. None of it leaves
+the device in plaintext.
 
 ### Hashes and key derivation
 
@@ -136,7 +137,7 @@ follows.
 
 ## Step 1 — Becoming contacts, nearby or remote
 
-![Identity and trust: exchanging contact cards](diagrams/pigeon_01_identity.png)
+![Identity and trust: exchanging contact cards](diagrams/pigeon_01_identity.svg)
 
 *Two phones generate keys, exchange public ContactCards by QR or contact link,
 and verify a safety number.*
@@ -149,8 +150,9 @@ that contact as not verified in person.
 
 1. **Each phone generates its keys** (an Ed25519 identity key, plus an Olm
    account holding a Curve25519 identity key and a pool of prekeys) on first
-   launch and stores the private halves in the **Keychain** (details in
-   [Where the secrets live](#where-the-secrets-live)).
+   launch. The Ed25519 private key lives in the **Keychain**; evolving Olm state
+   lives in the atomically persisted, encrypted core checkpoint (details in
+   [Where the secrets live](DELIVERY_AND_PRIVACY.md#where-the-secrets-live)).
 2. **You exchange a ContactCard** by scanning each other's QR codes or sharing
    contact links. The card contains your *public* Ed25519 identity key, your
    *public* Olm Curve25519 key, a signed *prekey* bundle (so people can message
@@ -265,239 +267,88 @@ stealing one key can never unlock your whole history.
 
 ---
 
-## Step 4 — The couriers (transports)
+## Step 4 — Group chats with MLS
 
-Everything above produces **ciphertext** — the locked box. It then travels over
-whatever connection is available; multiple transports can run at once, and none
-can read the box.
+Direct chats use one Olm Double Ratchet per pair. Group chats use the IETF
+**Messaging Layer Security** protocol ([MLS, RFC 9420][rfc9420]), implemented by
+OpenMLS inside `pigeon-core`. MLS maintains a shared group key schedule while
+updating membership in logarithmic rather than linear work. Swift, the FFI, the
+relay, and transports handle typed commands, public policy, and opaque
+ciphertext; they never manipulate MLS secrets.
 
-### Bluetooth LE mesh — when you're nearby
+![Creating an MLS group without requiring simultaneous presence](diagrams/pigeon_07_group_mls.svg)
 
-![Bluetooth LE mesh](diagrams/pigeon_02_bluetooth.png)
+The owner selects one configured relay for the group. That deployment exposes
+both the ciphertext mailbox and the MLS coordinator. The coordinator serializes
+concurrent membership and policy commits and signs its receipts, but it is not a
+group authority: every client verifies the receipt, the MLS commit, and Pigeon's
+authenticated policy before changing state. It has no plaintext or group keys.
+After creation, the owner can be offline; invitations travel through existing
+pairwise-encrypted control channels and the selected relay completes coordination.
+An ordinary member's signed leave proposal also travels pairwise to current
+admins, so any online admin can submit the canonical removal without waiting for
+the owner.
 
-*An Olm session opened from published prekeys and an encrypted message over
-Bluetooth — no server.*
+Pigeon groups have these product rules:
 
-In range, two phones talk directly with no internet or account. If a peer is just
-out of range, nearby Pigeon devices forward the still-locked box onward — a
-**mesh**. Each hop sees only ciphertext (plus a small amount of routing
-metadata). This works on a plane, at a protest, during an outage — anywhere the
-internet is absent or untrusted.
+- 1–128 members, with mutable membership.
+- A permanent owner who cannot be demoted or removed. Admins can add/remove
+  members and promote/demote other admins; no admin can demote themself.
+- Members other than the owner can leave while at least three members remain.
+  The owner can permanently dissolve the group. Nobody can post after that, but
+  the relay keeps the group readable for a while (30 days by default) so members
+  who were offline still learn it ended.
+- Only the owner can change the shared name or selected relay. Group traffic
+  uses the selected relay; local mesh remains available for pairwise chats.
+- Membership and policy changes appear as status entries in the conversation,
+  while verification failures appear as prominent security warnings.
+- "Delivered to" counts arrive in batches: each phone waits a few seconds (longer
+  in bigger groups) and then confirms everything it received in one encrypted
+  receipt, so a busy group doesn't flood its relay mailbox.
 
-### Local Wi-Fi — same lock, more bandwidth *(planned)*
+![MLS epochs prevent new or former members from reading outside their membership window](diagrams/pigeon_08_group_epoch.svg)
 
-![Local Wi-Fi (planned)](diagrams/pigeon_03_wifi.png)
+MLS advances the group to a new **epoch** after membership changes. A new member
+receives the current epoch secrets, not the keys for earlier messages. A removed
+or departed member does not receive later epoch secrets. Pigeon therefore shows
+new members only messages sent after they joined; the relay cannot bridge that
+cryptographic boundary.
 
-*Identical end-to-end crypto to Bluetooth; only the link layer changes.*
+Application messages are encrypted once for the MLS group and uploaded to the
+group mailbox. This avoids pairwise fan-out for ordinary group traffic. Pairwise
+encryption remains intentionally limited to bootstrapping invitations before a
+new member can authenticate to the group mailbox and to routing signed leave
+proposals to admins.
 
-A planned transport for devices on the same network. The diagram is deliberately
-the *same* as Bluetooth apart from the courier — the whole point of Pigeon's
-pluggable transport design. The LAN carries only ciphertext.
+Each client persists two independent relay cursors: the group-message cursor and
+the signed coordinator receipt sequence. A relay wake schedules both drains, and
+bounded fetches continue until empty. An authenticated but invalid coordinator
+entry is recorded as a security warning and its receipt is durably consumed, so
+one bad entry cannot permanently block later valid commits.
 
-### Relay — when you're far apart *(zero-knowledge)*
+Owner dissolution installs a terminal relay tombstone. It immediately disables
+new appends and policy changes, while retaining read authentication and the
+terminal coordinator commit for one relay TTL so offline members can still learn
+that the group ended. The relay then reclaims the tombstoned group.
 
-![Federated relay](diagrams/pigeon_04_relay.png)
+### Coordinator and relay recovery
 
-*A blind mailbox: it stores opaque ciphertext addressed by public key and never
-sees content or private keys.*
+If the selected coordinator can no longer make progress, any current admin can
+propose a replacement relay deployment. Recovery does not create a new group or
+make the initiating admin an authority. The proposal binds the last accepted
+epoch, policy and roster hashes, coordinator receipt head, replacement URL and
+coordinator key, and the exact next capability set.
 
-Two phones on different networks (e.g. both on cellular) usually can't connect
-directly: behind NAT, a phone can dial out but not be dialed in. They need a
-mutually reachable rendezvous on the internet. Pigeon's is a **relay** — a
-deliberately dumb, **zero-knowledge** mailbox. What makes trusting it unnecessary:
+![Creator-independent coordinator recovery with an authenticated admin quorum](diagrams/pigeon_09_group_recovery.svg)
 
-- **Your mailbox address is just your public key.** To *read* it you prove
-  ownership via **challenge–response**: the relay sends a random nonce, you sign it
-  with your Ed25519 **private** key (which never leaves the phone), and the relay
-  verifies the signature against your public key. The relay only ever learns
-  *public* keys.
-- Anyone can **drop off** a locked box for your mailbox; the relay **stores and
-  forwards** it (up to 30 days) until you fetch it, then deletes it once your phone
-  acknowledges receipt.
-- The relay **never** sees plaintext, holds no keys, and cannot forge a message
-  (integrity/authenticity are guaranteed end-to-end by the Olm session's message
-  authentication). See its gray badge: *"Holds no keys."*
+A strict majority of current non-owner admins must endorse that exact proposal.
+When there are no delegated admins, the permanent owner is the sole recovery
+signer. The replacement deployment registers rotated capabilities and orders one
+recovery commit; each client verifies the recovery certificate, signed receipt,
+MLS commit, and unchanged policy fields before switching. Recovery controls are
+MLS-encrypted once and carried by the existing group mailbox; an opted-in local
+mesh carries the same ciphertext during a relay outage. If neither path can
+reach quorum members and the remaining roster, recovery waits rather than
+resetting identity state or exposing the control data.
 
-What a relay *can* observe is **metadata** — that some ciphertext was deposited for
-some public key, its size, and timing. That's not nothing, which is why relays are
-**opt-in** and **federated**: anyone can run one, you choose which, and you can
-self-host. Reducing this metadata further (padding, sealed-sender addressing,
-optional Tor) is on the [Roadmap](ROADMAP.md).
-
----
-
-## Step 5 — Notifications without leaking
-
-A locked phone is the hard case. To *decrypt*, Pigeon must open its on-device
-message store, which is sealed behind Face ID / your passcode — and you can't do
-Face ID while the phone is asleep in your pocket. The design threads this needle.
-
-### Today: notify now, decrypt at unlock
-
-![Notifications while locked](diagrams/pigeon_05_notifications.png)
-
-*A locked phone receives ciphertext, shows a content-free alert, and decrypts only
-after you unlock.*
-
-1. The phone can still **receive**: its identity key is readable in the background
-   after the first unlock since boot (Apple's `AfterFirstUnlock` data-protection
-   class — [Apple Platform Security][appsec]). The message store stays sealed (the
-   badge reads *"message vault → locked"*).
-2. It therefore **can't decrypt**, so it holds the locked box in memory and posts a
-   **content-free** alert — just "New message," no sender, no preview. It also
-   does *not* yet acknowledge the relay, so the box is safely retained server-side
-   until you actually read it.
-3. On unlock, the store opens, the ratchet decrypts the buffered box, and the
-   message appears.
-
-> Even the notification reveals nothing about who messaged you or what they said —
-> a deliberate lock-screen privacy choice.
-
-### Planned: push wake-ups via APNs
-
-![Notifications with APNs push (planned)](diagrams/pigeon_06_notifications_apns.png)
-
-*A content-free push wakes the phone; the message itself never travels through
-Apple.*
-
-iOS eventually suspends a backgrounded app, so for reliable delivery hours later,
-Pigeon plans to use Apple Push Notification service (**APNs**,
-[Apple developer docs][apns]) purely as a doorbell:
-
-- You **opt in**; your phone registers an opaque APNs token with Pigeon's
-  **official** relay. (Only the app's publisher can push to the app, so this part
-  can't be federated — it lives on the official relay only; see the
-  [Roadmap](ROADMAP.md) and issue tracker.)
-- When a box arrives, the relay asks APNs to send a **content-free** wake-up. Your
-  phone wakes, fetches the locked box, and — as before — only decrypts after you
-  unlock.
-- Apple and the gateway see a **token, timing, and a blank wake** — never your
-  message (APNs's gray badge: *"never content"*).
-
-This trades a little "someone pinged this device" metadata for reliable
-notifications, strictly opt-in. Confidentiality remains end-to-end.
-
----
-
-## What an attacker can and can't do
-
-**A snoop on the wire, a malicious or hacked relay, or your phone company *cannot*:**
-
-- read your messages — they only ever hold authenticated ciphertext (AES-256 with
-  HMAC-SHA256, [Bellare & Namprempre 2000][etm]);
-- impersonate a contact you verified in person — the safety number + binding check
-  expose a substituted key;
-- recover past messages from a key stolen later — the ratchet already deleted it
-  (forward secrecy, [Cohn-Gordon et al. 2017][signalanalysis]).
-
-**They *can* still learn some things — and Pigeon says so plainly:**
-
-- A **relay** sees metadata (that ciphertext moved for some public key, its size,
-  timing). Opt-in; mitigations planned.
-- Over **Bluetooth**, nearby devices can detect a Pigeon device's presence.
-- If your phone is taken while **unlocked**, your messages are exposed — no app can
-  protect an unlocked device in someone else's hand.
-
-And the standing caveat: **Pigeon is pre-audit.** The building blocks (CryptoKit,
-Olm via the audited `vodozemac`, the Double Ratchet) are well-studied, but
-Pigeon's *assembly* of them — and its glue code — has not yet had an independent
-security audit and must not be treated as proven-secure. See the
-[Security Model](SECURITY_MODEL.md) and [Roadmap](ROADMAP.md).
-
----
-
-## Where the secrets live
-
-- **Private keys** (the Ed25519 identity key and the Olm account: its Curve25519
-  identity key and prekeys) are stored in the iPhone **Keychain**, marked
-  *this-device-only*: never synced to iCloud, never in backups, never moved to
-  another device. Their *lock-state* accessibility is
-  `AfterFirstUnlock` by default for cold background delivery, or the stricter
-  `WhenUnlocked` if you turn that feature off — both are Apple data-protection
-  classes ([Apple Platform Security][appsec]).
-- The **message store** is encrypted with a key sealed behind **Face ID /
-  passcode**, so your history stays locked until you authenticate even if the
-  phone is in hand.
-- **No key is ever sent to any server.** Servers handle locked boxes only.
-
-That's the whole system: exchange cards once and verify the safety number; agree
-on a secret no one else can compute, even when the other person is offline (an
-Olm session from published prekeys); authenticate who you're talking to (the
-identity binding check); give every message its own disposable key (the Double
-Ratchet); and let any courier carry the locked box, because none of them hold the
-key to open it.
-
----
-
-## References
-
-Standards and specifications:
-
-- <a id="references"></a>**RFC 7748** — *Elliptic Curves for Security* (X25519 key
-  agreement). <https://www.rfc-editor.org/rfc/rfc7748>
-- **RFC 8032** — *Edwards-Curve Digital Signature Algorithm (EdDSA)* (Ed25519).
-  <https://www.rfc-editor.org/rfc/rfc8032>
-- **M. Bellare & C. Namprempre**, *Authenticated Encryption: Relations among
-  Notions* (encrypt-then-MAC), ASIACRYPT 2000. <https://eprint.iacr.org/2000/025>
-- **FIPS 197** — *Advanced Encryption Standard (AES)*.
-  <https://csrc.nist.gov/pubs/fips/197/final>
-- **NIST SP 800-38D** — *Galois/Counter Mode (GCM) and GMAC* (the at-rest AEAD).
-  <https://csrc.nist.gov/pubs/sp/800/38/d/final>
-- **RFC 5869** — *HMAC-based Key Derivation Function (HKDF)*.
-  <https://www.rfc-editor.org/rfc/rfc5869>
-- **FIPS 180-4** — *Secure Hash Standard* (SHA-256 / SHA-512).
-  <https://csrc.nist.gov/pubs/fips/180-4/upd1/final>
-- **Olm** — *Olm: A Cryptographic Ratchet* (the session protocol Pigeon uses).
-  <https://gitlab.matrix.org/matrix-org/olm/-/blob/master/docs/olm.md>
-- **vodozemac** — audited Rust implementation of Olm/Megolm.
-  <https://github.com/matrix-org/vodozemac>
-- **The Double Ratchet Algorithm** — Trevor Perrin & Moxie Marlinspike, 2016.
-  <https://signal.org/docs/specifications/doubleratchet/>
-- **The X3DH Key Agreement Protocol** — Marlinspike & Perrin, 2016.
-  <https://signal.org/docs/specifications/x3dh/>
-- **Signal safety numbers** — Signal Support.
-  <https://support.signal.org/hc/en-us/articles/360007060632>
-- **Apple Platform Security** — Keychain data protection classes & APNs.
-  <https://support.apple.com/guide/security/welcome/web>
-- **Apple — Apple Push Notification service (APNs)**.
-  <https://developer.apple.com/documentation/usernotifications>
-
-Foundational papers:
-
-- **W. Diffie & M. Hellman**, *New Directions in Cryptography*, IEEE Trans.
-  Information Theory, 1976. <https://doi.org/10.1109/TIT.1976.1055638>
-- **D. J. Bernstein**, *Curve25519: New Diffie-Hellman Speed Records*, PKC 2006.
-  <https://cr.yp.to/ecdh.html>
-- **D. J. Bernstein, N. Duif, T. Lange, P. Schwabe, B.-Y. Yang**, *High-speed
-  high-security signatures* (Ed25519), 2012. <https://ed25519.cr.yp.to/>
-- **P. Rogaway**, *Authenticated-Encryption with Associated-Data* (AEAD), CCS 2002.
-  <https://web.cs.ucdavis.edu/~rogaway/papers/ad.html>
-- **K. Cohn-Gordon, C. Cremers, B. Dowling, L. Garratt, D. Stebila**, *A Formal
-  Security Analysis of the Signal Messaging Protocol*, EuroS&P 2017.
-  <https://eprint.iacr.org/2016/1013>
-- **K. Cohn-Gordon, C. Cremers, L. Garratt**, *On Post-Compromise Security*, IEEE
-  CSF 2016. <https://eprint.iacr.org/2016/221>
-
-*The diagrams are generated from
-[`docs/diagrams/generate_diagrams.py`](diagrams/generate_diagrams.py) — run
-`uv run docs/diagrams/generate_diagrams.py` to regenerate them after a protocol
-change.*
-
-[rfc7748]: https://www.rfc-editor.org/rfc/rfc7748
-[rfc8032]: https://www.rfc-editor.org/rfc/rfc8032
-[rfc5869]: https://www.rfc-editor.org/rfc/rfc5869
-[fips180]: https://csrc.nist.gov/pubs/fips/180-4/upd1/final
-[fips197]: https://csrc.nist.gov/pubs/fips/197/final
-[etm]: https://eprint.iacr.org/2000/025
-[vodozemac]: https://github.com/matrix-org/vodozemac
-[doubleratchet]: https://signal.org/docs/specifications/doubleratchet/
-[x3dh]: https://signal.org/docs/specifications/x3dh/
-[safetynum]: https://support.signal.org/hc/en-us/articles/360007060632
-[appsec]: https://support.apple.com/guide/security/welcome/web
-[apns]: https://developer.apple.com/documentation/usernotifications
-[dh76]: https://doi.org/10.1109/TIT.1976.1055638
-[curve25519]: https://cr.yp.to/ecdh.html
-[ed25519]: https://ed25519.cr.yp.to/
-[aead]: https://web.cs.ucdavis.edu/~rogaway/papers/ad.html
-[signalanalysis]: https://eprint.iacr.org/2016/1013
-[pcs]: https://eprint.iacr.org/2016/221
+Continue with [delivery, notifications, attacker limits, and references](DELIVERY_AND_PRIVACY.md).

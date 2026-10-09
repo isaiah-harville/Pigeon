@@ -17,7 +17,7 @@ import Foundation
 /// Small synchronized gate for transport delegates that execute off the main
 /// actor. It prevents a stale callback from observing an earlier enabled value
 /// after Faraday mode has begun tearing the link down.
-final class TransportGate: @unchecked Sendable {
+nonisolated final class TransportGate: @unchecked Sendable {
   private let lock = NSLock()
   private var enabled: Bool
 
