@@ -3,7 +3,7 @@ import Foundation
 
 struct IdentityMoveAction {
   let retireSource: @MainActor () async throws -> Void
-  let completeSource: @MainActor () -> Void
+  let completeSource: @MainActor @Sendable () -> Void
 }
 
 /// Human-confirmed local move protocol. No archive bytes leave either phone

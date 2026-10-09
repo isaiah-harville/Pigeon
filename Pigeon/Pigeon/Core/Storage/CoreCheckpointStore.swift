@@ -9,7 +9,7 @@ import CryptoKit
 import Foundation
 import PigeonFFI
 
-struct PersistedCoreCheckpoint: Codable, Equatable {
+nonisolated struct PersistedCoreCheckpoint: Codable, Equatable {
   let generation: UInt64
   let bytes: Data
   let sha256: Data

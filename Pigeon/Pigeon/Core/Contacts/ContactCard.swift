@@ -39,7 +39,7 @@ struct ContactCard {
   private static let legacyShareScheme = "pigeon"
   private static let legacyShareHost = "contact"
   static let maximumRelayCount = 8
-  private static let maximumRelayURLLength = 2_048
+  nonisolated private static let maximumRelayURLLength = 2_048
 
   init(
     name: String, bundle: PigeonIdentityBundle, relayURLs: [URL], relaySignature: Data,
@@ -144,7 +144,7 @@ struct ContactCard {
     return parsed
   }
 
-  private static func isValidRelayURL(_ url: URL) -> Bool {
+  nonisolated private static func isValidRelayURL(_ url: URL) -> Bool {
     guard url.absoluteString.utf8.count <= maximumRelayURLLength,
       let scheme = url.scheme?.lowercased(), scheme == "ws" || scheme == "wss",
       let host = url.host, !host.isEmpty,

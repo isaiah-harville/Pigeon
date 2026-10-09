@@ -270,7 +270,7 @@ private struct StartupRecoveryView: View {
   let firstLaunch: Bool
   let stagedMove: Bool
   let startFresh: @MainActor () async throws -> Void
-  let moveCompleted: @MainActor () -> Void
+  let moveCompleted: @MainActor @Sendable () -> Void
   let discardMove: @MainActor () async throws -> Void
 
   @State private var isStartingFresh = false
@@ -303,7 +303,7 @@ private struct StartupRecoveryView: View {
         mode: .destination, sourceSession: nil,
         action: IdentityMoveAction(
           retireSource: { throw IdentityMoveStage.StageError.unavailable },
-          completeSource: moveCompleted))
+          completeSource: { moveCompleted() }))
     }
     .confirmationDialog(
       "Discard this move?",
