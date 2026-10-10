@@ -14,10 +14,14 @@ enum PairwiseRelayProtocol {
     }
     let envelope = SessionEnvelope(
       type: .pairwise, sender: sender, recipient: recipient, payload: payload)
+    // The relay receiver enters through MeshService; a one-hop packet keeps it
+    // from flooding this addressed delivery onto nearby links.
+    let packet = MeshPacket(
+      packetId: MeshPacket.randomID(), ttl: 1, payload: envelope.encoded())
     return try encode([
       "type": "publish",
       "recipient": recipient.hexEncoded,
-      "ciphertext": envelope.encoded().base64EncodedString(),
+      "ciphertext": packet.encoded().base64EncodedString(),
     ])
   }
 

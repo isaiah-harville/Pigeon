@@ -5,7 +5,7 @@ import XCTest
 @testable import Pigeon
 
 final class PairwiseRelayProtocolTests: XCTestCase {
-  func testPublishWrapsOpaqueCorePayloadInAddressedPairwiseEnvelope() throws {
+  func testPublishedPairwisePayloadCanPassThroughMeshReceiver() throws {
     let sender = Data(repeating: 1, count: 32)
     let recipient = Data(repeating: 2, count: 32)
     let payload = Data([3, 4, 5])
@@ -19,7 +19,10 @@ final class PairwiseRelayProtocolTests: XCTestCase {
     XCTAssertEqual(object["recipient"], recipient.hexEncoded)
     let encodedCiphertext = try XCTUnwrap(object["ciphertext"])
     let ciphertext = try XCTUnwrap(Data(base64Encoded: encodedCiphertext))
-    let envelope = try SessionEnvelope(decoding: ciphertext)
+    let packet = try MeshPacket(decoding: ciphertext)
+    let reception = MeshRouter().ingest(packet)
+    XCTAssertNil(reception.relay)
+    let envelope = try SessionEnvelope(decoding: XCTUnwrap(reception.deliver))
     XCTAssertEqual(envelope.type, EnvelopeType.pairwise)
     XCTAssertEqual(envelope.sender, sender)
     XCTAssertEqual(envelope.recipient, recipient)
