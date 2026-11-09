@@ -152,6 +152,15 @@ struct Socket(TcpStream);
 
 impl Socket {
     fn connect(address: SocketAddr) -> Self {
+        Self::connect_path(
+            address,
+            "/group/ws",
+            GROUP_PROTOCOL_VERSION,
+            GROUP_PROTOCOL_VERSION,
+        )
+    }
+
+    fn connect_path(address: SocketAddr, path: &str, min_version: u32, max_version: u32) -> Self {
         let mut stream = TcpStream::connect(address).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(3)))
@@ -159,7 +168,7 @@ impl Socket {
         stream
             .set_write_timeout(Some(Duration::from_secs(3)))
             .unwrap();
-        stream.write_all(b"GET /group/ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==\r\nSec-WebSocket-Version: 13\r\n\r\n").unwrap();
+        stream.write_all(format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==\r\nSec-WebSocket-Version: 13\r\n\r\n").as_bytes()).unwrap();
         let mut response = Vec::new();
         while !response.ends_with(b"\r\n\r\n") {
             let mut byte = [0];
@@ -168,7 +177,7 @@ impl Socket {
         }
         assert!(response.starts_with(b"HTTP/1.1 101"));
         let mut socket = Self(stream);
-        socket.send(json!({"type":"hello","min_protocol_version":GROUP_PROTOCOL_VERSION,"max_protocol_version":GROUP_PROTOCOL_VERSION}));
+        socket.send(json!({"type":"hello","min_protocol_version":min_version,"max_protocol_version":max_version}));
         assert_eq!(socket.receive()["type"], "compatible");
         socket
     }
@@ -430,5 +439,59 @@ async fn revoked_live_reader_is_not_woken_by_later_append() {
     removed.expect_no_frame();
     removed.send(json!({"type":"fetch","after_cursor":0}));
     assert_eq!(removed.receive()["type"], "error");
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mailbox_publish_survives_subscribe_and_is_removed_only_after_ack() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = app::build_state(config(&directory)).unwrap();
+    let (address, server) = start(state).await;
+    let key = SigningKey::from_bytes(&[9; 32]);
+    let mailbox = hex::encode(key.verifying_key().to_bytes());
+    let ciphertext = B64.encode([1, 1, 3, 4, 5]);
+    let mut publisher = Socket::connect_path(
+        address,
+        "/ws",
+        crate::mailbox::protocol::PROTOCOL_MIN_VERSION,
+        crate::mailbox::protocol::PROTOCOL_MAX_VERSION,
+    );
+    publisher.send(json!({"type":"publish","recipient":mailbox,"ciphertext":ciphertext,"request_id":"relay-integration"}));
+    let published = publisher.receive();
+    assert_eq!(published["type"], "published");
+    assert_eq!(published["request_id"], "relay-integration");
+
+    let mut subscriber = Socket::connect_path(
+        address,
+        "/ws",
+        crate::mailbox::protocol::PROTOCOL_MIN_VERSION,
+        crate::mailbox::protocol::PROTOCOL_MAX_VERSION,
+    );
+    subscriber.send(json!({"type":"subscribe","mailbox":mailbox}));
+    let challenge = subscriber.receive();
+    assert_eq!(challenge["type"], "challenge");
+    let nonce = B64.decode(challenge["nonce"].as_str().unwrap()).unwrap();
+    subscriber.send(json!({"type":"auth","signature":B64.encode(key.sign(&nonce).to_bytes())}));
+    assert_eq!(subscriber.receive()["type"], "ok");
+    let delivered = subscriber.receive();
+    assert_eq!(delivered["type"], "envelope");
+    assert_eq!(delivered["id"], published["id"]);
+    assert_eq!(delivered["ciphertext"], ciphertext);
+
+    subscriber.send(json!({"type":"ack","id":delivered["id"]}));
+    drop(subscriber);
+    let mut reopened = Socket::connect_path(
+        address,
+        "/ws",
+        crate::mailbox::protocol::PROTOCOL_MIN_VERSION,
+        crate::mailbox::protocol::PROTOCOL_MAX_VERSION,
+    );
+    reopened.send(json!({"type":"subscribe","mailbox":mailbox}));
+    let nonce = B64
+        .decode(reopened.receive()["nonce"].as_str().unwrap())
+        .unwrap();
+    reopened.send(json!({"type":"auth","signature":B64.encode(key.sign(&nonce).to_bytes())}));
+    assert_eq!(reopened.receive()["type"], "ok");
+    reopened.expect_no_frame();
     server.abort();
 }
