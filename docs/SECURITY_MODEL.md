@@ -265,26 +265,26 @@ first contact too. The recipient publishes:
 session is opened, so a relay or mesh forwarder cannot substitute a key.
 
 **Establishment.** The initiator runs Olm's outbound session against the
-recipient's identity + prekey, encrypts the first plaintext into an Olm **pre-key
-message**, and transmits a single `pigeon.wire.v1.Initiation` (its identity
-bundle + that pre-key message). The recipient creates the matching inbound
-session from the pre-key message, recovering the first plaintext; consuming the
-named one-time key is the replay defense.
+recipient's identity + prekey and encrypts the first plaintext into an Olm
+**pre-key message**, sent as a `pigeon.wire.v1.Initiation` (its identity bundle +
+that pre-key message). Until the recipient replies, every later message is also
+a pre-key message for the same session. The recipient opens the inbound session
+from whichever of these arrives first, so a lost or reordered first message does
+not strand the chat. When the identity bundle is absent, the Curve25519 key comes
+from the sender's signed control prekey (registered, or from a verified contact
+card), and Olm rejects a pre-key message sent from any other key.
 
 **Tradeoffs (deliberate, inherent to Olm).**
 - **Replay.** A one-time prekey makes first contact single-use: once consumed the
   recipient cannot re-derive the same inbound session, so a replayed initiation
   fails. When the OPK pool is exhausted Olm falls back to the **fallback key**,
-  which Olm deliberately permits reusing. Pigeon therefore persists a SHA-256
-  digest of every accepted initiation per contact and refuses any previously
-  accepted payload before it can replace the current session. A recording made
-  before this ledger first existed is outside the ledger; fallback-key rotation
-  bounds that migration window. Pigeon replenishes OPKs and rotates the fallback
-  key when next online. Digests survive contact removal and are capped at 256 per
-  identity; after the cap, further fresh initiations fail closed instead of
-  allowing unbounded encrypted-store growth. A future full identity rotation
-  clears the ledger because recordings addressed to the old identity are no
-  longer valid.
+  which Olm deliberately permits reusing. `pigeon-core` therefore routes each
+  pre-key message to the stored session whose Olm session id it carries; there
+  a replay fails as a spent message key and never opens a second session. A
+  pre-key message that matches no session opens one only while no session with
+  that peer has received a message, and at most two sessions exist per peer
+  (our own plus the peer's crossing first message). Pigeon replenishes OPKs and
+  rotates the fallback key when next online.
 - **Exhaustion / availability.** Olm uses the fallback key rather than refusing
   first contact when OPKs run out — availability chosen over denying delivery.
 - **Weaker forward secrecy at rest until the first reply.** Until the recipient
