@@ -34,6 +34,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 pending_group_leaves: Vec::new(),
                 group_invites: Vec::new(),
                 group_invite_joins: Vec::new(),
+                retired_pairwise_session_ids: Vec::new(),
             },
         };
         Ok(Self {

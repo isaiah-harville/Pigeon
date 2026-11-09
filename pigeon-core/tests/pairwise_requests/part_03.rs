@@ -162,3 +162,86 @@ fn malformed_contact_card_from_a_stranger_is_a_malformed_message() {
     assert!(matches!(rejected, Err(Error::MalformedBundle)));
     assert_eq!(bob.snapshot().unwrap().encode(), before);
 }
+
+/// Alice and Bob exchange one message each, so both hold a confirmed session.
+/// Returns Alice's first envelope, which opened Bob's session.
+fn confirmed_pair() -> (
+    PigeonClient<MemoryStateStore, TestIdentity>,
+    PigeonClient<MemoryStateStore, TestIdentity>,
+    Vec<u8>,
+) {
+    let (mut alice, mut bob) = mutual_contacts();
+    let (alice_id, bob_id) = (TestIdentity::new(1).public(), TestIdentity::new(2).public());
+    let opening = send_text(&mut alice, "alice-first", bob_id);
+    received_text(&mut bob, "bob-gets-first", opening.clone());
+    let reply = send_text(&mut bob, "bob-first", alice_id);
+    received_text(&mut alice, "alice-gets-first", reply);
+    (alice, bob, opening)
+}
+
+fn remove_and_re_add(
+    client: &mut PigeonClient<MemoryStateStore, TestIdentity>,
+    peer: &PigeonClient<MemoryStateStore, TestIdentity>,
+    peer_id: [u8; 32],
+) {
+    client
+        .execute(ClientCommand::remove_pairwise_contact("remove-peer", peer_id).unwrap())
+        .unwrap();
+    client
+        .execute(ClientCommand::register_pairwise_contact("re-add-peer", prekey(peer), "").unwrap())
+        .unwrap();
+}
+
+#[test]
+fn peer_who_removed_and_re_added_us_reopens_the_chat() {
+    let (mut alice, mut bob, _) = confirmed_pair();
+    let (alice_id, bob_id) = (TestIdentity::new(1).public(), TestIdentity::new(2).public());
+    // Alice forgets her session with Bob; Bob still holds a confirmed one.
+    remove_and_re_add(&mut alice, &bob, bob_id);
+
+    let fresh = send_text(&mut alice, "alice-after-re-add", bob_id);
+    assert_eq!(
+        received_text(&mut bob, "bob-gets-fresh", fresh),
+        "alice-after-re-add"
+    );
+    assert_eq!(pairwise_session_count(&bob), 1);
+    let reply = send_text(&mut bob, "bob-after-re-add", alice_id);
+    assert_eq!(
+        received_text(&mut alice, "alice-gets-reply", reply),
+        "bob-after-re-add"
+    );
+}
+
+#[test]
+fn replaced_session_cannot_be_reopened_by_a_replay() {
+    let (mut alice, mut bob, opening) = confirmed_pair();
+    let (alice_id, bob_id) = (TestIdentity::new(1).public(), TestIdentity::new(2).public());
+    remove_and_re_add(&mut alice, &bob, bob_id);
+    let fresh = send_text(&mut alice, "alice-after-re-add", bob_id);
+    received_text(&mut bob, "bob-gets-fresh", fresh);
+    let before = bob.snapshot().unwrap().encode();
+
+    let replay = bob.execute(
+        ClientCommand::apply_pairwise_control("bob-gets-replay", rehashed(opening)).unwrap(),
+    );
+    assert!(matches!(replay, Err(Error::InvalidSignature)));
+    assert_eq!(bob.snapshot().unwrap().encode(), before);
+    let reply = send_text(&mut bob, "bob-after-replay", alice_id);
+    assert_eq!(
+        received_text(&mut alice, "alice-gets-reply", reply),
+        "bob-after-replay"
+    );
+}
+
+#[test]
+fn removed_contacts_old_session_cannot_be_reopened_by_a_replay() {
+    let (alice, mut bob, opening) = confirmed_pair();
+    let alice_id = TestIdentity::new(1).public();
+    remove_and_re_add(&mut bob, &alice, alice_id);
+
+    let replay = bob.execute(
+        ClientCommand::apply_pairwise_control("bob-gets-replay", rehashed(opening)).unwrap(),
+    );
+    assert!(matches!(replay, Err(Error::InvalidSignature)));
+    assert_eq!(pairwise_session_count(&bob), 0);
+}

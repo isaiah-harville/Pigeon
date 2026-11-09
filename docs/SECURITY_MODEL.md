@@ -281,10 +281,15 @@ card), and Olm rejects a pre-key message sent from any other key.
   which Olm deliberately permits reusing. `pigeon-core` therefore routes each
   pre-key message to the stored session whose Olm session id it carries; there
   a replay fails as a spent message key and never opens a second session. A
-  pre-key message that matches no session opens one only while no session with
-  that peer has received a message, and at most two sessions exist per peer
-  (our own plus the peer's crossing first message). Pigeon replenishes OPKs and
-  rotates the fallback key when next online.
+  pre-key message that matches no session is handled by whether the peer has
+  a confirmed session (one that has received a message). Without one, at most
+  two sessions exist per peer (our own plus the peer's crossing first message).
+  With one, the peer lost its side (it removed and re-added us, or lost its
+  state), so the new session replaces the old ones. The core records the id of
+  every session it drops, on replacement or contact removal, and refuses any
+  pre-key message carrying one, so a replay cannot bring an old session back.
+  See [ADR 0001](adr/0001-fresh-pairwise-session-replaces-a-confirmed-one.md).
+  Pigeon replenishes OPKs and rotates the fallback key when next online.
 - **Exhaustion / availability.** Olm uses the fallback key rather than refusing
   first contact when OPKs run out — availability chosen over denying delivery.
 - **Weaker forward secrecy at rest until the first reply.** Until the recipient

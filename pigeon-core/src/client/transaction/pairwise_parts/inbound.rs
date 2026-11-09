@@ -128,21 +128,30 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         announced: Option<IdentityBundle>,
         message: &OlmMessage,
     ) -> Result<Vec<u8>, Error> {
-        // A second session is admitted only when both sides opened a session
-        // before either received the other's (initiation glare): the one
-        // existing session is our own and unconfirmed. Once any session with
-        // the peer has received a message, later pre-key messages that match no
-        // session are rejected, so replays cannot replace or multiply
-        // established sessions.
+        // A session we dropped never reopens, so a replayed pre-key message
+        // cannot bring back an old ratchet or redeliver its first message.
+        if let OlmMessage::PreKey(prekey) = message
+            && candidate
+                .retired_pairwise_session_ids
+                .contains(&prekey.session_id())
+        {
+            return Err(Error::InvalidSignature);
+        }
+        // Before any session with the peer has received a message, a second
+        // session is admitted only for initiation glare: both sides opened a
+        // session before either received the other's, so the one existing
+        // session is our own. Once a session is confirmed, a fresh pre-key
+        // message means the peer lost its side (it removed and re-added us, or
+        // lost its state), so the new session replaces ours. Olm only opens it
+        // for a sender holding the peer's identity key.
         let existing = candidate
             .pairwise_sessions
             .iter()
             .filter(|session| session.remote_identity.as_slice() == sender)
             .map(|session| PlatformSession::import(&session.state, sender))
             .collect::<Result<Vec<_>, _>>()?;
-        if existing.len() >= MAX_PAIRWISE_SESSIONS_PER_PEER
-            || existing.iter().any(PlatformSession::has_received_message)
-        {
+        let replaces_confirmed = existing.iter().any(PlatformSession::has_received_message);
+        if !replaces_confirmed && existing.len() >= MAX_PAIRWISE_SESSIONS_PER_PEER {
             return Err(Error::InvalidSignature);
         }
         if !candidate
@@ -202,6 +211,9 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             PlatformSession::establish_inbound(&mut account, &identity, message)?;
         candidate.pairwise_account_state = account.export_state()?;
         candidate.pairwise_fallback_key = account.export_fallback_key().to_vec();
+        if replaces_confirmed {
+            retire_pairwise_sessions(candidate, sender)?;
+        }
         candidate
             .pairwise_sessions
             .push(proto::StoredPairwiseSession {
@@ -365,6 +377,27 @@ fn preferred_session_index(
         first.get_or_insert(index);
     }
     Ok(first)
+}
+
+/// Drops every stored session with `peer` and records their ids, so a
+/// replayed pre-key message can never reopen one. Once the list is full the
+/// oldest ids fall out.
+fn retire_pairwise_sessions(
+    candidate: &mut proto::ClientCheckpoint,
+    peer: [u8; 32],
+) -> Result<(), Error> {
+    let (retired, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut candidate.pairwise_sessions)
+        .into_iter()
+        .partition(|session| session.remote_identity.as_slice() == peer);
+    candidate.pairwise_sessions = kept;
+    for stored in retired {
+        let id = PlatformSession::import(&stored.state, peer)?.session_id();
+        if candidate.retired_pairwise_session_ids.len() >= crate::MAX_PENDING_OUTBOUND_ENTRIES {
+            candidate.retired_pairwise_session_ids.remove(0);
+        }
+        candidate.retired_pairwise_session_ids.push(id);
+    }
+    Ok(())
 }
 
 fn pairwise_relationship(

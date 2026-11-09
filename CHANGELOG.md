@@ -8,6 +8,7 @@
 - A message request to someone who already added you opens the chat when they reply, instead of staying stuck as a pending request on both phones.
 - Scanning someone in person who already sent you a message request accepts the request. Before, the chat looked open but every message you sent was refused.
 - A direct message that can never be opened (a bad signature, malformed bytes, a replay, or a stranger with no contact card) is released from the relay instead of being redelivered until it expires. Before, anyone with your public key could fill your relay mailbox with junk and block real messages for up to 30 days.
+- Removing a contact and adding them again no longer leaves both of you unable to message each other. The next message from the side that re-added opens a fresh session. Old opening messages can't be replayed to bring back a dropped session, including after you remove and re-add someone.
 
 [1.5.0]: https://github.com/isaiah-harville/Pigeon/compare/v1.4.1...v1.5.0
 

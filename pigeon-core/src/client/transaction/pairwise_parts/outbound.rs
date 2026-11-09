@@ -134,9 +134,12 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         if candidate.pairwise_contacts.len() == previous_count {
             return Err(Error::InvalidKey);
         }
-        candidate
-            .pairwise_sessions
-            .retain(|session| session.remote_identity != remove.identity);
+        let identity: [u8; 32] = remove
+            .identity
+            .as_slice()
+            .try_into()
+            .map_err(|_| Error::InvalidKey)?;
+        retire_pairwise_sessions(candidate, identity)?;
         candidate
             .pending_outbound
             .retain(|item| item.destination != remove.identity);

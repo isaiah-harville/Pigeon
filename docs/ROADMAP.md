@@ -179,13 +179,12 @@ Several are audit blockers (see [SECURITY_MODEL.md](SECURITY_MODEL.md) → Audit
 
 - **External security audit** — required before any real-world "secure" claim.
   **Audit blocker.** The messaging core is Olm via the audited `vodozemac` crate, but Pigeon's identity binding, wire formats, transports, and storage still need independent review.
-- **Pairwise session loss** — there is no network-triggered re-handshake. Once a
-  peer has confirmed a pairwise session, further initiations from that identity
-  are rejected, so a spoofed or replayed envelope cannot tear a session down.
-  Crossing first messages (both sides initiate before either receives) keep one
-  extra session so neither side is locked out. The trade-off: if one side loses
-  its pairwise state while keeping its identity, both sides must remove and
-  re-add the contact to re-establish.
+- **Pairwise session loss** — if one side loses its pairwise state while
+  keeping its identity (or removes and re-adds the contact), its next message
+  opens a fresh session that replaces the peer's old one. Messages the peer sent
+  on the old session in between are lost and show as undelivered. Dropped
+  session ids are kept so replays cannot reopen them, but only the newest 1,024;
+  see [ADR 0001](adr/0001-fresh-pairwise-session-replaces-a-confirmed-one.md).
 - **Connection topology** — two dual-role devices form *two* central↔peripheral
   links per pair, so each message crosses BLE twice. This is an **efficiency**
   issue only: the mesh dedup layer already drops the duplicate, so no duplicate is

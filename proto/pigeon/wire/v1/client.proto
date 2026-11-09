@@ -362,6 +362,9 @@ message ClientCheckpoint {
   repeated PendingGroupLeave pending_group_leaves = 23;
   repeated StoredGroupInvite group_invites = 24;
   repeated StoredGroupInviteJoin group_invite_joins = 25;
+  // Ids of pairwise sessions this client has dropped, oldest first. A pre-key
+  // message carrying one of them is a replay and never opens a session.
+  repeated string retired_pairwise_session_ids = 26;
 }
 
 message StoredGroupInvite {

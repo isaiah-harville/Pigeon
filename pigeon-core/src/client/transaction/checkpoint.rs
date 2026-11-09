@@ -204,6 +204,11 @@ pub(super) fn decode_checkpoint(
             .consumed_pairwise_envelope_hashes
             .iter()
             .any(|hash| hash.len() != 32)
+        || state.retired_pairwise_session_ids.len() > MAX_PENDING_OUTBOUND_ENTRIES
+        || state
+            .retired_pairwise_session_ids
+            .iter()
+            .any(|id| id.is_empty() || id.len() > MAX_STABLE_ID_BYTES)
         || state.deferred_events.len() > MAX_PENDING_OUTBOUND_ENTRIES
         || state.pending_group_recoveries.len() > MAX_PENDING_OUTBOUND_ENTRIES
         || state.pending_group_recoveries.iter().any(|pending| {

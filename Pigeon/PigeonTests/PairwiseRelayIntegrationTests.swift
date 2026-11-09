@@ -67,6 +67,51 @@ final class PairwiseRelayIntegrationTests: XCTestCase {
     XCTAssertTrue(bus.dispositions.isEmpty, "the local test bus stays disconnected")
   }
 
+  func testContactRemovedAndReAddedReopensTheChat() throws {
+    let bus = TestBus()
+    let aliceKey = SymmetricKey(size: .bits256)
+    let bobKey = SymmetricKey(size: .bits256)
+    let aliceFile = "relay-re-add-alice-\(UUID().uuidString).store"
+    let bobFile = "relay-re-add-bob-\(UUID().uuidString).store"
+    defer {
+      wipe(aliceKey, file: aliceFile)
+      wipe(bobKey, file: bobFile)
+    }
+    let (alice, aliceTransport) = try launch(key: aliceKey, file: aliceFile, bus: bus)
+    let (bob, bobTransport) = try launch(key: bobKey, file: bobFile, bus: bus)
+    alice.setMyName("Alice")
+    bob.setMyName("Bob")
+    let bobOnAlice = try addInPerson(bob, to: alice)
+    let aliceOnBob = try addInPerson(alice, to: bob)
+    alice.send("Before", to: bobOnAlice)
+    try deliverPending(from: alice, to: bob, over: bobTransport)
+    bob.send("Reply", to: aliceOnBob)
+    try deliverPending(from: bob, to: alice, over: aliceTransport)
+
+    // Alice forgets Bob while Bob keeps his confirmed session with her.
+    alice.removeContact(bobOnAlice)
+    let bobAgain = try addInPerson(bob, to: alice)
+    alice.send("Back again", to: bobAgain)
+    try deliverPending(from: alice, to: bob, over: bobTransport)
+    XCTAssertEqual(bob.messages(with: aliceOnBob).last { !$0.system }?.text, "Back again")
+
+    bob.send("Welcome back", to: aliceOnBob)
+    try deliverPending(from: bob, to: alice, over: aliceTransport)
+    XCTAssertEqual(
+      alice.messages(with: bobAgain).last { !$0.system }?.text, "Welcome back")
+  }
+
+  private func addInPerson(_ peer: SessionManager, to manager: SessionManager) throws -> Contact {
+    let card = try XCTUnwrap(peer.myCard)
+    XCTAssertTrue(
+      manager.addContact(
+        card.bundle, name: card.name, relayURLs: card.relayURLs,
+        prekeys: ContactPrekeyBundles(
+          chat: card.prekeyBundle, control: card.pairwiseControlPrekeyBundle),
+        admission: .verifiedInPerson))
+    return try XCTUnwrap(manager.contacts.first { $0.id == peer.myID })
+  }
+
   private func launch(key: SymmetricKey, file: String, bus: TestBus) throws
     -> (SessionManager, FakeTransport)
   {
