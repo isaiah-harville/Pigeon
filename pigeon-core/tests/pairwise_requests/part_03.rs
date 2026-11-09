@@ -126,3 +126,39 @@ fn request_to_a_peer_who_already_added_us_opens_the_chat() {
         "alice-follow-up"
     );
 }
+
+#[test]
+fn malformed_contact_card_from_a_stranger_is_a_malformed_message() {
+    let mut bob = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(2)).unwrap();
+    let mut carol = PigeonClient::new(MemoryStateStore::default(), TestIdentity::new(3)).unwrap();
+    bob.execute(ClientCommand::ensure_pairwise_account("bob-account").unwrap())
+        .unwrap();
+    carol
+        .execute(ClientCommand::ensure_pairwise_account("carol-account").unwrap())
+        .unwrap();
+    carol
+        .execute(
+            ClientCommand::register_pairwise_contact_with_relationship(
+                "carol-adds-bob",
+                prekey(&bob),
+                "",
+                wire_proto::PairwiseRelationship::OutgoingRequest,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let request = send_request(&mut carol, 3, TestIdentity::new(2).public());
+    let mut envelope = wire_proto::PairwiseEnvelope::decode(request.as_slice()).unwrap();
+    // Not a decodable card. The app drops a malformed message for good, while
+    // `Serialization` means local state is bad and keeps the copy for a retry.
+    envelope.sender_contact_card = vec![0xff];
+    let before = bob.snapshot().unwrap().encode();
+
+    let rejected = bob.execute(
+        ClientCommand::apply_pairwise_control("bob-gets-bad-card", envelope.encode_to_vec())
+            .unwrap(),
+    );
+
+    assert!(matches!(rejected, Err(Error::MalformedBundle)));
+    assert_eq!(bob.snapshot().unwrap().encode(), before);
+}

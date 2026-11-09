@@ -7,6 +7,7 @@
 - A new chat opens even when its first message was lost or rejected: any later pre-key message from the sender establishes the session, and a replayed pre-key message can no longer open a second session.
 - A message request to someone who already added you opens the chat when they reply, instead of staying stuck as a pending request on both phones.
 - Scanning someone in person who already sent you a message request accepts the request. Before, the chat looked open but every message you sent was refused.
+- A direct message that can never be opened (a bad signature, malformed bytes, a replay, or a stranger with no contact card) is released from the relay instead of being redelivered until it expires. Before, anyone with your public key could fill your relay mailbox with junk and block real messages for up to 30 days.
 
 [1.5.0]: https://github.com/isaiah-harville/Pigeon/compare/v1.4.1...v1.5.0
 

@@ -22,7 +22,6 @@ extension SessionManager {
     guard envelope.type == .pairwise else { return .consumed }
     let requestID = "pairwise-\(Data(SHA256.hash(data: data)).hexEncoded)"
     return consumePairwiseMessage(envelope.payload, requestID: requestID)
-      ? .consumed : .retryAfterRestart
   }
 
   /// Records a screenshot in the visible conversation and mirrors the event to

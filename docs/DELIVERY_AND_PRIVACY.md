@@ -87,6 +87,13 @@ buffers ciphertext without acknowledging it until the vault can open.*
 3. On unlock, the vault opens; Pigeon decrypts and persists the buffered box, then
    acknowledges it.
 
+A message Pigeon can never open (a bad signature, malformed bytes, a replay, or a
+stranger with no contact card) is acknowledged as soon as it is rejected, so the
+relay deletes it. Kept, it would sit in your mailbox until it expired, and enough
+of them would fill the mailbox's queue and turn away real mail. A failure on your
+own device, such as storage that cannot be written, leaves the copy on the relay
+for a retry.
+
 > Even the notification reveals nothing about who messaged you or what they said —
 > a deliberate lock-screen privacy choice.
 

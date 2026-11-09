@@ -278,7 +278,7 @@ fn verified_incoming_contact(
     if encoded.is_empty() {
         return Err(Error::InvalidSignature);
     }
-    let card = proto::ContactCard::decode(encoded).map_err(|_| Error::Serialization)?;
+    let card = proto::ContactCard::decode(encoded).map_err(|_| Error::MalformedBundle)?;
     if card.version != crate::wire::CONTACT_CARD_VERSION
         || card.relay_urls.len() > crate::wire::MAX_DIRECT_RELAY_URLS
         || card.name.len() > crate::wire::MAX_GROUP_NAME_BYTES

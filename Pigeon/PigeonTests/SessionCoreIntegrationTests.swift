@@ -254,7 +254,7 @@ final class SessionCoreIntegrationTests: XCTestCase {
     XCTAssertNil(manager.coreClient)
   }
 
-  func testMalformedCorePairwiseEnvelopeIsRetainedForRetryWithoutAdvancingState() throws {
+  func testMalformedCorePairwiseEnvelopeIsDroppedWithoutAdvancingState() throws {
     let fixture = try makeFixture()
     defer { wipe(fixture.store) }
     try fixture.manager.attachStore(fixture.store)
@@ -269,7 +269,8 @@ final class SessionCoreIntegrationTests: XCTestCase {
 
     let disposition = fixture.manager.handleInbound(envelope.encoded(), channel: .bluetooth)
 
-    XCTAssertEqual(disposition, .retryAfterRestart)
+    // It can never decode, so the relay copy is released rather than redelivered.
+    XCTAssertEqual(disposition, .consumed)
     XCTAssertEqual(try fixture.manager.coreClient?.checkpointGeneration(), initialGeneration)
   }
 
