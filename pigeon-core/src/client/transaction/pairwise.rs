@@ -1,5 +1,6 @@
 use ed25519_dalek::{Signature, VerifyingKey};
 use prost::Message;
+use vodozemac::olm::OlmMessage;
 
 use super::{PigeonClient, pairwise_account};
 use crate::client::{ClientOutput, OutboundItem};

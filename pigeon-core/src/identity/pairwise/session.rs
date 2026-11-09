@@ -124,6 +124,12 @@ impl PlatformSession {
     pub(crate) fn has_received_message(&self) -> bool {
         self.olm.has_received_message()
     }
+
+    /// The Olm session id, which a pre-key message also carries, so inbound
+    /// pre-key messages can be routed to the session they belong to.
+    pub(crate) fn session_id(&self) -> String {
+        self.olm.session_id()
+    }
 }
 
 impl Session {

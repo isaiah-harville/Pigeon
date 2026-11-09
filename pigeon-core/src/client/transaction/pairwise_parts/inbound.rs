@@ -29,125 +29,35 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             return Err(Error::InvalidSignature);
         }
         let sender_contact_card = envelope.sender_contact_card;
-        let mut crossing_request = false;
-        let plaintext = match envelope.body.ok_or(Error::MalformedBundle)? {
+        let (message, announced) = match envelope.body.ok_or(Error::MalformedBundle)? {
             proto::pairwise_envelope::Body::Initiation(bytes) => {
-                // A second initiation is admitted only when both sides opened a
-                // session before either received the other's (initiation
-                // glare): the one existing session is our own and unconfirmed.
-                // Once any session with the peer has received a message, later
-                // initiations are rejected, so replayed initiations cannot
-                // replace or multiply established sessions.
-                let existing = candidate
-                    .pairwise_sessions
-                    .iter()
-                    .filter(|session| session.remote_identity.as_slice() == sender)
-                    .map(|session| PlatformSession::import(&session.state, sender))
-                    .collect::<Result<Vec<_>, _>>()?;
-                if existing.len() >= MAX_PAIRWISE_SESSIONS_PER_PEER
-                    || existing.iter().any(PlatformSession::has_received_message)
-                {
-                    return Err(Error::InvalidSignature);
-                }
                 let initiation = Initiation::decode(&bytes)?;
-                if !candidate
-                    .pairwise_contacts
-                    .iter()
-                    .any(|contact| contact.identity.as_slice() == sender)
-                {
-                    let incoming = verified_incoming_contact(
-                        &sender_contact_card,
-                        sender,
-                        &initiation.identity,
-                    )?;
-                    let incoming_count = candidate
-                        .pairwise_contacts
-                        .iter()
-                        .filter(|contact| {
-                            matches!(
-                                pairwise_relationship(contact),
-                                Ok(proto::PairwiseRelationship::IncomingRequest)
-                            )
-                        })
-                        .count();
-                    if incoming_count >= crate::wire::MAX_INCOMING_MESSAGE_REQUESTS {
-                        return Err(Error::ResourceLimit("incoming message requests"));
-                    }
-                    candidate.pairwise_contacts.push(incoming);
-                } else if !sender_contact_card.is_empty() {
-                    // A card from a known sender is only valid as a crossing
-                    // message request: both sides scanned each other and sent
-                    // introductions. The card must still authenticate the
-                    // sender; its contents never replace the scanned contact.
-                    let known = candidate
-                        .pairwise_contacts
-                        .iter()
-                        .find(|contact| contact.identity.as_slice() == sender)
-                        .ok_or(Error::InvalidSignature)?;
-                    if pairwise_relationship(known)? != proto::PairwiseRelationship::OutgoingRequest
-                    {
-                        return Err(Error::InvalidSignature);
-                    }
-                    verified_incoming_contact(&sender_contact_card, sender, &initiation.identity)?;
-                    crossing_request = true;
-                }
-                let contact = candidate
-                    .pairwise_contacts
-                    .iter()
-                    .find(|contact| contact.identity.as_slice() == sender)
-                    .ok_or(Error::InvalidSignature)?;
-                let registered = PrekeyBundle::decode(&contact.prekey_bundle)?;
-                if initiation.identity.identity_key != sender
-                    || initiation.identity.curve_identity_key
-                        != registered.identity.curve_identity_key
-                {
-                    return Err(Error::InvalidSignature);
-                }
-                let mut account = pairwise_account(candidate)?.ok_or(Error::InvalidKey)?;
-                let (session, plaintext) = PlatformSession::establish_inbound(
-                    &mut account,
-                    &initiation.identity,
-                    &initiation.message,
-                )?;
-                candidate.pairwise_account_state = account.export_state()?;
-                candidate.pairwise_fallback_key = account.export_fallback_key().to_vec();
-                candidate
-                    .pairwise_sessions
-                    .push(proto::StoredPairwiseSession {
-                        remote_identity: sender.to_vec(),
-                        state: session.export()?,
-                    });
-                plaintext
+                (initiation.message, Some(initiation.identity))
             }
-            proto::pairwise_envelope::Body::Message(bytes) => {
+            proto::pairwise_envelope::Body::Message(bytes) => (decode_olm_message(&bytes)?, None),
+        };
+        // A sender keeps sending pre-key messages until it hears back, and only
+        // the first carries an `Initiation` body. Any of them can open the
+        // session, so a lost or reordered first message does not strand it.
+        let mut crossing_request = false;
+        let plaintext = match decrypt_on_existing_session(candidate, sender, &message)? {
+            Some(plaintext) => {
+                // A card only travels with the message that opens a session.
                 if !sender_contact_card.is_empty() {
                     return Err(Error::InvalidSignature);
                 }
-                let message = decode_olm_message(&bytes)?;
-                // After initiation glare the peer may send on either session.
-                // A failed attempt leaves the stored state untouched; only the
-                // session that authenticates the message is advanced.
-                let mut last_error = Error::InvalidKey;
-                let mut decrypted = None;
-                for stored in candidate
-                    .pairwise_sessions
-                    .iter_mut()
-                    .filter(|session| session.remote_identity.as_slice() == sender)
-                {
-                    let mut session = PlatformSession::import(&stored.state, sender)?;
-                    if session.remote_identity_key() != sender {
-                        return Err(Error::InvalidSignature);
-                    }
-                    match session.decrypt(&message) {
-                        Ok(plaintext) => {
-                            stored.state = session.export()?;
-                            decrypted = Some(plaintext);
-                            break;
-                        }
-                        Err(error) => last_error = error,
-                    }
-                }
-                decrypted.ok_or(last_error)?
+                plaintext
+            }
+            None => {
+                let (plaintext, crossing) = self.stage_establish_inbound_session(
+                    candidate,
+                    sender,
+                    &sender_contact_card,
+                    announced,
+                    &message,
+                )?;
+                crossing_request = crossing;
+                plaintext
             }
         };
         let control = proto::PairwisePayload::decode(plaintext.as_slice())
@@ -210,8 +120,102 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         }
         Ok((control, sender_contact_card, suppress_direct_event))
     }
-}
 
+    /// Opens a session from a pre-key message that matched no stored session,
+    /// admitting an unknown sender through its contact card. Returns the
+    /// plaintext and whether the card made this a crossing message request.
+    fn stage_establish_inbound_session(
+        &self,
+        candidate: &mut proto::ClientCheckpoint,
+        sender: [u8; 32],
+        sender_contact_card: &[u8],
+        announced: Option<IdentityBundle>,
+        message: &OlmMessage,
+    ) -> Result<(Vec<u8>, bool), Error> {
+        // A second session is admitted only when both sides opened a session
+        // before either received the other's (initiation glare): the one
+        // existing session is our own and unconfirmed. Once any session with
+        // the peer has received a message, later pre-key messages that match no
+        // session are rejected, so replays cannot replace or multiply
+        // established sessions.
+        let existing = candidate
+            .pairwise_sessions
+            .iter()
+            .filter(|session| session.remote_identity.as_slice() == sender)
+            .map(|session| PlatformSession::import(&session.state, sender))
+            .collect::<Result<Vec<_>, _>>()?;
+        if existing.len() >= MAX_PAIRWISE_SESSIONS_PER_PEER
+            || existing.iter().any(PlatformSession::has_received_message)
+        {
+            return Err(Error::InvalidSignature);
+        }
+        let mut crossing_request = false;
+        if !candidate
+            .pairwise_contacts
+            .iter()
+            .any(|contact| contact.identity.as_slice() == sender)
+        {
+            let incoming =
+                verified_incoming_contact(sender_contact_card, sender, announced.as_ref())?;
+            let incoming_count = candidate
+                .pairwise_contacts
+                .iter()
+                .filter(|contact| {
+                    matches!(
+                        pairwise_relationship(contact),
+                        Ok(proto::PairwiseRelationship::IncomingRequest)
+                    )
+                })
+                .count();
+            if incoming_count >= crate::wire::MAX_INCOMING_MESSAGE_REQUESTS {
+                return Err(Error::ResourceLimit("incoming message requests"));
+            }
+            candidate.pairwise_contacts.push(incoming);
+        } else if !sender_contact_card.is_empty() {
+            // A card from a known sender is only valid as a crossing message
+            // request: both sides scanned each other and sent introductions.
+            // The card must still authenticate the sender; its contents never
+            // replace the scanned contact.
+            let known = candidate
+                .pairwise_contacts
+                .iter()
+                .find(|contact| contact.identity.as_slice() == sender)
+                .ok_or(Error::InvalidSignature)?;
+            if pairwise_relationship(known)? != proto::PairwiseRelationship::OutgoingRequest {
+                return Err(Error::InvalidSignature);
+            }
+            verified_incoming_contact(sender_contact_card, sender, announced.as_ref())?;
+            crossing_request = true;
+        }
+        let contact = candidate
+            .pairwise_contacts
+            .iter()
+            .find(|contact| contact.identity.as_slice() == sender)
+            .ok_or(Error::InvalidSignature)?;
+        let registered = PrekeyBundle::decode(&contact.prekey_bundle)?;
+        // Without an announced identity, the registered control prekey's
+        // signed binding names the Curve25519 key; Olm then refuses a pre-key
+        // message sent from any other identity key.
+        let registered_curve = registered.identity.curve_identity_key;
+        let identity = announced.unwrap_or(registered.identity);
+        if identity.identity_key != sender || identity.curve_identity_key != registered_curve
+        {
+            return Err(Error::InvalidSignature);
+        }
+        let mut account = pairwise_account(candidate)?.ok_or(Error::InvalidKey)?;
+        let (session, plaintext) =
+            PlatformSession::establish_inbound(&mut account, &identity, message)?;
+        candidate.pairwise_account_state = account.export_state()?;
+        candidate.pairwise_fallback_key = account.export_fallback_key().to_vec();
+        candidate
+            .pairwise_sessions
+            .push(proto::StoredPairwiseSession {
+                remote_identity: sender.to_vec(),
+                state: session.export()?,
+            });
+        Ok((plaintext, crossing_request))
+    }
+}
 
 pub(super) fn is_addressed_group_control(kind: i32) -> bool {
     matches!(
@@ -223,10 +227,58 @@ pub(super) fn is_addressed_group_control(kind: i32) -> bool {
     )
 }
 
+/// Decrypts on the stored session the message belongs to. A pre-key message
+/// belongs only to the session whose id it carries, and that session's verdict
+/// is final, so a replay fails as a duplicate instead of opening a new session.
+/// After initiation glare the peer may send normal messages on either session.
+/// Returns `None` for a pre-key message that matches no stored session.
+fn decrypt_on_existing_session(
+    candidate: &mut proto::ClientCheckpoint,
+    sender: [u8; 32],
+    message: &OlmMessage,
+) -> Result<Option<Vec<u8>>, Error> {
+    let prekey_session_id = match message {
+        OlmMessage::PreKey(prekey) => Some(prekey.session_id()),
+        OlmMessage::Normal(_) => None,
+    };
+    let mut last_error = Error::InvalidKey;
+    for stored in candidate
+        .pairwise_sessions
+        .iter_mut()
+        .filter(|session| session.remote_identity.as_slice() == sender)
+    {
+        let mut session = PlatformSession::import(&stored.state, sender)?;
+        if session.remote_identity_key() != sender {
+            return Err(Error::InvalidSignature);
+        }
+        if let Some(id) = &prekey_session_id {
+            if session.session_id() != *id {
+                continue;
+            }
+            let plaintext = session.decrypt(message)?;
+            stored.state = session.export()?;
+            return Ok(Some(plaintext));
+        }
+        // A failed attempt leaves the stored state untouched; only the session
+        // that authenticates the message is advanced.
+        match session.decrypt(message) {
+            Ok(plaintext) => {
+                stored.state = session.export()?;
+                return Ok(Some(plaintext));
+            }
+            Err(error) => last_error = error,
+        }
+    }
+    match prekey_session_id {
+        Some(_) => Ok(None),
+        None => Err(last_error),
+    }
+}
+
 fn verified_incoming_contact(
     encoded: &[u8],
     sender: [u8; 32],
-    initiation_identity: &IdentityBundle,
+    announced: Option<&IdentityBundle>,
 ) -> Result<proto::StoredPairwiseContact, Error> {
     if encoded.is_empty() {
         return Err(Error::InvalidSignature);
@@ -248,15 +300,18 @@ fn verified_incoming_contact(
     identity.verify()?;
     // A public card can carry the chat account's distinct Curve25519 binding.
     // Both bindings are independently signed by the same root; only the core
-    // prekey must match the Curve25519 key used by this initiation.
-    if identity.identity_key != sender || identity.identity_key != initiation_identity.identity_key
-    {
+    // prekey must match the Curve25519 key the sender announced, if any.
+    if identity.identity_key != sender {
         return Err(Error::InvalidSignature);
     }
     let prekey = PrekeyBundle::decode(&card.pairwise_control_prekey_bundle)?;
     prekey.verify()?;
-    if prekey.identity.identity_key != sender
-        || prekey.identity.curve_identity_key != initiation_identity.curve_identity_key
+    if prekey.identity.identity_key != sender {
+        return Err(Error::InvalidSignature);
+    }
+    if let Some(announced) = announced
+        && (announced.identity_key != sender
+            || announced.curve_identity_key != prekey.identity.curve_identity_key)
     {
         return Err(Error::InvalidSignature);
     }

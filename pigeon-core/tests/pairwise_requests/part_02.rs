@@ -153,7 +153,9 @@ fn initiation_is_rejected_once_a_session_is_confirmed() {
     let replay = bob.execute(
         ClientCommand::apply_pairwise_control("bob-gets-replay", rehashed(initiation)).unwrap(),
     );
-    assert!(matches!(replay, Err(Error::InvalidSignature)));
+    // The replay routes to the session it opened, where its key is spent.
+    assert!(matches!(replay, Err(Error::Decryption(_))));
+    assert_eq!(pairwise_session_count(&bob), 1);
 }
 
 #[test]
@@ -167,7 +169,8 @@ fn crossing_initiations_admit_at_most_one_extra_session() {
     let replay = bob.execute(
         ClientCommand::apply_pairwise_control("bob-gets-replay", rehashed(alice_first)).unwrap(),
     );
-    assert!(matches!(replay, Err(Error::InvalidSignature)));
+    assert!(matches!(replay, Err(Error::Decryption(_))));
+    assert_eq!(pairwise_session_count(&bob), 2);
 }
 
 fn outgoing_requesters() -> (
