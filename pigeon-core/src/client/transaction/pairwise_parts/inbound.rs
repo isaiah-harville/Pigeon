@@ -39,7 +39,6 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         // A sender keeps sending pre-key messages until it hears back, and only
         // the first carries an `Initiation` body. Any of them can open the
         // session, so a lost or reordered first message does not strand it.
-        let mut crossing_request = false;
         let plaintext = match decrypt_on_existing_session(candidate, sender, &message)? {
             Some(plaintext) => {
                 // A card only travels with the message that opens a session.
@@ -48,17 +47,13 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 }
                 plaintext
             }
-            None => {
-                let (plaintext, crossing) = self.stage_establish_inbound_session(
-                    candidate,
-                    sender,
-                    &sender_contact_card,
-                    announced,
-                    &message,
-                )?;
-                crossing_request = crossing;
-                plaintext
-            }
+            None => self.stage_establish_inbound_session(
+                candidate,
+                sender,
+                &sender_contact_card,
+                announced,
+                &message,
+            )?,
         };
         let control = proto::PairwisePayload::decode(plaintext.as_slice())
             .map_err(|_| Error::MalformedBundle)?;
@@ -100,10 +95,11 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                     contact.relationship = proto::PairwiseRelationship::Contact as i32;
                     contact.introduction_sent = false;
                 }
-                // Crossing requests are mutual acceptance: each side already
-                // chose to message the other, so neither waits on the other's
-                // explicit acceptance.
-                Some(proto::direct_application::Body::Message(_)) if crossing_request => {
+                // A message from the peer is acceptance. Either both sides sent
+                // requests (crossing requests) or the peer already added us;
+                // each side chose to message the other, so neither waits on
+                // an explicit acceptance.
+                Some(proto::direct_application::Body::Message(_)) => {
                     let contact = &mut candidate.pairwise_contacts[contact_index];
                     contact.relationship = proto::PairwiseRelationship::Contact as i32;
                     contact.introduction_sent = false;
@@ -122,8 +118,8 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
     }
 
     /// Opens a session from a pre-key message that matched no stored session,
-    /// admitting an unknown sender through its contact card. Returns the
-    /// plaintext and whether the card made this a crossing message request.
+    /// admitting an unknown sender through its contact card, and returns the
+    /// plaintext.
     fn stage_establish_inbound_session(
         &self,
         candidate: &mut proto::ClientCheckpoint,
@@ -131,7 +127,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         sender_contact_card: &[u8],
         announced: Option<IdentityBundle>,
         message: &OlmMessage,
-    ) -> Result<(Vec<u8>, bool), Error> {
+    ) -> Result<Vec<u8>, Error> {
         // A second session is admitted only when both sides opened a session
         // before either received the other's (initiation glare): the one
         // existing session is our own and unconfirmed. Once any session with
@@ -149,7 +145,6 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
         {
             return Err(Error::InvalidSignature);
         }
-        let mut crossing_request = false;
         if !candidate
             .pairwise_contacts
             .iter()
@@ -172,20 +167,20 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
             }
             candidate.pairwise_contacts.push(incoming);
         } else if !sender_contact_card.is_empty() {
-            // A card from a known sender is only valid as a crossing message
-            // request: both sides scanned each other and sent introductions.
-            // The card must still authenticate the sender; its contents never
-            // replace the scanned contact.
+            // A known sender's card is a message request that crossed ours,
+            // or one sent before the sender learned we had added them. An
+            // admitted requester gets no second introduction. The card must
+            // still authenticate the sender; its contents never replace the
+            // contact we added.
             let known = candidate
                 .pairwise_contacts
                 .iter()
                 .find(|contact| contact.identity.as_slice() == sender)
                 .ok_or(Error::InvalidSignature)?;
-            if pairwise_relationship(known)? != proto::PairwiseRelationship::OutgoingRequest {
+            if pairwise_relationship(known)? == proto::PairwiseRelationship::IncomingRequest {
                 return Err(Error::InvalidSignature);
             }
             verified_incoming_contact(sender_contact_card, sender, announced.as_ref())?;
-            crossing_request = true;
         }
         let contact = candidate
             .pairwise_contacts
@@ -213,7 +208,7 @@ impl<S: StateStore, I: SecureIdentity> PigeonClient<S, I> {
                 remote_identity: sender.to_vec(),
                 state: session.export()?,
             });
-        Ok((plaintext, crossing_request))
+        Ok(plaintext)
     }
 }
 

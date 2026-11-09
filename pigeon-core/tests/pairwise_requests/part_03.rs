@@ -88,3 +88,41 @@ fn replayed_prekey_message_does_not_open_a_second_session() {
     assert!(replay.is_err());
     assert_eq!(pairwise_session_count(&bob), 1);
 }
+
+#[test]
+fn request_to_a_peer_who_already_added_us_opens_the_chat() {
+    let (mut alice, mut bob) = mutual_contacts();
+    let (alice_id, bob_id) = (TestIdentity::new(1).public(), TestIdentity::new(2).public());
+    // Alice added Bob from his shared card; Bob scanned Alice in person.
+    alice
+        .execute(
+            ClientCommand::set_pairwise_relationship(
+                "alice-sends-request",
+                bob_id,
+                wire_proto::PairwiseRelationship::OutgoingRequest,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let request = send_request(&mut alice, 1, bob_id);
+    assert_eq!(
+        received_text(&mut bob, "bob-gets-request", request),
+        "hello"
+    );
+
+    // Bob's reply is his acceptance.
+    let reply = send_text(&mut bob, "bob-reply", alice_id);
+    assert_eq!(
+        received_text(&mut alice, "alice-gets-reply", reply),
+        "bob-reply"
+    );
+    assert_eq!(
+        relationship(&alice),
+        wire_proto::PairwiseRelationship::Contact as i32
+    );
+    let follow_up = send_text(&mut alice, "alice-follow-up", bob_id);
+    assert_eq!(
+        received_text(&mut bob, "bob-gets-follow-up", follow_up),
+        "alice-follow-up"
+    );
+}
