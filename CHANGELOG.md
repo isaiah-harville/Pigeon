@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.5.0] - Unreleased
+
+### Fixed
+
+- A new chat opens even when its first message was lost or rejected: any later pre-key message from the sender establishes the session, and a replayed pre-key message can no longer open a second session.
+- A message request to someone who already added you opens the chat when they reply, instead of staying stuck as a pending request on both phones.
+- Scanning someone in person who already sent you a message request accepts the request. Before, the chat looked open but every message you sent was refused.
+
+[1.5.0]: https://github.com/isaiah-harville/Pigeon/compare/v1.4.1...v1.5.0
+
 ## [1.4.1] - 2026-10-09 (beta)
 
 ### Added
