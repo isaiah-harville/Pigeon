@@ -39,19 +39,6 @@ extension SessionManager {
 
   var blockedContactIDs: Set<Data> { Set(blockedContacts.map(\.id)) }
 
-  /// Preserves the pre-request call surface for in-person and established
-  /// contacts; remote-link callers opt into `.outgoing` explicitly.
-  @discardableResult
-  func addContact(
-    _ bundle: PigeonIdentityBundle, name: String, relayURLs: [URL],
-    prekeyBundle: PigeonPrekeyBundle?, verifiedInPerson: Bool
-  ) -> Bool {
-    addContact(
-      bundle, name: name, relayURLs: relayURLs,
-      prekeys: ContactPrekeyBundles(chat: prekeyBundle, control: prekeyBundle),
-      admission: verifiedInPerson ? .verifiedInPerson : .unverified)
-  }
-
   /// Persists and applies the full relay list (endpoints + enabled flags).
   func setRelayEntries(_ entries: [RelayEntry]) {
     RelaySettings.setEntries(entries)

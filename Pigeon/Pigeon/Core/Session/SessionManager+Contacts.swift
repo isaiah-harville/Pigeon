@@ -7,17 +7,6 @@ struct ContactPrekeyBundles {
 }
 
 extension SessionManager {
-  @discardableResult
-  func addContact(
-    _ bundle: PigeonIdentityBundle, name: String, relayURLs: [URL],
-    prekeyBundle: PigeonPrekeyBundle?, admission: ContactAdmission
-  ) -> Bool {
-    addContact(
-      bundle, name: name, relayURLs: relayURLs,
-      prekeys: ContactPrekeyBundles(chat: prekeyBundle, control: prekeyBundle),
-      admission: admission)
-  }
-
   /// Verifies and stores a scanned contact bundle, then begins establishing a
   /// session. A contact that already exists keeps its request state, which
   /// mirrors the core relationship; scanning an incoming requester in person

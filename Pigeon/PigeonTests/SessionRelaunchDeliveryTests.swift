@@ -115,11 +115,15 @@ final class SessionRelaunchDeliveryTests: XCTestCase {
     XCTAssertTrue(
       first.addContact(
         secondCard.bundle, name: "Second", relayURLs: [],
-        prekeyBundle: secondCard.prekeyBundle, verifiedInPerson: true))
+        prekeys: ContactPrekeyBundles(
+          chat: secondCard.prekeyBundle, control: secondCard.pairwiseControlPrekeyBundle),
+        admission: .verifiedInPerson))
     XCTAssertTrue(
       second.addContact(
         firstCard.bundle, name: "First", relayURLs: [],
-        prekeyBundle: firstCard.prekeyBundle, verifiedInPerson: true))
+        prekeys: ContactPrekeyBundles(
+          chat: firstCard.prekeyBundle, control: firstCard.pairwiseControlPrekeyBundle),
+        admission: .verifiedInPerson))
   }
 
   private func launch(

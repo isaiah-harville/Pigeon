@@ -32,10 +32,16 @@ final class ContactsBookTests: XCTestCase {
     return manager
   }
 
-  private func card(_ manager: SessionManager) throws -> (PigeonIdentityBundle, PigeonPrekeyBundle)
+  private func card(_ manager: SessionManager) throws
+    -> (PigeonIdentityBundle, ContactPrekeyBundles)
   {
     let card = try XCTUnwrap(manager.myCard)
-    return (card.bundle, try XCTUnwrap(card.prekeyBundle))
+    return (
+      card.bundle,
+      ContactPrekeyBundles(
+        chat: try XCTUnwrap(card.prekeyBundle),
+        control: try XCTUnwrap(card.pairwiseControlPrekeyBundle))
+    )
   }
 
   private func newSeed() -> Data { Curve25519.Signing.PrivateKey().rawRepresentation }
@@ -56,11 +62,9 @@ final class ContactsBookTests: XCTestCase {
     let (aBundle, aPrekey) = try card(a)
     let (bBundle, bPrekey) = try card(b)
     b.addContact(
-      aBundle, name: "A", relayURLs: [], prekeyBundle: aPrekey,
-      verifiedInPerson: true)
+      aBundle, name: "A", relayURLs: [], prekeys: aPrekey, admission: .verifiedInPerson)
     a.addContact(
-      bBundle, name: "B", relayURLs: [], prekeyBundle: bPrekey,
-      verifiedInPerson: true)
+      bBundle, name: "B", relayURLs: [], prekeys: bPrekey, admission: .verifiedInPerson)
     XCTAssertTrue(a.canUseCorePairwise(with: contact(a, b.myID)))
     XCTAssertTrue(b.canUseCorePairwise(with: contact(b, a.myID)))
   }
@@ -167,10 +171,14 @@ final class ContactsBookTests: XCTestCase {
 
     b.addContact(
       aCard.bundle, name: aCard.name, relayURLs: aCard.relayURLs,
-      prekeyBundle: aCard.prekeyBundle, verifiedInPerson: false)
+      prekeys: ContactPrekeyBundles(
+        chat: aCard.prekeyBundle, control: aCard.pairwiseControlPrekeyBundle),
+      admission: .unverified)
     a.addContact(
       bCard.bundle, name: bCard.name, relayURLs: bCard.relayURLs,
-      prekeyBundle: bCard.prekeyBundle, verifiedInPerson: false)
+      prekeys: ContactPrekeyBundles(
+        chat: bCard.prekeyBundle, control: bCard.pairwiseControlPrekeyBundle),
+      admission: .unverified)
 
     XCTAssertTrue(a.canUseCorePairwise(with: contact(a, b.myID)))
     XCTAssertTrue(b.canUseCorePairwise(with: contact(b, a.myID)))

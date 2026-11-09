@@ -179,8 +179,8 @@ final class DeliveryStatusTests: XCTestCase {
 
     let (aBundle, aPrekey) = try card(a)
     let (bBundle, bPrekey) = try card(b)
-    b.addContact(aBundle, name: "A", relayURLs: [], prekeyBundle: aPrekey, verifiedInPerson: true)
-    a.addContact(bBundle, name: "B", relayURLs: [], prekeyBundle: bPrekey, verifiedInPerson: true)
+    b.addContact(aBundle, name: "A", relayURLs: [], prekeys: aPrekey, admission: .verifiedInPerson)
+    a.addContact(bBundle, name: "B", relayURLs: [], prekeys: bPrekey, admission: .verifiedInPerson)
     let peer = try XCTUnwrap(a.contacts.first { $0.id == b.myID })
 
     a.send("hello", to: peer)
@@ -219,10 +219,16 @@ final class DeliveryStatusTests: XCTestCase {
     return manager
   }
 
-  private func card(_ manager: SessionManager) throws -> (PigeonIdentityBundle, PigeonPrekeyBundle)
+  private func card(_ manager: SessionManager) throws
+    -> (PigeonIdentityBundle, ContactPrekeyBundles)
   {
     let card = try XCTUnwrap(manager.myCard)
-    return (card.bundle, try XCTUnwrap(card.prekeyBundle))
+    return (
+      card.bundle,
+      ContactPrekeyBundles(
+        chat: try XCTUnwrap(card.prekeyBundle),
+        control: try XCTUnwrap(card.pairwiseControlPrekeyBundle))
+    )
   }
 
   private func newSeed() -> Data { Curve25519.Signing.PrivateKey().rawRepresentation }
