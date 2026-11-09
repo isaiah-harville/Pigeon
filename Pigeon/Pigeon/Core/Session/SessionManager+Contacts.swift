@@ -19,8 +19,9 @@ extension SessionManager {
   }
 
   /// Verifies and stores a scanned contact bundle, then begins establishing a
-  /// session. Remotely imported contacts preserve durable request admission
-  /// state when their public card is refreshed.
+  /// session. A contact that already exists keeps its request state, which
+  /// mirrors the core relationship; scanning an incoming requester in person
+  /// accepts their request.
   @discardableResult
   func addContact(
     _ bundle: PigeonIdentityBundle, name: String, relayURLs: [URL],
@@ -51,6 +52,9 @@ extension SessionManager {
     replaceOrAppendContact(contact)
     activeConversationIDs.insert(bundle.identityKey)
     guard persist() else { return false }
+    if admission == .verifiedInPerson, contact.requestState == .incoming {
+      acceptMessageRequest(from: contact)
+    }
     refreshRelay()
     note(.contactAdded)
     return true
@@ -60,7 +64,9 @@ extension SessionManager {
     into contact: inout Contact, admission: ContactAdmission
   ) {
     guard let existing = contacts.first(where: { $0.id == contact.id }) else { return }
-    if admission != .verifiedInPerson { contact.requestState = existing.requestState }
+    // The core keeps an existing relationship when the contact is registered
+    // again, so the app copy must keep it too or sends are refused.
+    contact.requestState = existing.requestState
     contact.verifiedInPerson = existing.verifiedInPerson || admission.verifiedInPerson
     contact.introductionSent = existing.introductionSent
     contact.introductionReceived = existing.introductionReceived

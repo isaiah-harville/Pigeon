@@ -37,13 +37,19 @@ final class MessageRequestTests: XCTestCase {
   }
 
   func addRemoteCard(of recipient: SessionManager, to sender: SessionManager) throws {
+    try addCard(of: recipient, to: sender, admission: .outgoingRequest)
+  }
+
+  func addCard(
+    of recipient: SessionManager, to sender: SessionManager, admission: ContactAdmission
+  ) throws {
     let card = try XCTUnwrap(recipient.myCard)
     XCTAssertTrue(
       sender.addContact(
         card.bundle, name: card.name, relayURLs: card.relayURLs,
         prekeys: ContactPrekeyBundles(
           chat: card.prekeyBundle, control: card.pairwiseControlPrekeyBundle),
-        admission: .outgoingRequest))
+        admission: admission))
   }
 
   func testScannedContactCanBecomeOutgoingMessageRequest() throws {
