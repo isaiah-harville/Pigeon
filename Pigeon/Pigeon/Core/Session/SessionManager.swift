@@ -80,6 +80,8 @@ final class SessionManager {
   /// checkpoint callbacks; pairwise/MLS internals remain behind this API.
   private(set) var coreClient: PigeonCoreClient?
   private var coreIdentityProvider: CoreIdentityProvider?
+  @ObservationIgnored var makeCoreIdentityProvider: (IdentityManager) -> CoreIdentityProvider =
+    { identity in CoreIdentityProvider(rootIdentity: identity) }
   private var coreCheckpointStore: CoreCheckpointStore?
   @ObservationIgnored private(set) lazy var groupRelay = makeGroupRelay()
   @ObservationIgnored private(set) lazy var pairwiseRelay = makePairwiseRelay()
@@ -273,7 +275,7 @@ extension SessionManager {
     state: SessionPersistence.Loaded, client: PigeonCoreClient
   ) {
     let loaded = try persistence.attach(store)
-    let coreIdentityProvider = CoreIdentityProvider(rootIdentity: identity)
+    let coreIdentityProvider = makeCoreIdentityProvider(identity)
     let coreCheckpointStore = CoreCheckpointStore(appStore: store)
     let existingCheckpoint = try coreCheckpointStore.load()
     if store.isDefaultStore, CoreCheckpointStore.hasCheckpointEvidence,
