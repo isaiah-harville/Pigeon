@@ -1,6 +1,6 @@
 # Build the relay, then ship just the binary on distroless (glibc) — small,
 # multi-arch (amd64/arm64), and runs as a non-root user with no shell.
-FROM rust:1.96.0-slim-bookworm AS build
+FROM rust:1.96.1-slim-bookworm AS build
 WORKDIR /src
 
 # A blind mailbox does not need to be large or fast; optimize the standalone
