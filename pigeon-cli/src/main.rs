@@ -96,6 +96,9 @@ enum Command {
 
 #[tokio::main]
 async fn main() {
+    // A process-wide rustls provider is required before the first `wss://`
+    // connection; `Err` only means one was already installed.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let cli = Cli::parse();
     if let Err(error) = run(cli).await {
         eprintln!("pigeon: {error}");

@@ -1,6 +1,6 @@
 [package]
 name = "pigeon-cli"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Terminal Pigeon client: end-to-end-encrypted direct messaging over federated zero-knowledge relays."
 license = "AGPL-3.0-only"
@@ -17,6 +17,9 @@ pigeon-mesh = { version = "=0.2.0", path = "../pigeon-mesh" }
 prost = "0.14"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "sync", "time", "signal"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+# tokio-tungstenite enables no rustls crypto backend; select ring (the backend
+# the relay already uses) explicitly so a standalone build can make TLS calls.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
