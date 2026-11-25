@@ -21,7 +21,7 @@ threat model and why remote delivery cannot be serverless.
 docker run -p 8080:8080 \
   -v pigeon-relay-state:/var/lib/pigeon-relay \
   -e PIGEON_COORDINATOR_SIGNING_SEED_HEX="<64-hex-character-secret>" \
-  ghcr.io/<owner>/pigeon-relay:latest
+  ghcr.io/isaiah-harville/pigeon/relay:latest
 ```
 
 The image is multi-arch (amd64/arm64), distroless, and non-root. The named
