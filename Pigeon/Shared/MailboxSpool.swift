@@ -45,10 +45,6 @@ nonisolated struct MailboxSpool: Sendable {
 
   let directory: URL
 
-  init(directory: URL) {
-    self.directory = directory
-  }
-
   /// The shared spool in the app-group container, or `nil` when the
   /// entitlement is unavailable (for example, an unsigned build).
   static var shared: MailboxSpool? {
