@@ -266,18 +266,42 @@ pub struct ApnsGateway {
 impl ApnsGateway {
     /// Builds the gateway from the environment, or returns `None` if it isn't
     /// fully configured (the common case: any relay that isn't the official one).
-    /// Never logs key material.
+    /// The `.p8` key comes from `PIGEON_APNS_KEY_PEM` (inline, as a mounted
+    /// secret usually provides it) or the file at `PIGEON_APNS_KEY_PATH`.
+    /// A partial configuration names the missing variables; key material and
+    /// other values are never logged.
     pub fn from_env() -> Option<Self> {
-        let team_id = std::env::var("PIGEON_APNS_TEAM_ID").ok()?;
-        let key_id = std::env::var("PIGEON_APNS_KEY_ID").ok()?;
-        let topic = std::env::var("PIGEON_APNS_TOPIC").ok()?;
-        let key_path = std::env::var("PIGEON_APNS_KEY_PATH").ok()?;
-        let host =
-            std::env::var("PIGEON_APNS_HOST").unwrap_or_else(|_| "api.push.apple.com".into());
+        let var = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
+        let team_id = var("PIGEON_APNS_TEAM_ID");
+        let key_id = var("PIGEON_APNS_KEY_ID");
+        let topic = var("PIGEON_APNS_TOPIC");
+        let key_pem = var("PIGEON_APNS_KEY_PEM");
+        let key_path = var("PIGEON_APNS_KEY_PATH");
+        let missing = missing_apns_settings(
+            team_id.is_some(),
+            key_id.is_some(),
+            topic.is_some(),
+            key_pem.is_some() || key_path.is_some(),
+        );
+        if !missing.is_empty() {
+            if missing.len() < 4 {
+                eprintln!(
+                    "pigeon-relay: push gateway incomplete; missing {}",
+                    missing.join(", ")
+                );
+            }
+            return None;
+        }
+        let (team_id, key_id, topic) = (team_id?, key_id?, topic?);
+        let host = var("PIGEON_APNS_HOST").unwrap_or_else(|| "api.push.apple.com".into());
 
-        let pem = std::fs::read(&key_path)
-            .map_err(|_| eprintln!("pigeon-relay: cannot read APNS key"))
-            .ok()?;
+        let pem = match (key_pem, key_path) {
+            (Some(inline), _) => inline.into_bytes(),
+            (None, Some(path)) => std::fs::read(path)
+                .map_err(|_| eprintln!("pigeon-relay: cannot read APNS key"))
+                .ok()?,
+            (None, None) => return None,
+        };
         let encoding_key = EncodingKey::from_ec_pem(&pem)
             .map_err(|_| eprintln!("pigeon-relay: APNS key is not a valid EC .p8"))
             .ok()?;
@@ -344,6 +368,20 @@ impl ApnsGateway {
     }
 }
 
+/// Names of the APNs settings that are absent, in a fixed order.
+fn missing_apns_settings(team_id: bool, key_id: bool, topic: bool, key: bool) -> Vec<&'static str> {
+    [
+        (team_id, "PIGEON_APNS_TEAM_ID"),
+        (key_id, "PIGEON_APNS_KEY_ID"),
+        (topic, "PIGEON_APNS_TOPIC"),
+        (key, "PIGEON_APNS_KEY_PEM or PIGEON_APNS_KEY_PATH"),
+    ]
+    .into_iter()
+    .filter(|(present, _)| !present)
+    .map(|(_, name)| name)
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,6 +389,22 @@ mod tests {
     fn registry() -> PushRegistry {
         // No gateway: exercises the store/coalescing logic without a network.
         PushRegistry::new(None, Duration::from_secs(30))
+    }
+
+    /// Either key source satisfies the key requirement, and a partial setup
+    /// reports exactly the variables that are absent.
+    #[test]
+    fn missing_apns_settings_names_only_absent_variables() {
+        assert!(missing_apns_settings(true, true, true, true).is_empty());
+        assert_eq!(missing_apns_settings(false, false, false, false).len(), 4);
+        assert_eq!(
+            missing_apns_settings(true, true, true, false),
+            ["PIGEON_APNS_KEY_PEM or PIGEON_APNS_KEY_PATH"]
+        );
+        assert_eq!(
+            missing_apns_settings(true, false, true, true),
+            ["PIGEON_APNS_KEY_ID"]
+        );
     }
 
     /// The payload stays content-free (no sender, count, or ciphertext) and
