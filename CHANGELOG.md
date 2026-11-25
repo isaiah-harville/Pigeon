@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.5.0] - Unreleased
+## [1.5.0] - 2026-11-25 (beta)
 
 ### Added
 
@@ -12,12 +12,19 @@
 - Creating a group no longer gets stuck on "Registering with relay". Authenticating to the group relay re-entered the relay connection while it was being updated, which crashed the app or kept the registration retrying forever.
 - Relays keep stored direct messages across a restart. Before, a relay restart lost every message waiting for a phone that was offline or locked, even though the sender had already been told it was stored.
 - A phone coming back online after a long time receives every waiting message at once. Before, it received at most 256 and the rest waited for an unrelated reconnect.
-
+- One direct message the relay refuses no longer holds up every message queued behind it. Sends go out several at a time, a refused one retries on its own schedule, and a stalled relay connection is noticed and replaced.
+- Relay frames leave in the order they were sent.
+- A running app that locks before its group relay first connects can still authenticate to that relay.
+- Long chats scroll and render smoothly. New messages no longer pull you to the bottom while you read older history, the send button meets the 44-point touch target and has a VoiceOver label, blank messages can't be sent, and the **+** button no longer covers the last chat.
 - A new chat opens even when its first message was lost or rejected: any later pre-key message from the sender establishes the session, and a replayed pre-key message can no longer open a second session.
 - A message request to someone who already added you opens the chat when they reply, instead of staying stuck as a pending request on both phones.
 - Scanning someone in person who already sent you a message request accepts the request. Before, the chat looked open but every message you sent was refused.
 - A direct message that can never be opened (a bad signature, malformed bytes, a replay, or a stranger with no contact card) is released from the relay instead of being redelivered until it expires. Before, anyone with your public key could fill your relay mailbox with junk and block real messages for up to 30 days.
 - Removing a contact and adding them again no longer leaves both of you unable to message each other. The next message from the side that re-added opens a fresh session. Old opening messages can't be replayed to bring back a dropped session, including after you remove and re-add someone.
+
+### Security
+
+- The relay (0.5.0) updates rustls to 0.23.46, rustls-webpki to 0.103.16, webpki-roots to 1.0.10, and tokio to 1.53.3, and moves to rusqlite 0.41, whose bundled SQLite fixes a known vulnerability. The website image (0.2.1) moves from the unmaintained nginx 1.27 base to nginx 1.30.
 
 [1.5.0]: https://github.com/isaiah-harville/Pigeon/compare/v1.4.1...v1.5.0
 
