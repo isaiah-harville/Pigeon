@@ -124,7 +124,8 @@ required vars to enable a content-free wake-up alert on deposit. See
 | `PIGEON_APNS_TEAM_ID`          | —                    | Apple Developer team id (JWT `iss`). **Required.**   |
 | `PIGEON_APNS_KEY_ID`           | —                    | APNs auth-key id (JWT `kid`). **Required.**          |
 | `PIGEON_APNS_TOPIC`            | —                    | App bundle id (APNs topic). **Required.**            |
-| `PIGEON_APNS_KEY_PATH`         | —                    | Path to the `.p8` auth key (PEM). **Required.**      |
+| `PIGEON_APNS_KEY_PEM`          | —                    | The `.p8` auth key (PEM) inline. **This or `PIGEON_APNS_KEY_PATH` is required.** |
+| `PIGEON_APNS_KEY_PATH`         | —                    | Path to the `.p8` auth key (PEM), if not inline.     |
 | `PIGEON_APNS_HOST`             | `api.push.apple.com` | Use `api.sandbox.push.apple.com` for development.    |
 | `PIGEON_APNS_MIN_INTERVAL_SECS`| `30`                 | Min gap between pushes to one mailbox (coalescing).  |
 
