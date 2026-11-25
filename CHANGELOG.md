@@ -24,7 +24,7 @@
 
 ### Security
 
-- The relay (0.5.0) updates rustls to 0.23.46, rustls-webpki to 0.103.16, webpki-roots to 1.0.10, and tokio to 1.53.3, and moves to rusqlite 0.41, whose bundled SQLite fixes a known vulnerability. The website image (0.2.1) moves from the unmaintained nginx 1.27 base to nginx 1.30.
+- The relay (0.5.1) updates rustls to 0.23.46, rustls-webpki to 0.103.16, webpki-roots to 1.0.10, and tokio to 1.53.3, and moves to rusqlite 0.41, whose bundled SQLite fixes a known vulnerability. The website image (0.2.1) moves from the unmaintained nginx 1.27 base to nginx 1.30.
 
 [1.5.0]: https://github.com/isaiah-harville/Pigeon/compare/v1.4.1...v1.5.0
 
