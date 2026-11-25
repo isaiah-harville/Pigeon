@@ -6,6 +6,36 @@ import XCTest
 
 @MainActor
 final class GroupRelayConnectionTests: XCTestCase {
+  /// The confirmation callback commits a core command, after which the
+  /// session layer reconfigures this same connection. That re-entry used to
+  /// happen inside a mutating access to `authorization` and trapped.
+  func testAuthorizationConfirmationSurvivesReentrantReconfigure() {
+    let connection = GroupRelayConnection(group: group(coordinatorSequence: 0))
+    var confirmations = 0
+
+    XCTAssertTrue(
+      connection.confirmAuthorizationIfRequired {
+        confirmations += 1
+        connection.authorization.requireConfirmation()
+        return true
+      })
+    XCTAssertTrue(
+      connection.confirmAuthorizationIfRequired {
+        XCTFail("confirmed twice")
+        return true
+      })
+    XCTAssertEqual(confirmations, 1)
+  }
+
+  func testRejectedAuthorizationConfirmationIsRetriedOnNextConnect() {
+    let connection = GroupRelayConnection(group: group(coordinatorSequence: 0))
+
+    XCTAssertFalse(connection.confirmAuthorizationIfRequired { false })
+    XCTAssertTrue(connection.authorization.needsConfirmation)
+    XCTAssertTrue(connection.confirmAuthorizationIfRequired { true })
+    XCTAssertFalse(connection.authorization.needsConfirmation)
+  }
+
   func testInitialFetchUsesDurableCoordinatorCursor() {
     let connection = GroupRelayConnection(group: group(coordinatorSequence: 7))
 

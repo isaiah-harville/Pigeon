@@ -26,6 +26,7 @@ use self::store::{
     PUBKEY_LEN,
 };
 use crate::clock::now;
+use crate::durable::{DurableError, MailboxJournal};
 use crate::push::{self, PushRegistry};
 
 #[derive(Clone)]
@@ -35,11 +36,31 @@ pub struct Service {
 }
 
 impl Service {
+    /// Memory-only mailboxes, for unit tests of the bounds.
+    #[cfg(test)]
     pub fn new(config: Config) -> Self {
         Self {
             store: Arc::new(Mutex::new(Store::default())),
             config,
         }
+    }
+
+    /// Mailboxes restored from (and written through to) `journal`. Returns the
+    /// service and the first envelope id that cannot collide with a stored one.
+    pub fn durable(
+        config: Config,
+        journal: MailboxJournal,
+        now: u64,
+    ) -> Result<(Self, u64), DurableError> {
+        let records = journal.load(now.saturating_sub(config.ttl_secs))?;
+        let (store, max_id) = Store::restore(journal, records, &config);
+        Ok((
+            Self {
+                store: Arc::new(Mutex::new(store)),
+                config,
+            },
+            max_id.saturating_add(1),
+        ))
     }
 
     pub fn expire(&self, cutoff: u64) {
@@ -225,15 +246,32 @@ pub fn register_subscriber(
     true
 }
 
-pub fn flush_queue(service: &Service, mailbox: &str, tx: &mpsc::Sender<ServerMsg>) {
-    let store = service.store.lock().unwrap();
-    if let Some(entry) = store.get(mailbox) {
-        for envelope in &entry.queue {
-            let _ = tx.try_send(ServerMsg::Envelope {
-                id: envelope.id.clone(),
-                ciphertext: envelope.ciphertext.clone(),
-                ts: envelope.ts,
-            });
+/// Replays every envelope stored for `mailbox` to a freshly authenticated
+/// reader, waiting for channel capacity instead of dropping on a full channel.
+///
+/// A device that was locked or offline can hold far more envelopes than the
+/// subscriber channel's bound; replaying with `try_send` silently skipped
+/// everything past the bound until some later reconnect. The queue is
+/// snapshotted under the lock and sent after releasing it, so a slow reader
+/// never holds up other mailboxes. Stops early once the reader disconnects.
+pub async fn flush_queue(service: &Service, mailbox: &str, tx: &mpsc::Sender<ServerMsg>) {
+    let backlog: Vec<ServerMsg> = {
+        let store = service.store.lock().unwrap();
+        store.get(mailbox).map_or_else(Vec::new, |entry| {
+            entry
+                .queue
+                .iter()
+                .map(|envelope| ServerMsg::Envelope {
+                    id: envelope.id.clone(),
+                    ciphertext: envelope.ciphertext.clone(),
+                    ts: envelope.ts,
+                })
+                .collect()
+        })
+    };
+    for envelope in backlog {
+        if tx.send(envelope).await.is_err() {
+            break;
         }
     }
 }

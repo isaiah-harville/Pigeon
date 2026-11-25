@@ -27,6 +27,10 @@ extension SessionManager {
         }
       }
     }
+    if active {
+      preloadGroupSigningKeys()
+      drainMailboxSpool()
+    }
     if active, let snapshot = try? coreClient?.stateSnapshot() {
       // Resume from durable inbox cursors after iOS may have suspended sockets.
       groupInviteRelay.disconnect()
@@ -46,6 +50,7 @@ extension SessionManager {
     relayURLs = RelayTransport.advertisedRelays(
       configured: configured, excluding: relay?.incompatibleRelayURLs ?? [])
     relay?.reconfigure(configured)
+    publishSpoolConfiguration()
   }
 
   // MARK: - UI passthroughs
@@ -85,6 +90,7 @@ extension SessionManager {
     } else {
       groupInviteRelay.disconnect()
     }
+    publishSpoolConfiguration()
   }
 
   /// Stops every live link, deletes the complete encrypted store family, then
@@ -215,6 +221,7 @@ extension SessionManager {
     do {
       try identity.applyKeychainAccessibility(accessibility)
       BackgroundDelivery.isEnabled = enabled
+      SharedMailboxConfig.setBackgroundDeliveryEnabled(enabled)
       return true
     } catch {
       note(.backgroundSettingFailed)
@@ -227,7 +234,9 @@ extension SessionManager {
   /// identity bundle and signed prekey come from the transactional Rust core,
   /// so the app never needs direct access to pairwise account state.
   var myCard: ContactCard? {
-    guard let corePrekeyBytes = try? coreClient?.stateSnapshot().pairwisePrekeyBundle,
+    guard coreClient != nil,
+      let corePrekeyBytes = pairwisePrekeyBundleBytes
+        ?? (try? coreClient?.stateSnapshot().pairwisePrekeyBundle),
       let prekeyBundle = try? PigeonPrekeyBundle(decoding: corePrekeyBytes)
     else { return nil }
     let relayURLs = self.relayURLs

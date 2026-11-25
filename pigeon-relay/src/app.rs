@@ -13,7 +13,7 @@ use tokio::sync::Semaphore;
 
 use crate::clock::now;
 use crate::config::RelayConfig;
-use crate::durable::{self, CoordinatorJournal, DurableError, GroupJournal};
+use crate::durable::{self, CoordinatorJournal, DurableError, GroupJournal, MailboxJournal};
 use crate::push::{ApnsGateway, PushRegistry};
 use crate::socket_admission::SocketAdmission;
 use crate::{coordinator, group, invite, mailbox};
@@ -46,9 +46,14 @@ pub fn build_state(config: RelayConfig) -> Result<AppState, DurableError> {
     let group_journal = GroupJournal::open(&config.state_dir)?;
     let coordinator_journal =
         CoordinatorJournal::open(&config.state_dir, signer.verifying_key().to_bytes())?;
+    let (mailbox, first_id) = mailbox::Service::durable(
+        config.mailbox,
+        MailboxJournal::open(&config.state_dir)?,
+        now(),
+    )?;
 
     Ok(AppState {
-        mailbox: mailbox::Service::new(config.mailbox),
+        mailbox,
         group: group::Service::durable(config.group, group_journal, now())?,
         group_admission_difficulty: config.group_admission_difficulty,
         invite: invite::Service::open(&config.state_dir, config.invite, now())?,
@@ -59,7 +64,9 @@ pub fn build_state(config: RelayConfig) -> Result<AppState, DurableError> {
             now(),
         )?,
         push: Arc::new(PushRegistry::new(gateway, config.apns_min_interval)),
-        connection_ids: Arc::new(AtomicU64::new(1)),
+        // Envelope and connection ids share this counter; start past every
+        // persisted envelope id so a restart never reuses one.
+        connection_ids: Arc::new(AtomicU64::new(first_id)),
         socket_slots: Arc::new(Semaphore::new(config.max_connections)),
         socket_admission: SocketAdmission::default(),
         trusted_proxy_ip: config.trusted_proxy_ip,

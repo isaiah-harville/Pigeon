@@ -2,7 +2,16 @@
 
 ## [1.5.0] - Unreleased
 
+### Added
+
+- `pigeon`, a terminal client for any machine (`pigeon-cli/`). It exchanges end-to-end-encrypted direct messages with the iPhone app over relays: contact links, message requests, delivery receipts, and safety numbers. Its identity and history are sealed under a passphrase.
+- Messages keep reaching a locked iPhone that is not running Pigeon. On each push, a notification service extension moves the still-encrypted messages from the relay into the phone, so they no longer depend on the relay holding them until you open the app. They are decrypted only after you unlock.
+
 ### Fixed
+
+- Creating a group no longer gets stuck on "Registering with relay". Authenticating to the group relay re-entered the relay connection while it was being updated, which crashed the app or kept the registration retrying forever.
+- Relays keep stored direct messages across a restart. Before, a relay restart lost every message waiting for a phone that was offline or locked, even though the sender had already been told it was stored.
+- A phone coming back online after a long time receives every waiting message at once. Before, it received at most 256 and the rest waited for an unrelated reconnect.
 
 - A new chat opens even when its first message was lost or rejected: any later pre-key message from the sender establishes the session, and a replayed pre-key message can no longer open a second session.
 - A message request to someone who already added you opens the chat when they reply, instead of staying stuck as a pending request on both phones.

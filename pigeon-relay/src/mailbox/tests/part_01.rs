@@ -97,8 +97,8 @@ fn switch_subscription(
     mailbox_switch_subscription(&state.mailbox, previous, mailbox, connection_id, tx);
 }
 
-fn flush_queue(state: &TestState, mailbox: &str, tx: &mpsc::Sender<ServerMsg>) {
-    mailbox_flush_queue(&state.mailbox, mailbox, tx);
+async fn flush_queue(state: &TestState, mailbox: &str, tx: &mpsc::Sender<ServerMsg>) {
+    mailbox_flush_queue(&state.mailbox, mailbox, tx).await;
 }
 
 fn ack(state: &TestState, mailbox: &str, id: &str) {

@@ -48,9 +48,17 @@ struct ChatComposer: View {
     }
   }
 
+  /// The draft without surrounding whitespace; a blank draft cannot be sent.
+  private var trimmedDraft: String {
+    draft.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  private var canSend: Bool { enabled && !trimmedDraft.isEmpty }
+
   private var sendButton: some View {
     Button {
-      onSend(draft, replyTarget)
+      guard canSend else { return }
+      onSend(trimmedDraft, replyTarget)
       draft = ""
       replyTarget = nil
     } label: {
@@ -59,9 +67,12 @@ struct ChatComposer: View {
         .foregroundStyle(.white)
         .frame(width: 38, height: 38)
         .background(Capsule().fill(Color.accentColor))
+        .frame(width: 44, height: 44)
+        .contentShape(Rectangle())
     }
-    .disabled(draft.isEmpty || !enabled)
-    .opacity(draft.isEmpty || !enabled ? 0.45 : 1)
+    .disabled(!canSend)
+    .opacity(canSend ? 1 : 0.45)
+    .accessibilityLabel("Send message")
   }
 }
 
@@ -86,8 +97,12 @@ private struct ReplyComposerPreview: View {
         Image(systemName: "xmark.circle.fill")
           .font(.caption)
           .foregroundStyle(.secondary)
+          .frame(width: 44, height: 44)
+          .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
+      .accessibilityLabel("Cancel reply")
+      .padding(.vertical, -14)
     }
     .padding(.horizontal, 9)
     .padding(.vertical, 5)

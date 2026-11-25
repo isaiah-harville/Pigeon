@@ -14,8 +14,9 @@
 //! ciphertext and MLS candidates, public capability keys, cursors, generations,
 //! and timestamps. Expiry and cursor garbage collection are applied lazily on
 //! disk, so the database may briefly hold rows memory has dropped; loading
-//! re-applies both rules. Pairwise mailboxes stay memory-only because senders
-//! retransmit until the recipient acknowledges.
+//! re-applies both rules. Pairwise mailboxes are journaled too: a `published`
+//! receipt lets the sender retire its copy, so the relay copy is often the only
+//! one while the recipient is offline or its phone is locked.
 //!
 //! SQLite stores signed 64-bit integers. Several persisted values are chosen by
 //! clients (for example authorization generations), so `u64` values are stored
@@ -102,3 +103,4 @@ const COORDINATOR_SCHEMA: &str = "
 include!("durable_parts/schema.rs");
 include!("durable_parts/group_journal.rs");
 include!("durable_parts/coordinator_journal.rs");
+include!("durable_parts/mailbox_journal.rs");

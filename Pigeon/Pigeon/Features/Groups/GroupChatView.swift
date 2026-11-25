@@ -8,7 +8,10 @@ struct GroupChatView: View {
   @State private var draft = ""
   @State private var sendError: String?
   @State private var showSettings = false
+  @State private var isAtBottom = true
   @FocusState private var composerFocused: Bool
+
+  private static let bottomAnchor = "group-chat-bottom"
 
   private var group: PigeonGroupState? {
     session.groups.first { $0.groupID == groupID }
@@ -50,12 +53,21 @@ extension GroupChatView {
           ForEach(entries) { entry in
             entryView(entry).id(entry.id)
           }
+          Color.clear
+            .frame(height: 1)
+            .id(Self.bottomAnchor)
+            .onAppear { isAtBottom = true }
+            .onDisappear { isAtBottom = false }
         }
         .padding()
       }
       .scrollDismissesKeyboard(.interactively)
       .onAppear { scrollToLatest(proxy) }
-      .onChange(of: entries.count) { scrollToLatest(proxy, animated: true) }
+      .onChange(of: entries.count) {
+        // Follow new entries only from the bottom or for our own sends.
+        guard isAtBottom || entries.last?.mine == true else { return }
+        scrollToLatest(proxy, animated: true)
+      }
     }
   }
 
@@ -130,6 +142,8 @@ extension GroupChatView {
       } label: {
         Image(systemName: "arrow.up.circle.fill")
           .font(.system(size: 32))
+          .frame(width: 44, height: 44)
+          .contentShape(Rectangle())
       }
       .disabled(!canSend)
       .accessibilityLabel("Send message")
@@ -178,7 +192,8 @@ extension GroupChatView {
   private func send() {
     guard let group else { return }
     do {
-      try session.sendGroupMessage(draft, in: group, replyToMessageID: nil)
+      try session.sendGroupMessage(
+        draft.trimmingCharacters(in: .whitespacesAndNewlines), in: group, replyToMessageID: nil)
       draft = ""
     } catch {
       sendError =
@@ -187,11 +202,10 @@ extension GroupChatView {
   }
 
   private func scrollToLatest(_ proxy: ScrollViewProxy, animated: Bool = false) {
-    guard let last = entries.last else { return }
     if animated {
-      withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+      withAnimation { proxy.scrollTo(Self.bottomAnchor, anchor: .bottom) }
     } else {
-      proxy.scrollTo(last.id, anchor: .bottom)
+      proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
     }
   }
 

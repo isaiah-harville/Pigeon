@@ -21,8 +21,9 @@ publication require permission from the Pigeon maintainers.
 
 ## Current Architecture
 
-The repo has the **app** (`Pigeon/`), a four-crate Rust workspace
-(`pigeon-core/`, `pigeon-mesh/`, `pigeon-ffi/`, and `pigeon-relay/`), and
+The repo has the **app** (`Pigeon/`), a five-crate Rust workspace
+(`pigeon-core/`, `pigeon-mesh/`, `pigeon-ffi/`, `pigeon-relay/`, and
+`pigeon-cli/`), and
 `Pigeon/PigeonFFI/`, the thin Swift package that vends the generated FFI
 bindings and XCFramework. The Xcode project uses file-system-synchronized
 groups (auto-include).
@@ -60,6 +61,13 @@ deleted; do not reintroduce it.
   CoreBluetooth driver lives in the app and feeds bytes through it.
 - `pigeon-relay/` is the Rust (axum/tokio) zero-knowledge relay server; ships as a
   Docker image. See the Remote Delivery section below.
+- `pigeon-cli/` (`AGPL-3.0-only`) is the terminal client (`pigeon` binary): direct
+  messages over relays, interoperable with the app. It links `pigeon-core` and
+  `pigeon-mesh` directly (no FFI) and seals its identity seed, core checkpoint,
+  and history with XChaCha20-Poly1305 under an Argon2id passphrase key.
+- `Pigeon/PigeonNotificationService/` is the notification service extension that
+  spools relay ciphertext while the phone is locked; `Pigeon/Shared/` holds the
+  code compiled into both it and the app (`MailboxSpool`, `SharedMailboxConfig`).
 
 
 ## vodozemac 0.10 API facts (save future spelunking)
@@ -152,6 +160,10 @@ and the app's `Pigeon/PigeonTests/` target. Docs of note: `docs/SECURITY_MODEL.m
     cannot decrypt or persist: buffer in memory (`LockedInbox`), fire a
     content-free notification, and deliberately **do not ack** the relay copy so
     it is redelivered after unlock. Never widen DEK accessibility to "fix" this.
+  - *Push while the app is not running.* The notification service extension
+    spools ciphertext (fsynced) and only then acks the relay; the app drains the
+    spool after unlock (`drainMailboxSpool`). The extension must never decrypt,
+    touch core/Olm state, or ack anything it has not durably spooled.
 - Never let a persistence failure pass silently. A save that does not land means
   the sealed state is behind the live state; for the crypto blob that is a stale
   ratchet pickle, which is a correctness *and* security problem.
@@ -183,6 +195,7 @@ bash pigeon-ffi/build-xcframework.sh                   # regenerate bindings + X
 swift test --package-path Pigeon/PigeonFFI             # Swift round-trip across the FFI
 xcodebuild build -project Pigeon/Pigeon.xcodeproj -scheme Pigeon -destination 'generic/platform=iOS'
 cargo test --manifest-path pigeon-relay/Cargo.toml      # relay (Rust)
+cargo test --manifest-path pigeon-cli/Cargo.toml        # terminal client (Rust)
 ```
 
 Useful discovery command:

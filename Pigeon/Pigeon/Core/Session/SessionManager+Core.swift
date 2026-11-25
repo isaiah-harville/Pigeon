@@ -222,6 +222,9 @@ extension SessionManager {
         contacts[index].introductionSent = state.introductionSent
       }
     }
+    if pairwisePrekeyBundleBytes != snapshot.pairwisePrekeyBundle {
+      pairwisePrekeyBundleBytes = snapshot.pairwisePrekeyBundle
+    }
     coreSnapshotGeneration = snapshot.checkpointGeneration
   }
 
@@ -237,8 +240,9 @@ extension SessionManager {
       throw PlatformError.InvalidOutput
     }
     applyCoreSnapshot(snapshot)
-    try absorbCoreEvents(snapshot.pendingEvents)
-    let refreshed = try coreClient.stateSnapshot()
+    // Absorbing events changes the checkpoint only when there were events;
+    // otherwise the snapshot just taken is still current.
+    let refreshed = try absorbCoreEvents(snapshot.pendingEvents) ?? snapshot
     groupRelay.reconfigure(snapshot: refreshed)
     reconfigureGroupInviteRelay(snapshot: refreshed)
     fanOutPairwiseMesh(snapshot: refreshed)
@@ -250,8 +254,11 @@ extension SessionManager {
 
   /// Reduces replayable core events into encrypted app history, saves that
   /// history, and only then removes the events from the core checkpoint.
-  func absorbCoreEvents(_ events: [PigeonCoreEvent]) throws {
-    guard !events.isEmpty else { return }
+  /// Returns the snapshot taken after that removal, or `nil` when there were
+  /// no events and the core state is unchanged.
+  @discardableResult
+  func absorbCoreEvents(_ events: [PigeonCoreEvent]) throws -> PigeonCoreSnapshot? {
+    guard !events.isEmpty else { return nil }
     var candidate = groupConversations
     var directEvents: [PigeonDirectApplicationReceivedEvent] = []
     for event in events {
@@ -274,7 +281,7 @@ extension SessionManager {
     for event in directEvents {
       try absorbDirectCoreEvent(event)
     }
-    try acknowledgeCoreEvents(events.map(\.id))
+    return try acknowledgeCoreEvents(events.map(\.id))
   }
 
   func consumeGroupRelayMessage(_ ciphertext: Data, requestID: String) -> GroupRelayMessageOutcome {
@@ -333,7 +340,7 @@ extension SessionManager {
     }
   }
 
-  private func acknowledgeCoreEvents(_ eventIDs: [String]) throws {
+  private func acknowledgeCoreEvents(_ eventIDs: [String]) throws -> PigeonCoreSnapshot {
     guard !isIdentityMoveFrozen, let coreClient else { throw PlatformError.Unavailable }
     let encodedIDs = try JSONEncoder().encode(eventIDs)
     let digest = SHA256.hash(data: encodedIDs)
@@ -344,7 +351,9 @@ extension SessionManager {
         id: "ack-events:\(digest)",
         body: .acknowledgeEffects(
           PigeonAcknowledgeEffects(eventIDs: eventIDs))))
-    applyCoreSnapshot(try coreClient.stateSnapshot())
+    let snapshot = try coreClient.stateSnapshot()
+    applyCoreSnapshot(snapshot)
+    return snapshot
   }
 
   private func groupID(for event: PigeonCoreEvent) -> Data? {

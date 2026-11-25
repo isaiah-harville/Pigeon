@@ -54,8 +54,12 @@ const MAX_PUSH_MAILBOXES: usize = 50_000;
 /// (not a silent `content-available` background push) is deliberate — iOS
 /// withholds silent pushes after the user force-quits the app, so only a visible
 /// alert reliably reaches a terminated app.
-const PUSH_PAYLOAD: &str =
-    r#"{"aps":{"alert":{"title":"New message","body":"Open Pigeon to read your message."}}}"#;
+///
+/// `mutable-content` lets the app's notification service extension run on
+/// each push: it drains the still-encrypted mailbox into the device's spool so
+/// the relay copy can be released while the phone is locked. The extension
+/// never decrypts; if it cannot run, this fixed alert is shown unchanged.
+const PUSH_PAYLOAD: &str = r#"{"aps":{"alert":{"title":"New message","body":"Open Pigeon to read your message."},"mutable-content":1}}"#;
 
 /// An APNs provider JWT is valid for up to an hour; refresh comfortably inside
 /// that so a cached token never expires mid-flight.
@@ -347,6 +351,21 @@ mod tests {
     fn registry() -> PushRegistry {
         // No gateway: exercises the store/coalescing logic without a network.
         PushRegistry::new(None, Duration::from_secs(30))
+    }
+
+    /// The payload stays content-free (no sender, count, or ciphertext) and
+    /// asks iOS to run the spooling notification service extension.
+    #[test]
+    fn push_payload_is_content_free_and_mutable() {
+        let payload: serde_json::Value = serde_json::from_str(PUSH_PAYLOAD).unwrap();
+        assert_eq!(payload["aps"]["mutable-content"], 1);
+        assert_eq!(payload.as_object().unwrap().len(), 1);
+        let aps = payload["aps"].as_object().unwrap();
+        assert_eq!(
+            aps.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["alert", "mutable-content"]
+        );
+        assert_eq!(payload["aps"]["alert"]["title"], "New message");
     }
 
     #[test]

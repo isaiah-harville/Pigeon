@@ -17,9 +17,10 @@ struct ChatView: View {
   @State private var showRename = false
   @State private var newName = ""
   @State private var replyTarget: ChatMessage?
+  @State private var isAtBottom = true
   @FocusState private var composerFocused: Bool
 
-  private var messages: [ChatMessage] { session.messages(with: contact) }
+  private static let bottomAnchor = "chat-bottom"
 
   var body: some View {
     chatLayout
@@ -55,28 +56,51 @@ struct ChatView: View {
   }
 
   private var messagesScroll: some View {
-    ScrollViewReader { proxy in
+    // One read of the conversation per render: day breaks and the latest
+    // outgoing message are derived in a single pass, not per bubble.
+    let messages = session.messages(with: contact)
+    let lastOutgoingID = messages.last { $0.mine && !$0.system }?.id
+    let dayStarts = Self.dayStarts(in: messages)
+    return ScrollViewReader { proxy in
       ScrollView {
         LazyVStack(alignment: .leading, spacing: 6) {
-          ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
-            if showsDaySeparator(before: index) {
+          ForEach(messages) { message in
+            if dayStarts.contains(message.id) {
               daySeparator(for: message.date)
             }
-            bubble(message).id(message.id)
+            bubble(message, lastOutgoingID: lastOutgoingID).id(message.id)
           }
+          Color.clear
+            .frame(height: 1)
+            .id(Self.bottomAnchor)
+            .onAppear { isAtBottom = true }
+            .onDisappear { isAtBottom = false }
         }
         .padding()
       }
       .scrollDismissesKeyboard(.interactively)
       .onChange(of: messages.count) {
-        if let last = messages.last {
-          withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
-        }
+        // Follow new messages only when already at the bottom or when the
+        // new message is our own; never pull someone out of older history.
+        guard isAtBottom || messages.last?.mine == true else { return }
+        withAnimation { proxy.scrollTo(Self.bottomAnchor, anchor: .bottom) }
       }
-      .onAppear {
-        if let last = messages.last { proxy.scrollTo(last.id, anchor: .bottom) }
-      }
+      .onAppear { proxy.scrollTo(Self.bottomAnchor, anchor: .bottom) }
     }
+  }
+
+  /// IDs of messages that begin a new calendar day.
+  private static func dayStarts(in messages: [ChatMessage]) -> Set<UUID> {
+    var starts: Set<UUID> = []
+    var previous: Date?
+    let calendar = Calendar.current
+    for message in messages {
+      if previous.map({ !calendar.isDate(message.date, inSameDayAs: $0) }) ?? true {
+        starts.insert(message.id)
+      }
+      previous = message.date
+    }
+    return starts
   }
 
   private var composer: some View {
@@ -167,19 +191,12 @@ extension ChatView {
   }
 
   @ViewBuilder
-  private func bubble(_ message: ChatMessage) -> some View {
-    if message.event == .relayRecommendation {
-      messageBubble(message)
-    } else if message.system {
+  private func bubble(_ message: ChatMessage, lastOutgoingID: UUID?) -> some View {
+    if message.system && message.event != .relayRecommendation {
       ChatTimelineMarker(text: message.text, systemImage: ChatTimelineIcon.name(for: message.text))
     } else {
-      messageBubble(message)
+      messageBubble(message, showsStatus: showsStatus(message, lastOutgoingID: lastOutgoingID))
     }
-  }
-
-  private func showsDaySeparator(before index: Int) -> Bool {
-    guard index > 0 else { return true }
-    return !Calendar.current.isDate(messages[index].date, inSameDayAs: messages[index - 1].date)
   }
 
   private func daySeparator(for date: Date) -> some View {
@@ -192,7 +209,7 @@ extension ChatView {
   }
 
   @ViewBuilder
-  private func messageBubble(_ message: ChatMessage) -> some View {
+  private func messageBubble(_ message: ChatMessage, showsStatus: Bool) -> some View {
     VStack(alignment: message.mine ? .trailing : .leading, spacing: 2) {
       HStack(alignment: .bottom, spacing: 4) {
         if message.mine { Spacer(minLength: 48) }
@@ -201,22 +218,17 @@ extension ChatView {
       }
       MessageReactions(message: message)
       MessageFooter(message: message)
-      if let status = message.delivery, showsStatus(message) {
+      if let status = message.delivery, showsStatus {
         MessageStatusLabel(status: status) { session.retryDelivery(to: contact) }
       }
     }
     .frame(maxWidth: .infinity, alignment: message.mine ? .trailing : .leading)
   }
 
-  /// The most recent outbound message, the only one whose status line shows by
-  /// default (matching iMessage); failed messages always show theirs.
-  private var lastOutgoingID: UUID? {
-    messages.last { $0.mine && !$0.system }?.id
-  }
-
-  /// Show the Sent → Delivered line under the latest outbound message, plus under
-  /// any not-delivered one so a stuck message stays actionable.
-  private func showsStatus(_ message: ChatMessage) -> Bool {
+  /// Show the Sent → Delivered line under the latest outbound message (matching
+  /// iMessage), plus under any not-delivered one so a stuck message stays
+  /// actionable.
+  private func showsStatus(_ message: ChatMessage, lastOutgoingID: UUID?) -> Bool {
     message.mine && (message.delivery?.needsAttention == true || message.id == lastOutgoingID)
   }
 
@@ -224,7 +236,9 @@ extension ChatView {
     Group {
       if message.event == .relayRecommendation {
         RelayRecommendationMessageCard(urls: message.relayRecommendationURLs, mine: message.mine)
-      } else if let card = ContactCard(scanned: message.text) {
+      } else if ContactCard.mightBeShared(message.text),
+        let card = ContactCard(scanned: message.text)
+      {
         ContactShareMessageCard(card: card)
       } else {
         MessageBubbleContent(message: message)

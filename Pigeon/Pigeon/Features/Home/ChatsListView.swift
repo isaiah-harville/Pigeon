@@ -145,6 +145,8 @@ extension ChatsListView {
       chatRows
     }
     .listStyle(.plain)
+    // Room below the last row so the floating + button never covers it.
+    .contentMargins(.bottom, 88, for: .scrollContent)
   }
 
   private var activeGroups: [PigeonGroupState] {
@@ -342,12 +344,8 @@ private struct ContactRow: View {
 
   private var timeString: String? {
     guard let date = session.lastMessage(with: contact)?.date else { return nil }
-    let formatter = DateFormatter()
-    if Calendar.current.isDateInToday(date) {
-      formatter.timeStyle = .short
-    } else {
-      formatter.dateStyle = .short
-    }
-    return formatter.string(from: date)
+    return Calendar.current.isDateInToday(date)
+      ? date.formatted(date: .omitted, time: .shortened)
+      : date.formatted(date: .numeric, time: .omitted)
   }
 }
