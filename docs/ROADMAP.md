@@ -54,6 +54,8 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
 - `pigeon-mesh/` — Rust crate: Fragmentation, MeshPacket (dedup/TTL/relay),
   SessionEnvelope (dependency-free, surfaced through the FFI).
 - `pigeon-relay/` — Rust (axum/tokio) zero-knowledge relay; ships as a Docker image.
+- `pigeon-cli/` — Rust terminal client (`pigeon`): direct messages over relays,
+  linking `pigeon-core` and `pigeon-mesh` directly (no FFI).
 - `Pigeon/` (app) — Identity (Keychain), CoreBluetooth transport, MeshService,
   SessionManager, encrypted storage, notifications, and SwiftUI. Links `PigeonFFI`.
 
@@ -108,6 +110,15 @@ Status: `✅ done · 🟡 in progress · ⬜ planned · 🔭 horizon`.
   payload is empty, so **confidentiality is untouched**; it does expose wake metadata
   (device token ↔ "has mail at time T") to the gateway and Apple — a deliberate,
   documented exception to "no new network services beyond the relay."
+- **Locked-phone delivery (1.5.0)** — each push runs a notification service
+  extension that moves the still-encrypted envelopes into an on-device spool and
+  only then acknowledges the relay, so delivery no longer depends on the relay
+  holding a message until the app opens. Relays journal pairwise mailboxes to
+  SQLite, so a restart keeps every message still waiting for its recipient.
+- **Terminal client (1.5.0)** — `pigeon` exchanges direct messages with the app
+  over relays from macOS, Linux, and Windows: contact links, message requests,
+  delivery receipts, and safety numbers, with the identity and history sealed
+  under an Argon2id passphrase. See [Terminal Client](terminal-client.md).
 - **Encrypted storage** — biometric-gated `Vault` key + `EncryptedStore`;
   **per-chat ephemeral mode** (synced to the peer, future-messages-only).
 - **Onboarding & UI** — name onboarding, QR identity card and shareable remote
@@ -205,8 +216,10 @@ Several are audit blockers (see [SECURITY_MODEL.md](SECURITY_MODEL.md) → Audit
   and receive. Inbound envelopes are buffered in memory (and left unacked on the
   relay) and a single content-free notification is posted; they decrypt once the
   user unlocks (the message vault stays biometric-gated — no background
-  decryption, deliberately). iOS still *suspends* a backgrounded app, which is why
-  the default-on **push wake-up** (Shipped) exists to nudge it awake to drain its mailbox.
+  decryption, deliberately). When the app is not running, each push wake-up runs
+  the notification service extension, which moves the still-encrypted envelopes
+  into an on-device spool and only then acknowledges them; the app drains the
+  spool after unlock.
 
 *Resolved:* multi-path duplicate delivery (mesh dedup); identity↔Olm-key binding
 (the Ed25519 identity signs Olm's Curve25519 identity key); one-sided-restart

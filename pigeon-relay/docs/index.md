@@ -9,11 +9,14 @@ those properties live end-to-end in Pigeon clients.
 
 ## Durable state and restarts
 
-Pairwise mailboxes are intentionally memory-only. A restart discards any
-unacknowledged pairwise envelopes, and senders retransmit them from their durable
-client queues.
+Pairwise mailboxes are journaled to SQLite (`mailboxes.sqlite3`) before the relay
+replies `published`, because a sender treats that receipt as final and retires its
+own copy. An envelope is deleted when its recipient acknowledges it, when it
+expires, or when it is evicted by the queue and byte bounds; a restart restores
+every envelope that is still held. A failed write stops the relay rather than
+acknowledge a deposit a restart would lose.
 
-Group mailboxes and the MLS coordinator are different: group registrations,
+Group mailboxes and the MLS coordinator are also durable: group registrations,
 opaque group entries, capability state, cursors, dissolution tombstones,
 coordinator candidates, and signed receipt chains are committed to SQLite before
 the relay acknowledges a mutation. Their storage directory is configured with
@@ -43,8 +46,9 @@ and signed coordinator receipts. It contains no message plaintext or private
 client keys, but a relay operator can observe and retain this metadata until TTL
 or cursor reclamation removes it.
 
-Pairwise ciphertext and APNs device tokens remain memory-only and are not part of
-the durable database.
+The pairwise journal holds each envelope's recipient key, relay-assigned id,
+timestamp, and opaque ciphertext until it is acknowledged or expires. APNs device
+tokens remain memory-only.
 
 ## Backups
 

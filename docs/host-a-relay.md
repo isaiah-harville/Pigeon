@@ -23,10 +23,10 @@ relays are federated, and anyone can run their own.
 - A domain name and TLS. Pigeon clients connect over `wss://`, so you need a
   certificate; terminate TLS at a reverse proxy in front of the relay.
 
-Pairwise envelopes remain **in memory only** and senders retry after a restart.
-Group registrations, opaque group ciphertext, capability state, dissolution
-tombstones, and coordinator receipt chains are committed to SQLite before they
-are acknowledged. Mount the relay state directory on persistent storage and keep
+Pairwise envelopes, group registrations, opaque group ciphertext, capability
+state, dissolution tombstones, and coordinator receipt chains are committed to
+SQLite before they are acknowledged, so a restart keeps every message still
+waiting for its recipient. Mount the relay state directory on persistent storage and keep
 the stable coordinator signing seed in a separate secret manager.
 
 ## 1. Run the container
@@ -224,7 +224,8 @@ do — you do not need to serve the world for it to work.
 - **Backups.** Back up `/var/lib/pigeon-relay` and the coordinator seed as one
   recovery set. Stop the relay for a filesystem copy, or use a SQLite-aware
   snapshot; copying only the main database files while WAL files are active can
-  omit committed state. Pairwise queues are intentionally excluded.
+  omit committed state. The backup includes pairwise envelopes still waiting for
+their recipients.
 - **Updates.** `docker pull` the `latest` tag and recreate the container.
   Versioned tags (for example `v1.2.3`) are published for pinning.
 - **Logs.** The relay does not log addresses or content. Keep it that way — do

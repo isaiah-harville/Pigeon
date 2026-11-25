@@ -6,6 +6,10 @@ questionnaire for the actual build and distribution regions, then attach any
 documentation Apple requests. The project does not assert an exemption in its
 build settings. See [Apple's export compliance overview](https://developer.apple.com/help/app-store-connect/manage-app-information/overview-of-export-compliance/).
 
+The app and its notification service extension need the App Group
+`group.com.isaiah-harville.Pigeon` and the shared Keychain group enabled on
+both App IDs, and both targets must carry the same version and build number.
+
 Pigeon versions each deployable component independently. Versions come from
 component manifests and are changed in normal reviewed pull requests:
 
@@ -16,6 +20,7 @@ component manifests and are changed in normal reviewed pull requests:
 | Relay | `pigeon-relay/Cargo.toml` |
 | Messaging core | `pigeon-core/Cargo.toml` |
 | Mesh library | `pigeon-mesh/Cargo.toml` |
+| Terminal client | `pigeon-cli/Cargo.toml` |
 
 All versions use semantic versioning. The release-version workflow
 requires a version bump whenever component code, protocol, packaging, or
@@ -41,7 +46,9 @@ its build consumes the canonical protobuf schema from the workspace-level
 `proto/` directory, which a crates.io package cannot contain. `pigeon-ffi` is an
 internal Apple build bridge rather than an independently released component;
 Cargo requires its manifest version, but Pigeon does not tag or enforce that
-version. `pigeon-relay` is distributed as a container. Both are explicitly
+version. `pigeon-cli` is installed from source with `cargo install --path
+pigeon-cli`; it depends on `pigeon-core`, so it cannot be published to
+crates.io either. `pigeon-relay` is distributed as a container. Both are explicitly
 excluded from crates.io publication.
 
 ## iOS 1.4 release gates
@@ -63,6 +70,9 @@ background delivery.
 - Interrupt the move before staging, after staging, during source retirement,
   and after source retirement but before destination activation. Reopen both
   phones and verify either a safe resume or an explicit recovery state.
+- With the app not running and the phone locked, send several messages. Verify
+  the push runs the notification service extension (the relay mailbox empties),
+  then unlock and verify each message appears exactly once.
 - Reinstall while a Keychain identity survives. Verify Pigeon requires an
   explicit fresh start and rotates the identity; it must not silently reuse a
   key with missing encrypted session state.
