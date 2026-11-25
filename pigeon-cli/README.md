@@ -8,10 +8,16 @@ contact cards and safety numbers, and the same relay mailbox protocol.
 It does direct messages only. The Bluetooth/Wi-Fi mesh and MLS group chats stay on the
 phone for now.
 
+The full setup and usage guide is [docs/terminal-client.md](../docs/terminal-client.md)
+(also on the documentation site under **Terminal Client**).
+
 ## Build
 
+Requires Rust 1.89 or newer.
+
 ```sh
-cargo build --release -p pigeon-cli      # produces target/release/pigeon
+cargo install --locked --path pigeon-cli   # installs `pigeon` into ~/.cargo/bin
+cargo build --release -p pigeon-cli        # or build target/release/pigeon
 ```
 
 Pure Rust with rustls, so it builds on macOS, Linux, and Windows without system TLS
@@ -34,7 +40,7 @@ Adding someone from a link sends a **message request**: your first message goes 
 with your card, and you can send more once they accept. If you both added each other
 in person, use `pigeon add --mutual <link>` to skip that step.
 
-By default you receive on `wss://relay.pigeonwire.app/ws`; use `--relay` on `init` (or
+By default you receive on the default Pigeon relay; use `--relay` on `init` (or
 `pigeon relays <url>…`) to pick your own. Share a fresh `pigeon card` after changing
 relays.
 

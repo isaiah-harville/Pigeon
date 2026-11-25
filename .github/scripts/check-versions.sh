@@ -33,8 +33,10 @@ mesh_version="$(crate_version pigeon-mesh/Cargo.toml)"
 relay_version="$(crate_version pigeon-relay/Cargo.toml)"
 
 ios_project_version_count="$(grep -c "MARKETING_VERSION = ${ios_version};" Pigeon/Pigeon.xcodeproj/project.pbxproj || true)"
-[[ "$ios_project_version_count" == "2" ]] ||
-  die "Pigeon/VERSION ($ios_version) must match both Pigeon app MARKETING_VERSION values"
+# Debug and Release for the app and for its notification service extension;
+# App Store Connect rejects an extension whose version differs from the app's.
+[[ "$ios_project_version_count" == "4" ]] ||
+  die "Pigeon/VERSION ($ios_version) must match the app and notification extension MARKETING_VERSION values"
 
 [[ $# -eq 0 ]] || die "version validation does not accept release tags"
 printf 'iOS %s; website %s; core %s; mesh %s; relay %s\n' \

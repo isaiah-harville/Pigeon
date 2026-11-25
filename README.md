@@ -16,7 +16,15 @@ metadata reduction, and product polish.
 
 > **New here?** [**How Pigeon Works**](docs/HOW_IT_WORKS.md) is an illustrated,
 > plain-language walkthrough of the whole system — keys, trust, the handshake,
-> the ratchet, and every transport
+> the ratchet, and every transport.
+
+## Clients
+
+- **iPhone app** (`Pigeon/`): direct and group chats over the Bluetooth mesh,
+  local Wi-Fi, and relays, with delivery while the phone is locked.
+- **Terminal client** (`pigeon-cli/`): direct messages over relays from macOS,
+  Linux, or Windows, interoperable with the app. See the
+  [Terminal Client guide](docs/terminal-client.md).
 
 ## Project sites
 
@@ -64,6 +72,11 @@ concurrently):
   app links for messaging crypto and
   mesh.
 - `pigeon-relay/` - Rust zero-knowledge relay server.
+- `pigeon-cli/` - terminal client (`pigeon` binary) linking `pigeon-core` and
+  `pigeon-mesh` directly.
+- `Pigeon/PigeonNotificationService/` - notification service extension that
+  moves still-encrypted relay messages onto the phone while it is locked;
+  `Pigeon/Shared/` holds the code it shares with the app.
 - `docs/` - MkDocs source for design, security, roadmap, and API docs.
 
 ## Common Commands
@@ -77,6 +90,8 @@ swift test --package-path Pigeon/PigeonFFI
 xcodebuild -list -project Pigeon/Pigeon.xcodeproj
 xcodebuild build -project Pigeon/Pigeon.xcodeproj -scheme Pigeon -destination 'generic/platform=iOS'
 cargo test --manifest-path pigeon-relay/Cargo.toml
+cargo test --manifest-path pigeon-cli/Cargo.toml
+cargo install --locked --path pigeon-cli   # install the terminal client
 uv run --group docs mkdocs build --strict
 ```
 

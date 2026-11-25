@@ -449,10 +449,12 @@ Pigeon keeps the trust cost minimal:
   timing, message sizes, and that *some* sender is delivering to recipient key X.
   Mitigations (sealed-sender addressing, padding, and routing over **Tor** to hide
   IPs) are planned, not yet implemented.
-- Pairwise queues are transient and memory-only. Group authorization,
-  ciphertext, cursors/tombstones, and signed coordinator receipt chains are
-  committed to local SQLite before acknowledgement so a restart cannot forget a
-  revocation or reuse a coordinator sequence. The durable database contains no
+- Pairwise envelopes are journaled to local SQLite before the relay replies
+  `published` (senders retire their copy on that receipt) and deleted on
+  acknowledgement, expiry, or eviction. Group authorization, ciphertext,
+  cursors/tombstones, and signed coordinator receipt chains are committed to
+  local SQLite before acknowledgement so a restart cannot forget a revocation or
+  reuse a coordinator sequence. The durable database contains no
   plaintext or private client keys, but it does retain group-level metadata and
   opaque content until TTL/cursor reclamation. Startup fails closed if the
   configured coordinator signing key does not match the stored log identity.
@@ -505,9 +507,12 @@ group has a new entry, coordinator receipt, or dissolution at time T"`, which
 also reveals which registered tokens read the same group. This is a deliberate,
 documented exception to the project's "no new network services beyond the relay"
 rule and to the relay's "learns only public keys" property (now also a device
-token, on the official deployment only). A future Notification Service Extension
-for richer (decrypted) notifications would require loosening the biometric vault
-and is explicitly out of scope.
+token, on the official deployment only). The push asks iOS to run Pigeon's
+notification service extension, which only moves still-encrypted envelopes into
+the on-device spool (see Background delivery above); the visible alert stays the
+relay's fixed, content-free text. Decrypting in the extension for richer
+notifications would require loosening the biometric vault and is explicitly out
+of scope.
 
 ---
 Continue with the [attacker model, known limitations, and audit readiness](SECURITY_REVIEW.md).

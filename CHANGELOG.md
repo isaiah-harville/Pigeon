@@ -5,6 +5,7 @@
 ### Added
 
 - `pigeon`, a terminal client for any machine (`pigeon-cli/`). It exchanges end-to-end-encrypted direct messages with the iPhone app over relays: contact links, message requests, delivery receipts, and safety numbers. Its identity and history are sealed under a passphrase.
+- A [Terminal Client guide](docs/terminal-client.md) covers installing `pigeon`, creating an identity, exchanging contact links with the app, chatting, verifying safety numbers, choosing relays, backups, and troubleshooting.
 - Messages keep reaching a locked iPhone that is not running Pigeon. On each push, a notification service extension moves the still-encrypted messages from the relay into the phone, so they no longer depend on the relay holding them until you open the app. They are decrypted only after you unlock.
 
 ### Fixed
