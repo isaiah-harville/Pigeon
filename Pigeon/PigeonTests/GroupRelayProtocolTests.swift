@@ -187,27 +187,15 @@ final class GroupRelayProtocolTests: XCTestCase {
 
   func testReplacementConnectionConfirmsAuthorizationOnceItBecomesCanonical() {
     var state = GroupRelayAuthorizationState(requiresConfirmation: false)
-    var confirmations = 0
-
-    XCTAssertTrue(
-      state.confirmIfRequired {
-        confirmations += 1
-        return true
-      })
-    XCTAssertEqual(confirmations, 0)
+    XCTAssertFalse(state.needsConfirmation)
 
     state.requireConfirmation()
-    XCTAssertTrue(
-      state.confirmIfRequired {
-        confirmations += 1
-        return true
-      })
-    XCTAssertTrue(
-      state.confirmIfRequired {
-        confirmations += 1
-        return true
-      })
-    XCTAssertEqual(confirmations, 1)
+    XCTAssertTrue(state.needsConfirmation)
+    state.markConfirmed()
+    XCTAssertFalse(state.needsConfirmation)
+
+    state.requireConfirmation()
+    XCTAssertFalse(state.needsConfirmation)
   }
 
   func testProtocolVersionRejectsOutOfRangeAndFractionalJSONIntegers() throws {

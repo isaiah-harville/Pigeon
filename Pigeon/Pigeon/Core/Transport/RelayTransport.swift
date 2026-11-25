@@ -115,6 +115,10 @@ final class RelayTransport: Transport {
   var pendingDeposits = DepositQueue(bound: 256)
   var unconfirmedDepositCount = 0
   @ObservationIgnored var depositRetryTask: Task<Void, Never>?
+  /// The last queued write per socket, so frames leave in the order they were
+  /// sent (an ack never overtakes the auth it follows, deposits keep order).
+  @ObservationIgnored private var socketWrites: [ObjectIdentifier: (Int, Task<Void, Never>)] = [:]
+  @ObservationIgnored private var socketWriteSequence = 0
 
   /// Watches the OS network path so relays reconnect the instant connectivity
   /// returns (Wi-Fi ↔ cellular, airplane mode off), rather than waiting out the
@@ -348,10 +352,22 @@ extension RelayTransport {
 
   // MARK: - Framing
 
+  /// Queues `object` on `socket` behind any earlier write to it. A failed
+  /// write is not retried here: an unsent ack is redelivered by the relay and
+  /// an unsent deposit stays in `pendingDeposits` until a receipt arrives.
   func send(_ socket: URLSessionWebSocketTask, _ object: [String: Any]) {
     guard let data = try? JSONSerialization.data(withJSONObject: object) else { return }
     guard let text = String(bytes: data, encoding: .utf8) else { return }
-    Task { try? await socket.send(.string(text)) }
+    let key = ObjectIdentifier(socket)
+    let previous = socketWrites[key]?.1
+    socketWriteSequence &+= 1
+    let sequence = socketWriteSequence
+    let write = Task { [weak self] in
+      await previous?.value
+      try? await socket.send(.string(text))
+      if self?.socketWrites[key]?.0 == sequence { self?.socketWrites[key] = nil }
+    }
+    socketWrites[key] = (sequence, write)
   }
 
   private func negotiateProtocol(with socket: URLSessionWebSocketTask) async throws {

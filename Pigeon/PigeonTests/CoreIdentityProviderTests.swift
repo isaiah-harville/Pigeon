@@ -124,6 +124,28 @@ final class CoreIdentityProviderTests: XCTestCase {
       .whenUnlocked)
   }
 
+  func testPreloadedScopedKeysStillSignAfterTheKeychainLocks() throws {
+    let root = try IdentityManager(store: InMemoryKeyStore(seed: Data(repeating: 8, count: 32)))
+    let factory = MemoryScopedKeyStoreFactory()
+    let purpose = request(.groupCapability, group: 9)
+    let expected = try CoreIdentityProvider(rootIdentity: root, storeFactory: factory)
+      .ensurePublicKey(purpose: purpose)
+
+    let relaunched = CoreIdentityProvider(rootIdentity: root, storeFactory: factory)
+    relaunched.preloadScopedKeys(groupIDs: [Data(repeating: 9, count: 32), Data([1])])
+    let group = String(repeating: "09", count: 32)
+    factory.store(account: "identity.group.\(group).capability.ed25519.private")?
+      .isUnavailable = true
+
+    XCTAssertEqual(try relaunched.ensurePublicKey(purpose: purpose), expected)
+    XCTAssertNil(
+      factory.store(account: "identity.group.\(group).recovery.ed25519.private")?.data,
+      "preloading never generates a key")
+    XCTAssertEqual(
+      factory.store(account: "identity.group.\(group).capability.ed25519.private")?
+        .accessibility, .whenUnlocked)
+  }
+
   func testSignaturesVerifyUnderTheRequestedPurposeOnly() throws {
     let root = try IdentityManager(store: InMemoryKeyStore(seed: Data(repeating: 4, count: 32)))
     let provider = CoreIdentityProvider(

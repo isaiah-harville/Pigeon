@@ -1,9 +1,21 @@
 # Changelog
 
-## [1.5.0] - Unreleased
+## [1.5.0] - 2026-11-25 (beta)
+
+### Added
+
+- `pigeon`, a terminal client for any machine (`pigeon-cli/`). It exchanges end-to-end-encrypted direct messages with the iPhone app over relays: contact links, message requests, delivery receipts, and safety numbers. Its identity and history are sealed under a passphrase.
+- Messages keep reaching a locked iPhone that is not running Pigeon. On each push, a notification service extension moves the still-encrypted messages from the relay into the phone, so they no longer depend on the relay holding them until you open the app. They are decrypted only after you unlock.
 
 ### Fixed
 
+- Creating a group no longer gets stuck on "Registering with relay". Authenticating to the group relay re-entered the relay connection while it was being updated, which crashed the app or kept the registration retrying forever.
+- Relays keep stored direct messages across a restart. Before, a relay restart lost every message waiting for a phone that was offline or locked, even though the sender had already been told it was stored.
+- A phone coming back online after a long time receives every waiting message at once. Before, it received at most 256 and the rest waited for an unrelated reconnect.
+- One direct message the relay refuses no longer holds up every message queued behind it. Sends go out several at a time, a refused one retries on its own schedule, and a stalled relay connection is noticed and replaced.
+- Relay frames leave in the order they were sent.
+- A running app that locks before its group relay first connects can still authenticate to that relay.
+- Long chats scroll and render smoothly. New messages no longer pull you to the bottom while you read older history, the send button meets the 44-point touch target and has a VoiceOver label, blank messages can't be sent, and the **+** button no longer covers the last chat.
 - A new chat opens even when its first message was lost or rejected: any later pre-key message from the sender establishes the session, and a replayed pre-key message can no longer open a second session.
 - A message request to someone who already added you opens the chat when they reply, instead of staying stuck as a pending request on both phones.
 - Scanning someone in person who already sent you a message request accepts the request. Before, the chat looked open but every message you sent was refused.
@@ -12,7 +24,7 @@
 
 ### Security
 
-- The relay (0.4.3) updates rustls to 0.23.46, rustls-webpki to 0.103.16, webpki-roots to 1.0.10, and tokio to 1.53.3, and moves to rusqlite 0.41, whose bundled SQLite fixes a known vulnerability. The website image (0.2.1) moves from the unmaintained nginx 1.27 base to nginx 1.30.
+- The relay (0.5.0) updates rustls to 0.23.46, rustls-webpki to 0.103.16, webpki-roots to 1.0.10, and tokio to 1.53.3, and moves to rusqlite 0.41, whose bundled SQLite fixes a known vulnerability. The website image (0.2.1) moves from the unmaintained nginx 1.27 base to nginx 1.30.
 
 [1.5.0]: https://github.com/isaiah-harville/Pigeon/compare/v1.4.1...v1.5.0
 

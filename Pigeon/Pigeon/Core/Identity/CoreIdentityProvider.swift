@@ -139,6 +139,33 @@ final class CoreIdentityProvider: PlatformIdentity, @unchecked Sendable {
     }
   }
 
+  /// Loads already-stored scoped keys for `groupIDs` (and the MLS key) into
+  /// memory while the device is unlocked, so a session that keeps running
+  /// after the screen locks can still sign for its groups. The keys stay
+  /// `whenUnlocked` at rest; this never generates a key.
+  func preloadScopedKeys(groupIDs: [Data]) {
+    var accounts = [Self.mlsAccount]
+    for groupID in groupIDs where groupID.count == 32 {
+      accounts.append(Self.groupAccount(groupID, suffix: "capability"))
+      accounts.append(Self.groupAccount(groupID, suffix: "recovery"))
+    }
+    lock.withLock {
+      for account in accounts where scopedKeys[account] == nil {
+        let store = storeFactory.makeStore(account: account)
+        guard let stored = try? store.get(), stored.count == 32,
+          (try? store.setAccessibility(.whenUnlocked)) != nil,
+          let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: stored)
+        else { continue }
+        scopedKeys[account] = key
+      }
+    }
+  }
+
+  private static func groupAccount(_ groupID: Data, suffix: String) -> String {
+    let group = groupID.map { String(format: "%02x", $0) }.joined()
+    return "identity.group.\(group).\(suffix).ed25519.private"
+  }
+
   private func account(for purpose: IdentityPurposeRequest) throws -> String {
     switch purpose.kind {
     case .mls:
@@ -146,9 +173,8 @@ final class CoreIdentityProvider: PlatformIdentity, @unchecked Sendable {
       return Self.mlsAccount
     case .groupCapability, .groupRecovery:
       guard purpose.groupId.count == 32 else { throw PlatformError.InvalidOutput }
-      let group = purpose.groupId.map { String(format: "%02x", $0) }.joined()
       let suffix = purpose.kind == .groupCapability ? "capability" : "recovery"
-      return "identity.group.\(group).\(suffix).ed25519.private"
+      return Self.groupAccount(purpose.groupId, suffix: suffix)
     case .root, .relay:
       throw PlatformError.InvalidOutput
     }

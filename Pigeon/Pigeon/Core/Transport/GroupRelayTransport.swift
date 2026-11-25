@@ -244,7 +244,7 @@ extension GroupRelayTransport {
       throw RelayError.handshake
     }
     guard
-      connection.authorization.confirmIfRequired({
+      connection.confirmAuthorizationIfRequired({
         onAuthenticated?(connection.group.groupID, connection.group.capabilityID) == true
       })
     else {
@@ -341,7 +341,7 @@ extension GroupRelayTransport {
         receipt.publicValue, submission.candidate, "\(effect.id):receipt") == true
     guard accepted else { throw RelayError.protocolError }
     guard
-      connection.authorization.confirmIfRequired({
+      connection.confirmAuthorizationIfRequired({
         onAuthenticated?(connection.group.groupID, connection.group.capabilityID) == true
       })
     else {

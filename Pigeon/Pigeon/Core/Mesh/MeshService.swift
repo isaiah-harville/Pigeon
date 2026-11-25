@@ -71,6 +71,13 @@ final class MeshService {
     transport.setEnabled(enabled)
   }
 
+  /// Feeds one envelope the notification service extension spooled from a
+  /// relay through the same path as live relay delivery, so packet dedup and
+  /// the core's idempotent commands absorb any copy that also arrived live.
+  func receiveSpooled(_ data: Data) -> TransportMessageDisposition {
+    handleInbound(data, channel: .relay(host: "spool"))
+  }
+
   private func handleInbound(_ data: Data, channel: TransportChannel)
     -> TransportMessageDisposition
   {

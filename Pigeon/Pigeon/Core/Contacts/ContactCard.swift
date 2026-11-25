@@ -94,6 +94,15 @@ struct ContactCard {
 
   /// Parses a scanned QR payload, pasted code, or shared Pigeon contact link.
   /// Returns nil if the input is not a valid, self-consistent contact card.
+  /// A cheap pre-check for chat rendering: a shared card is one long token
+  /// (a share link or bare encoding), so ordinary prose never pays for a
+  /// base64 and protobuf decode attempt.
+  static func mightBeShared(_ text: String) -> Bool {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.utf8.count >= 32
+      && !trimmed.unicodeScalars.contains { CharacterSet.whitespacesAndNewlines.contains($0) }
+  }
+
   init?(scanned string: String) {
     let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
     let encoded = Self.cardPayload(from: trimmed) ?? trimmed

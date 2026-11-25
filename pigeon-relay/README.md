@@ -24,8 +24,8 @@ docker run -p 8080:8080 \
   ghcr.io/<owner>/pigeon-relay:latest
 ```
 
-The image is multi-arch (amd64/arm64), distroless, and non-root. Pairwise queues
-are memory-only; the named volume preserves group/coordinator state. Point your
+The image is multi-arch (amd64/arm64), distroless, and non-root. The named
+volume preserves pairwise mailboxes and group/coordinator state. Point your
 homelab Kubernetes / Compose / VPS at it and terminate TLS at your ingress
 (clients use `wss://`). The coordinator seed is required in release builds, must
 be generated from a cryptographically secure source, and must remain stable
@@ -75,8 +75,12 @@ working); past `MAX_TOTAL_BYTES` each deposit evicts the oldest envelope from
 whichever mailbox is holding the most, so a flooding address pays for its own
 pressure instead of evicting everyone else's mail.
 
-Pairwise mailboxes are **in-memory and ephemeral** by design; senders retransmit
-until acknowledgement. Group registrations, opaque group entries, capability
+Pairwise mailboxes are written through to SQLite (`mailboxes.sqlite3`) before
+the relay replies `published`. That receipt lets the sender retire its copy, so
+the relay copy is often the only one while the recipient is offline or its phone
+is locked; it survives a restart until the recipient acks it or it expires. A
+reconnecting reader receives its whole backlog under channel backpressure, not
+just the first channel-full. Group registrations, opaque group entries, capability
 cursors/tombstones, coordinator receipt chains, and opaque invite envelopes are committed to SQLite under
 `PIGEON_RELAY_STATE_DIR` before the relay acknowledges them. Mount that directory
 on persistent storage and back it up together with the coordinator seed. Clients

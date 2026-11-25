@@ -112,9 +112,14 @@ Pigeon can use Apple Push Notification service (**APNs**,
   phone registers an opaque APNs token with Pigeon's **official** relay. (Only
   the app's publisher can push to the app, so this part can't be federated — it
   lives on the official relay only.)
-- When a box arrives, the relay asks APNs to send a **content-free** wake-up. Your
-  phone wakes, fetches the locked box, and — as before — only decrypts after you
-  unlock.
+- When a box arrives, the relay asks APNs to send a **content-free** alert.
+  Pigeon's notification service extension runs on it, even while the phone is
+  locked: it signs the relay's challenge, copies each still-locked box into a
+  spool on the phone, and only then tells the relay to delete its copy ("spool
+  and ack"). The extension never decrypts and never touches the ratchet; the app
+  opens the spooled boxes after you unlock, through the same path as live
+  delivery. If the extension cannot run (Background Delivery off, no network),
+  the alert still shows and the relay keeps the box.
 - Apple and the gateway see a **token, timing, and a blank wake** — never your
   message (APNs's gray badge: *"never content"*).
 

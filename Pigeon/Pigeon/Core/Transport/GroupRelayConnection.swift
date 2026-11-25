@@ -19,11 +19,10 @@ struct GroupRelayAuthorizationState {
     requiresConfirmation = true
   }
 
-  mutating func confirmIfRequired(_ confirmation: () -> Bool) -> Bool {
-    guard requiresConfirmation, !isConfirmed else { return true }
-    guard confirmation() else { return false }
+  var needsConfirmation: Bool { requiresConfirmation && !isConfirmed }
+
+  mutating func markConfirmed() {
     isConfirmed = true
-    return true
   }
 }
 
@@ -103,6 +102,18 @@ final class GroupRelayConnection {
       }), case .effect(let effect) = queue.remove(at: index)
     else { return nil }
     return effect
+  }
+
+  /// Runs `confirmation` once per required authorization, outside any access
+  /// to `authorization`. The callback commits a core command, and the session
+  /// layer then reconfigures this same connection (`requireConfirmation()`).
+  /// Holding a mutating access across that re-entry is a fatal exclusivity
+  /// violation, so the state is read, released, and only then updated.
+  func confirmAuthorizationIfRequired(_ confirmation: () -> Bool) -> Bool {
+    guard authorization.needsConfirmation else { return true }
+    guard confirmation() else { return false }
+    authorization.markConfirmed()
+    return true
   }
 
   func containsEffect(id: String) -> Bool {

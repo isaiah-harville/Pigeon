@@ -1,16 +1,61 @@
-#[test]
-fn flush_queue_replays_everything_stored() {
+#[tokio::test]
+async fn flush_queue_replays_everything_stored() {
     let st = state(3600, 100);
     let (ptx, _prx) = channel();
     publish(&st, &ptx, addr(1), "b25l".into());
     publish(&st, &ptx, addr(1), "dHdv".into());
     let (ftx, mut frx) = channel();
-    flush_queue(&st, &addr(1), &ftx);
+    flush_queue(&st, &addr(1), &ftx).await;
     let mut count = 0;
     while let Ok(ServerMsg::Envelope { .. }) = frx.try_recv() {
         count += 1;
     }
     assert_eq!(count, 2);
+}
+
+/// A device that was locked overnight can come back to more envelopes than the
+/// subscriber channel holds. Every one of them must reach it on this connect,
+/// not just the first channel-full.
+#[tokio::test]
+async fn flush_queue_delivers_a_backlog_larger_than_the_channel() {
+    let backlog = SUBSCRIBER_CHANNEL_CAPACITY * 3;
+    let st = state(3600, backlog);
+    let (ptx, _prx) = mpsc::channel(backlog * 2);
+    for index in 0..backlog {
+        publish(&st, &ptx, addr(1), B64.encode(index.to_be_bytes()));
+    }
+    let (ftx, mut frx) = channel();
+    let reader = async {
+        let mut ids = std::collections::HashSet::new();
+        while let Some(message) = frx.recv().await {
+            if let ServerMsg::Envelope { id, .. } = message {
+                ids.insert(id);
+            }
+        }
+        ids
+    };
+    let flush = async move {
+        flush_queue(&st, &addr(1), &ftx).await;
+    };
+    let ((), ids) = tokio::join!(flush, reader);
+    assert_eq!(ids.len(), backlog);
+}
+
+#[tokio::test]
+async fn flush_queue_stops_when_the_reader_disconnects() {
+    let st = state(3600, 600);
+    let (ptx, _prx) = mpsc::channel(1200);
+    for index in 0..600_usize {
+        publish(&st, &ptx, addr(1), B64.encode(index.to_be_bytes()));
+    }
+    let (ftx, frx) = channel();
+    drop(frx);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        flush_queue(&st, &addr(1), &ftx),
+    )
+    .await
+    .expect("flush must not hang on a closed reader");
 }
 
 #[test]
@@ -276,4 +321,74 @@ fn state_first_id(state: &TestState, mailbox: &str) -> String {
         .queue[0]
         .id
         .clone()
+}
+
+fn durable_state(dir: &std::path::Path, now: u64) -> (TestState, u64) {
+    let (mailbox, first_id) = Service::durable(
+        Config {
+            ttl_secs: 3600,
+            max_queue: 100,
+            max_mailboxes: 100,
+            max_total_bytes: usize::MAX,
+        },
+        crate::durable::MailboxJournal::open(dir).unwrap(),
+        now,
+    )
+    .unwrap();
+    (
+        TestState {
+            mailbox,
+            message_ids: AtomicU64::new(first_id),
+            push: Arc::new(PushRegistry::new(None, Duration::from_secs(30))),
+        },
+        first_id,
+    )
+}
+
+/// A `published` receipt lets the sender retire its copy, so a stored envelope
+/// must outlive a relay restart until the recipient acks it.
+#[tokio::test]
+async fn published_envelopes_survive_a_restart_until_acked() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = crate::clock::now();
+    let stored_id = {
+        let (st, _) = durable_state(dir.path(), now);
+        let (ptx, mut prx) = channel();
+        publish(&st, &ptx, addr(1), "b25l".into());
+        let Ok(ServerMsg::Published { id, .. }) = prx.try_recv() else {
+            panic!("expected a publish receipt")
+        };
+        id
+    };
+
+    let (st, first_id) = durable_state(dir.path(), now);
+    assert!(first_id > u64::from_str_radix(&stored_id, 16).unwrap());
+    let (ftx, mut frx) = channel();
+    flush_queue(&st, &addr(1), &ftx).await;
+    let Ok(ServerMsg::Envelope { id, ciphertext, .. }) = frx.try_recv() else {
+        panic!("stored envelope was lost across the restart")
+    };
+    assert_eq!((id.as_str(), ciphertext.as_str()), (stored_id.as_str(), "b25l"));
+
+    ack(&st, &addr(1), &stored_id);
+    drop(st);
+    let (st, _) = durable_state(dir.path(), now);
+    let (ftx, mut frx) = channel();
+    flush_queue(&st, &addr(1), &ftx).await;
+    assert!(frx.try_recv().is_err(), "an acked envelope came back after restart");
+}
+
+#[tokio::test]
+async fn expired_envelopes_are_not_restored() {
+    let dir = tempfile::tempdir().unwrap();
+    let now = crate::clock::now();
+    {
+        let (st, _) = durable_state(dir.path(), now);
+        let (ptx, _prx) = channel();
+        publish(&st, &ptx, addr(1), "b25l".into());
+    }
+    let (st, _) = durable_state(dir.path(), now + 7200);
+    let (ftx, mut frx) = channel();
+    flush_queue(&st, &addr(1), &ftx).await;
+    assert!(frx.try_recv().is_err());
 }

@@ -101,6 +101,64 @@ final class PairwiseRelayIntegrationTests: XCTestCase {
       alice.messages(with: bobAgain).last { !$0.system }?.text, "Welcome back")
   }
 
+  /// Spool-and-ack: the extension moved the envelope off the relay while the
+  /// phone was locked, so the app's drain is now the only delivery path. It
+  /// must deliver exactly once, even if the same envelope also arrived live.
+  func testSpooledEnvelopeIsDeliveredOnceAfterUnlock() throws {
+    let bus = TestBus()
+    let aliceKey = SymmetricKey(size: .bits256)
+    let bobKey = SymmetricKey(size: .bits256)
+    let aliceFile = "spool-alice-\(UUID().uuidString).store"
+    let bobFile = "spool-bob-\(UUID().uuidString).store"
+    let spoolDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("spool-\(UUID().uuidString)", isDirectory: true)
+    defer {
+      wipe(aliceKey, file: aliceFile)
+      wipe(bobKey, file: bobFile)
+      try? FileManager.default.removeItem(at: spoolDirectory)
+    }
+    let (alice, _) = try launch(key: aliceKey, file: aliceFile, bus: bus)
+    let (bob, bobTransport) = try launch(key: bobKey, file: bobFile, bus: bus)
+    alice.setMyName("Alice")
+    bob.setMyName("Bob")
+    let bobOnAlice = try addInPerson(bob, to: alice)
+    let aliceOnBob = try addInPerson(alice, to: bob)
+    let spool = MailboxSpool(directory: spoolDirectory)
+
+    alice.send("While you were locked", to: bobOnAlice)
+    let frames = try relayFrames(from: alice, to: bob)
+    for frame in frames { try spool.store(frame) }
+
+    XCTAssertEqual(bob.drainMailboxSpool(spool), frames.count)
+    XCTAssertTrue(try spool.entries().isEmpty)
+    XCTAssertEqual(
+      bob.messages(with: aliceOnBob).filter { !$0.system }.map(\.text),
+      ["While you were locked"])
+
+    // The same envelope arriving live as well, or spooled twice, is absorbed.
+    for frame in frames {
+      XCTAssertEqual(bobTransport.deliver(frame), .consumed)
+      try spool.store(frame)
+    }
+    XCTAssertEqual(bob.drainMailboxSpool(spool), frames.count)
+    XCTAssertEqual(bob.messages(with: aliceOnBob).filter { !$0.system }.count, 1)
+  }
+
+  private func relayFrames(from sender: SessionManager, to recipient: SessionManager) throws
+    -> [Data]
+  {
+    let snapshot = try XCTUnwrap(sender.coreClient).stateSnapshot()
+    return try snapshot.pendingOutbound
+      .filter { $0.kind == .pairwise && $0.destination == recipient.myID }
+      .map { item in
+        let frame = try PairwiseRelayProtocol.publish(
+          sender: sender.myID, recipient: recipient.myID, payload: item.payload, requestID: nil)
+        let object = try XCTUnwrap(
+          JSONSerialization.jsonObject(with: frame) as? [String: String])
+        return try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(object["ciphertext"])))
+      }
+  }
+
   private func addInPerson(_ peer: SessionManager, to manager: SessionManager) throws -> Contact {
     let card = try XCTUnwrap(peer.myCard)
     XCTAssertTrue(
@@ -133,7 +191,7 @@ final class PairwiseRelayIntegrationTests: XCTestCase {
     XCTAssertFalse(items.isEmpty)
     for item in items {
       let frame = try PairwiseRelayProtocol.publish(
-        sender: sender.myID, recipient: recipient.myID, payload: item.payload)
+        sender: sender.myID, recipient: recipient.myID, payload: item.payload, requestID: nil)
       let object = try XCTUnwrap(
         JSONSerialization.jsonObject(with: frame) as? [String: String])
       XCTAssertEqual(object["recipient"], recipient.myID.hexEncoded)

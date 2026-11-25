@@ -106,9 +106,18 @@ sessions in `pigeon-core`). The mesh layer relays opaque ciphertext;
   `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` (readable only while unlocked).
   The trade-off is a wider window for forensic key extraction from a powered-on,
   already-unlocked device — a hard, narrow attack vector — versus background
-  notifications. The message itself is never decrypted while locked: inbound
-  envelopes are held in memory (and retained on the relay, unacked) and processed
-  only after the vault is unlocked. Plaintext and history stay behind the
+  notifications. The message itself is never decrypted while locked. A cold
+  background launch holds inbound envelopes in memory and leaves them on the
+  relay, unacked. The notification service extension (run on each content-free
+  push) reads the same identity key from a shared `…ThisDeviceOnly` Keychain
+  access group, authenticates to our mailbox, and moves envelopes into an
+  app-group spool (`completeUntilFirstUserAuthentication`), fsyncing each before
+  acking the relay. Spooled entries are the relay's opaque ciphertext; their
+  only new at-rest exposure is the sender/recipient identity keys in the
+  session-envelope header, which the relay already sees. The extension never
+  decrypts or touches Olm state; the app drains the spool through the live
+  inbound path after the vault is unlocked and deletes an entry only once the
+  core has durably consumed it. Plaintext and history stay behind the
   biometric-gated vault regardless of this setting. Locked startup is
   load-existing-only: it can never generate or replace an identity before
   protected data becomes available.

@@ -80,6 +80,13 @@ final class SessionManager {
   /// checkpoint callbacks; pairwise/MLS internals remain behind this API.
   private(set) var coreClient: PigeonCoreClient?
   private var coreIdentityProvider: CoreIdentityProvider?
+
+  /// Caches existing group signing keys while unlocked; see
+  /// `CoreIdentityProvider.preloadScopedKeys`.
+  func preloadGroupSigningKeys() {
+    guard isUnlocked else { return }
+    coreIdentityProvider?.preloadScopedKeys(groupIDs: groups.map(\.groupID))
+  }
   @ObservationIgnored var makeCoreIdentityProvider: (IdentityManager) -> CoreIdentityProvider =
     { identity in CoreIdentityProvider(rootIdentity: identity) }
   private var coreCheckpointStore: CoreCheckpointStore?
@@ -99,6 +106,9 @@ final class SessionManager {
   var groupRelayCapacityLimited: Set<Data> = []
   var groupConversations: [Data: GroupConversation] = [:]
   var coreSnapshotGeneration: UInt64 = 0
+  /// The published pairwise pre-key bundle from the latest core snapshot, so
+  /// building `myCard` does not take a full core snapshot.
+  var pairwisePrekeyBundleBytes: Data?
   var meshedPairwiseOutboundIDs: Set<String> = []
   /// Pending receipt timers, one per group; see `+GroupAcknowledgements`.
   @ObservationIgnored var groupAcknowledgementFlushes: [Data: Task<Void, Never>] = [:]
@@ -207,6 +217,11 @@ final class SessionManager {
     // envelopes were surfaced but not acked (we couldn't consume them locked),
     // so the relay still holds them — pull them again now that we can ack.
     if drainLockedInbox() { relay?.resubscribeOwnRelays() }
+    preloadGroupSigningKeys()
+    // Envelopes the notification service extension took custody of while the
+    // app was not running; the relay no longer holds them.
+    publishSpoolConfiguration()
+    drainMailboxSpool()
     // Purge queue entries that outlived the retention window while the app was
     // closed, then re-arm/settle the deadlines lost to the relaunch so a
     // message killed mid-send doesn't read "Sending…" forever.
@@ -217,6 +232,7 @@ final class SessionManager {
   /// Recomputes the relay connection pool (our relays plus every contact's).
   func refreshRelay() {
     relay?.reconfigure(RelaySettings.urls())
+    publishSpoolConfiguration()
   }
 
   // MARK: - Sending

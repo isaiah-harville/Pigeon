@@ -4,6 +4,7 @@ members = [
   "pigeon-ffi",
   "pigeon-mesh",
   "pigeon-relay",
+  "pigeon-cli",
 ]
 resolver = "2"
 

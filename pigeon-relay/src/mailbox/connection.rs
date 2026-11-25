@@ -302,7 +302,14 @@ async fn handle_socket(socket: WebSocket, state: ConnectionState, peer_ip: IpAdd
                         let _ = tx.try_send(ServerMsg::Ok {
                             detail: "authenticated".into(),
                         });
-                        flush_queue(&state.service, &mailbox, &tx);
+                        // Off the read loop, so acks keep flowing while a
+                        // large backlog drains under channel backpressure.
+                        let service = state.service.clone();
+                        let backlog_mailbox = mailbox.clone();
+                        let backlog_tx = tx.clone();
+                        tokio::spawn(async move {
+                            flush_queue(&service, &backlog_mailbox, &backlog_tx).await;
+                        });
                     }
                 } else {
                     let _ = tx.try_send(ServerMsg::Error {
