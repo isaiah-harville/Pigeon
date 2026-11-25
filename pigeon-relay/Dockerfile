@@ -14,7 +14,10 @@ ENV CARGO_PROFILE_RELEASE_STRIP=true \
 
 COPY Cargo.toml Cargo.lock ./
 
-RUN --mount=type=bind,source=pigeon-core,target=/src/pigeon-core,readonly \
+# Every workspace member's manifest must be present for `--locked` to resolve
+# the workspace, even though only the relay is built.
+RUN --mount=type=bind,source=pigeon-cli,target=/src/pigeon-cli,readonly \
+    --mount=type=bind,source=pigeon-core,target=/src/pigeon-core,readonly \
     --mount=type=bind,source=pigeon-ffi,target=/src/pigeon-ffi,readonly \
     --mount=type=bind,source=pigeon-mesh,target=/src/pigeon-mesh,readonly \
     --mount=type=bind,source=pigeon-relay,target=/src/pigeon-relay,readonly \
