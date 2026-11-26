@@ -2234,7 +2234,7 @@ dependencies = [
 
 [[package]]
 name = "pigeon-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -2260,7 +2260,7 @@ dependencies = [
 
 [[package]]
 name = "pigeon-core"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "ed25519-dalek",
  "getrandom 0.2.17",
@@ -2300,7 +2300,7 @@ dependencies = [
 
 [[package]]
 name = "pigeon-relay"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "axum",
  "base64 0.22.1",
