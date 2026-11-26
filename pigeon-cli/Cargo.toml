@@ -1,6 +1,6 @@
 [package]
 name = "pigeon-cli"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 rust-version = "1.89"
 description = "Terminal Pigeon client: end-to-end-encrypted direct messaging over federated zero-knowledge relays."
@@ -13,7 +13,7 @@ name = "pigeon"
 path = "src/main.rs"
 
 [dependencies]
-pigeon-core = { version = "=0.2.2", path = "../pigeon-core" }
+pigeon-core = { version = "=0.2.3", path = "../pigeon-core" }
 pigeon-mesh = { version = "=0.2.0", path = "../pigeon-mesh" }
 prost = "0.14"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "sync", "time", "signal"] }

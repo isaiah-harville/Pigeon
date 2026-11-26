@@ -1,11 +1,28 @@
 # Changelog
 
+## [1.5.1] - 2026-11-26 (beta)
+
+### Added
+
+- A [Terminal Client guide](docs/terminal-client.md) covers installing `pigeon`, creating an identity, exchanging contact links with the app, chatting, verifying safety numbers, choosing relays, backups, and troubleshooting.
+
+### Fixed
+
+- The `pigeon` terminal client can connect to relays when it is built or installed on its own. Before, `cargo install --path pigeon-cli` produced a binary with no TLS crypto backend that crashed on its first `wss://` connection.
+- Push wake-ups work on relays that supply their APNs key inline. The relay reads the key from `PIGEON_APNS_KEY_PEM` as well as from a file at `PIGEON_APNS_KEY_PATH`, and names any missing APNs variable at startup. Before, an inline key was ignored and push was silently off, so a locked phone was never woken to collect its messages.
+
+### Changed
+
+- Pigeon builds with Rust 1.100. The relay image (0.5.3) uses the Rust 1.100.0 toolchain, and `pigeon-core` (0.2.3) no longer ships a dependency that only its tests use. The terminal client (0.1.2) needs Rust 1.89 or newer.
+- The documentation no longer describes relay direct-message mailboxes as memory-only; they are stored durably, as in 1.5.0.
+
+[1.5.1]: https://github.com/isaiah-harville/Pigeon/compare/v1.5.0...v1.5.1
+
 ## [1.5.0] - 2026-11-25 (beta)
 
 ### Added
 
 - `pigeon`, a terminal client for any machine (`pigeon-cli/`). It exchanges end-to-end-encrypted direct messages with the iPhone app over relays: contact links, message requests, delivery receipts, and safety numbers. Its identity and history are sealed under a passphrase.
-- A [Terminal Client guide](docs/terminal-client.md) covers installing `pigeon`, creating an identity, exchanging contact links with the app, chatting, verifying safety numbers, choosing relays, backups, and troubleshooting.
 - Messages keep reaching a locked iPhone that is not running Pigeon. On each push, a notification service extension moves the still-encrypted messages from the relay into the phone, so they no longer depend on the relay holding them until you open the app. They are decrypted only after you unlock.
 
 ### Fixed
@@ -23,12 +40,9 @@
 - A direct message that can never be opened (a bad signature, malformed bytes, a replay, or a stranger with no contact card) is released from the relay instead of being redelivered until it expires. Before, anyone with your public key could fill your relay mailbox with junk and block real messages for up to 30 days.
 - Removing a contact and adding them again no longer leaves both of you unable to message each other. The next message from the side that re-added opens a fresh session. Old opening messages can't be replayed to bring back a dropped session, including after you remove and re-add someone.
 
-- The `pigeon` terminal client (0.1.1) can connect to relays when built on its own. Before, `cargo build -p pigeon-cli` produced a binary with no TLS crypto backend that panicked on the first `wss://` connection.
-- The relay reads its APNs key inline from `PIGEON_APNS_KEY_PEM` as well as from a file at `PIGEON_APNS_KEY_PATH`, and names any missing APNs variable at startup. Before, a key provided inline was ignored and push wake-ups were silently off.
-
 ### Security
 
-- The relay (0.5.2) updates rustls to 0.23.46, rustls-webpki to 0.103.16, webpki-roots to 1.0.10, and tokio to 1.53.3, and moves to rusqlite 0.41, whose bundled SQLite fixes a known vulnerability. The website image (0.2.1) moves from the unmaintained nginx 1.27 base to nginx 1.30.
+- The relay (0.5.1) updates rustls to 0.23.46, rustls-webpki to 0.103.16, webpki-roots to 1.0.10, and tokio to 1.53.3, and moves to rusqlite 0.41, whose bundled SQLite fixes a known vulnerability. The website image (0.2.1) moves from the unmaintained nginx 1.27 base to nginx 1.30.
 
 [1.5.0]: https://github.com/isaiah-harville/Pigeon/compare/v1.4.1...v1.5.0
 
