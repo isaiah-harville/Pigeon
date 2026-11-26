@@ -3,6 +3,20 @@ import Foundation
 import PigeonFFI
 
 extension SessionManager {
+  /// `pigeon-core` rejects command ids longer than this many bytes.
+  static let maximumCoreCommandIDBytes = 128
+
+  /// A stable core command id `prefix:key`. When that would exceed the core's
+  /// limit, the key is replaced by its SHA-256 so the id stays deterministic
+  /// (and the command idempotent) for the same key. Ids that already fit are
+  /// unchanged.
+  static func coreCommandID(_ prefix: String, _ key: String) -> String {
+    let id = "\(prefix):\(key)"
+    guard id.utf8.count > maximumCoreCommandIDBytes else { return id }
+    let digest = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+    return "\(prefix):sha256-\(digest)"
+  }
+
   static let maximumGroupMembers = 128
   static let maximumGroupMessageBytes = 64 * 1024
 
@@ -289,7 +303,7 @@ extension SessionManager {
     do {
       let output = try executeCore(
         PigeonCoreCommand(
-          id: "group-message:\(requestID)",
+          id: Self.coreCommandID("group-message", requestID),
           body: .applyInbound(
             PigeonApplyInbound(
               kind: .groupMessage,
@@ -318,7 +332,7 @@ extension SessionManager {
         nowMilliseconds: Int64(Date().timeIntervalSince1970 * 1_000))
       try executeCore(
         PigeonCoreCommand(
-          id: "group-coordinator:\(requestID)",
+          id: Self.coreCommandID("group-coordinator", requestID),
           body: .applyInbound(inbound)))
       return true
     } catch {
@@ -331,7 +345,7 @@ extension SessionManager {
     do {
       try executeCore(
         PigeonCoreCommand(
-          id: "ack-outbound:\(itemID)",
+          id: Self.coreCommandID("ack-outbound", itemID),
           body: .acknowledgeEffects(
             PigeonAcknowledgeEffects(outboundItemIDs: [itemID]))))
       return true

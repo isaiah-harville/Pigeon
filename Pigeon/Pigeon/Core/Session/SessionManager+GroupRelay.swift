@@ -7,7 +7,8 @@ extension SessionManager {
     do {
       try executeCore(
         PigeonCoreCommand(
-          id: "confirm-group-relay:\(groupID.hexEncoded):\(capabilityID.hexEncoded)",
+          id: Self.coreCommandID(
+            "confirm-group-relay", "\(groupID.hexEncoded):\(capabilityID.hexEncoded)"),
           body: .confirmGroupRelayAuthorization(
             PigeonConfirmGroupRelayAuthorization(
               groupID: groupID, capabilityID: capabilityID))))

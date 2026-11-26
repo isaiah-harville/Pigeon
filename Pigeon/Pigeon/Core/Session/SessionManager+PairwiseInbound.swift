@@ -14,7 +14,7 @@ extension SessionManager {
     do {
       try executeCore(
         PigeonCoreCommand(
-          id: "pairwise-message:\(requestID)",
+          id: Self.coreCommandID("pairwise-message", requestID),
           body: .applyInbound(
             PigeonApplyInbound(
               kind: .pairwise,

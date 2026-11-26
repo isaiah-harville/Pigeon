@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.5.1] - 2026-11-26 (beta)
+## [1.5.2] - 2026-11-26 (beta)
 
 ### Added
 
@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- New groups finish registering with their relay. Confirming the relay's authorization used a command id longer than the messaging core accepts, so every new group stayed on "Registering with relay" and the app reconnected to the relay over and over. Command ids that could exceed the limit now use a fixed-length digest.
+- Direct chats in the chat list sit under their own **Chats** heading. Before, they appeared to belong to the Groups section above them.
 - The `pigeon` terminal client can connect to relays when it is built or installed on its own. Before, `cargo install --path pigeon-cli` produced a binary with no TLS crypto backend that crashed on its first `wss://` connection.
 - Push wake-ups work on relays that supply their APNs key inline. The relay reads the key from `PIGEON_APNS_KEY_PEM` as well as from a file at `PIGEON_APNS_KEY_PATH`, and names any missing APNs variable at startup. Before, an inline key was ignored and push was silently off, so a locked phone was never woken to collect its messages.
 
@@ -16,7 +18,7 @@
 - Pigeon builds with Rust 1.100. The relay image (0.5.3) uses the Rust 1.100.0 toolchain, and `pigeon-core` (0.2.3) no longer ships a dependency that only its tests use. The terminal client (0.1.2) needs Rust 1.89 or newer.
 - The documentation no longer describes relay direct-message mailboxes as memory-only; they are stored durably, as in 1.5.0.
 
-[1.5.1]: https://github.com/isaiah-harville/Pigeon/compare/v1.5.0...v1.5.1
+[1.5.2]: https://github.com/isaiah-harville/Pigeon/compare/v1.5.0...v1.5.2
 
 ## [1.5.0] - 2026-11-25 (beta)
 
@@ -27,7 +29,7 @@
 
 ### Fixed
 
-- Creating a group no longer gets stuck on "Registering with relay". Authenticating to the group relay re-entered the relay connection while it was being updated, which crashed the app or kept the registration retrying forever.
+- Authenticating to a group relay no longer re-enters the relay connection while it is being updated, which could crash the app. Groups could still stay on "Registering with relay" until 1.5.2.
 - Relays keep stored direct messages across a restart. Before, a relay restart lost every message waiting for a phone that was offline or locked, even though the sender had already been told it was stored.
 - A phone coming back online after a long time receives every waiting message at once. Before, it received at most 256 and the rest waited for an unrelated reconnect.
 - One direct message the relay refuses no longer holds up every message queued behind it. Sends go out several at a time, a refused one retries on its own schedule, and a stalled relay connection is noticed and replaced.

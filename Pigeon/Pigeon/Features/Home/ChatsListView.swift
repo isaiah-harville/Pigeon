@@ -184,7 +184,19 @@ extension ChatsListView {
     }
   }
 
+  /// Direct chats get their own header whenever a Groups section is shown;
+  /// in a plain list, unsectioned rows would otherwise read as part of the
+  /// section above them.
+  @ViewBuilder
   private var chatRows: some View {
+    if activeGroups.isEmpty || session.chatContacts.isEmpty {
+      directChatRows
+    } else {
+      Section("Chats") { directChatRows }
+    }
+  }
+
+  private var directChatRows: some View {
     ForEach(session.chatContacts) { contact in
       NavigationLink {
         ChatView(contact: contact)
