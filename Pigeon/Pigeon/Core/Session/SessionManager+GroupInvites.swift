@@ -145,7 +145,7 @@ extension SessionManager {
       }
       let output = try executeCore(
         PigeonCoreCommand(
-          id: "group-invite-envelope:\(requestID)", body: command))
+          id: Self.coreCommandID("group-invite-envelope", requestID), body: command))
       return output.inviteEnvelopeOutcome != .unspecified
     } catch {
       return false

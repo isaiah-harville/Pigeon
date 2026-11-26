@@ -18,6 +18,42 @@ final class MLSRelayIntegrationTests: XCTestCase {
     }
   }
 
+  /// Authenticating to the group relay ends with this confirmation; while it
+  /// failed, every new group stayed on "Registering with relay" forever.
+  func testGroupRelayAuthorizationConfirmsForANewGroup() throws {
+    let owner = try launch(seed: 74)
+    defer { wipe(owner.store) }
+    let coordinator = Curve25519.Signing.PrivateKey()
+    try owner.manager.executeCore(
+      PigeonCoreCommand(
+        id: "create-solo-relay-group",
+        body: .createGroup(
+          PigeonCreateGroup(
+            name: "Solo", memberIdentities: [],
+            relayURL: "wss://relay.example/ws", meshEnabled: false,
+            coordinatorPublicKey: coordinator.publicKey.rawRepresentation))))
+    let group = try XCTUnwrap(owner.manager.groups.first)
+
+    XCTAssertTrue(
+      owner.manager.confirmGroupRelayAuthorization(
+        groupID: group.groupID, capabilityID: group.capabilityID))
+    XCTAssertTrue(
+      owner.manager.confirmGroupRelayAuthorization(
+        groupID: group.groupID, capabilityID: group.capabilityID),
+      "confirming again is idempotent")
+  }
+
+  func testCoreCommandIDsStayWithinTheCoreLimit() {
+    XCTAssertEqual(SessionManager.coreCommandID("ack-outbound", "item-1"), "ack-outbound:item-1")
+    let key = String(repeating: "ab", count: 64) + ":" + String(repeating: "cd", count: 32)
+    let long = SessionManager.coreCommandID("confirm-group-relay", key)
+    XCTAssertLessThanOrEqual(long.utf8.count, SessionManager.maximumCoreCommandIDBytes)
+    XCTAssertTrue(long.hasPrefix("confirm-group-relay:sha256-"))
+    XCTAssertEqual(
+      long, SessionManager.coreCommandID("confirm-group-relay", key),
+      "the same key always maps to the same id")
+  }
+
   func testRelayFramesDeliverEncryptedMLSMessageAfterGroupJoin() throws {
     let owner = try launch(seed: 71)
     let bob = try launch(seed: 72)
